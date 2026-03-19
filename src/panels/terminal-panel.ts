@@ -132,6 +132,7 @@ export class TerminalPanel {
   get focused(): boolean { return this._focused; }
   get status(): string { return this._status; }
   get isRunning(): boolean { return this._status === 'running'; }
+  get cols(): number { return this.vterm.colCount; }
   get sessionName(): string | null { return this.agentName || null; }
   get workingDir(): string { return this.cwd; }
 

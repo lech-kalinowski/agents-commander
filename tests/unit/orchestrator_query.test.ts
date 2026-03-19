@@ -15,6 +15,7 @@ describe('Orchestrator QUERY', () => {
     mockTerminalPanel = {
       panelIndex: 0,
       isRunning: true,
+      cols: 500,
       sendInput: vi.fn(),
       updatePanelIndex: vi.fn(),
       markProtocolTextAsProcessed: vi.fn(),

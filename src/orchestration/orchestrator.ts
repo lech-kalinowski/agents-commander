@@ -676,8 +676,13 @@ export class Orchestrator {
     if (agentType === 'claude') {
       // Type directly — no bracketed paste = no bypass permissions prompt.
       // Flatten newlines so \n doesn't get misinterpreted by Ink.
+      // Truncate to terminal width to prevent line-wrap ghost artifacts:
+      // when Claude's Ink TUI redraws, it doesn't clear wrapped overflow
+      // rows from injected text, leaving ghost characters on screen.
       const flat = text.replace(/\n/g, ' ');
-      tp.sendInput(flat + '\r');
+      const maxCols = tp.cols ?? 120;
+      const trimmed = flat.length > maxCols - 2 ? flat.slice(0, maxCols - 5) + '...' : flat;
+      tp.sendInput(trimmed + '\r');
     } else {
       // Single atomic write — prevents garbled output from concurrent sends.
       tp.sendInput(`\x1b[200~${text}\x1b[201~\r`);

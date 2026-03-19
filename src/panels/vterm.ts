@@ -270,6 +270,7 @@ export class VTerm {
 
   /** Number of lines that have scrolled off the visible grid. */
   get scrollbackLength(): number { return this.scrollback.length; }
+  get colCount(): number { return this.cols; }
 
   /** Get a scrollback line as plain text (SGR stripped). */
   getScrollbackPlain(index: number): string {

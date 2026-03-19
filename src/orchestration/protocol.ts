@@ -22,7 +22,7 @@ export function isAgentType(value: string): value is AgentType {
 // Marker lines must remain strict, but we allow a narrow set of terminal/UI
 // prefixes that some agent CLIs render before user-authored content.
 export const CMD_START_RE = /^={3,}COMMANDER:SEND:(\w+):(\d+)={3,}$/;
-export const CMD_REPLY_RE = /^={3,}COMMANDER:REPLY={3,}$/;
+export const CMD_REPLY_RE = /^={3,}COMMANDER:REPLY(?::\w+:\d+)?={3,}$/;
 export const CMD_BROADCAST_RE = /^={3,}COMMANDER:BROADCAST={3,}$/;
 export const CMD_STATUS_RE = /^={3,}COMMANDER:STATUS={3,}$/;
 export const CMD_QUERY_RE = /^={3,}COMMANDER:QUERY={3,}$/;
@@ -338,8 +338,8 @@ export function buildProtocolInstructions(
     `  3) footer: three "=" + "COMMANDER:END" + three "="`,
     `Types: claude, codex, gemini, aider, cline, opencode, goose, kiro, amp, generic. Panels: 1-4.`,
     ``,
-    `Other line-1 headers use the same three "=" wrapper:`,
-    `  REPLY     -> COMMANDER:REPLY`,
+    `Other line-1 headers (no :type:panel — just the keyword between "=" signs):`,
+    `  REPLY     -> COMMANDER:REPLY        (auto-routes to whoever messaged you)`,
     `  BROADCAST -> COMMANDER:BROADCAST`,
     `  STATUS    -> COMMANDER:STATUS`,
     `  QUERY     -> COMMANDER:QUERY`,

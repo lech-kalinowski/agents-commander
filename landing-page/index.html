@@ -1,0 +1,1876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agents Commander - Terminal-Native Multi-Agent AI Collaboration</title>
+  <meta name="description" content="The first terminal-native protocol for multi-agent AI collaboration. Run Claude, Codex, and Gemini side by side.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ========================================
+       RESET & BASE
+       ======================================== */
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg-primary: #040a04;
+      --bg-secondary: #061206;
+      --bg-card: #0a180a;
+      --bg-card-hover: #0e1f0e;
+      --bg-code: #030803;
+      --text-primary: #d0e8d0;
+      --text-secondary: #7a9a7a;
+      --text-muted: #4a6a4a;
+      --accent-cyan: #00ff41;
+      --accent-cyan-dim: rgba(0, 255, 65, 0.12);
+      --accent-cyan-glow: rgba(0, 255, 65, 0.35);
+      --accent-green: #00cc33;
+      --accent-green-dim: rgba(0, 204, 51, 0.12);
+      --accent-purple: #66ff88;
+      --accent-purple-dim: rgba(102, 255, 136, 0.12);
+      --accent-orange: #88cc44;
+      --accent-orange-dim: rgba(136, 204, 68, 0.12);
+      --accent-red: #ff4444;
+      --border-subtle: rgba(0, 255, 65, 0.06);
+      --border-card: rgba(0, 255, 65, 0.10);
+      --border-glow: rgba(0, 255, 65, 0.30);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --max-width: 1200px;
+      --section-padding: 120px 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    ::selection {
+      background: rgba(0, 255, 65, 0.25);
+      color: #00ff41;
+    }
+
+    a {
+      color: var(--accent-cyan);
+      text-decoration: none;
+      transition: opacity 0.2s;
+    }
+
+    a:hover {
+      opacity: 0.85;
+    }
+
+    .container {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ========================================
+       NAVIGATION
+       ======================================== */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 16px 0;
+      background: rgba(4, 10, 4, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    nav .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-logo {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    .nav-logo span {
+      color: var(--accent-cyan);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 32px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      font-size: 14px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--text-primary);
+      opacity: 1;
+    }
+
+    .nav-version {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 4px 10px;
+      border: 1px solid var(--border-card);
+      border-radius: 20px;
+    }
+
+    /* ========================================
+       ANIMATIONS
+       ======================================== */
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(30px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+
+    @keyframes slideInLeft {
+      from {
+        opacity: 0;
+        transform: translateX(-40px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    @keyframes slideInRight {
+      from {
+        opacity: 0;
+        transform: translateX(40px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    @keyframes glowPulse {
+      0%, 100% {
+        box-shadow: 0 0 20px rgba(0, 255, 65, 0.1);
+      }
+      50% {
+        box-shadow: 0 0 40px rgba(0, 255, 65, 0.25);
+      }
+    }
+
+    @keyframes terminalBlink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    @keyframes gradientShift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    @keyframes flowArrow {
+      0% { opacity: 0.2; transform: translateX(-4px); }
+      50% { opacity: 1; transform: translateX(4px); }
+      100% { opacity: 0.2; transform: translateX(-4px); }
+    }
+
+    .animate-in {
+      animation: fadeInUp 0.7s ease-out both;
+    }
+
+    .animate-in-delay-1 { animation-delay: 0.1s; }
+    .animate-in-delay-2 { animation-delay: 0.2s; }
+    .animate-in-delay-3 { animation-delay: 0.3s; }
+    .animate-in-delay-4 { animation-delay: 0.4s; }
+    .animate-in-delay-5 { animation-delay: 0.5s; }
+    .animate-in-delay-6 { animation-delay: 0.6s; }
+
+    /* ========================================
+       HERO SECTION
+       ======================================== */
+    .hero {
+      position: relative;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 140px 0 100px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(ellipse at 50% 0%, rgba(0, 255, 65, 0.10) 0%, transparent 50%),
+                  radial-gradient(ellipse at 80% 50%, rgba(0, 204, 51, 0.06) 0%, transparent 40%),
+                  radial-gradient(ellipse at 20% 80%, rgba(0, 180, 40, 0.04) 0%, transparent 40%);
+      pointer-events: none;
+    }
+
+    .hero-content {
+      position: relative;
+      text-align: center;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      background: var(--accent-cyan-dim);
+      border: 1px solid rgba(0, 255, 65, 0.2);
+      border-radius: 24px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--accent-cyan);
+      margin-bottom: 32px;
+      animation: fadeIn 0.6s ease-out both;
+    }
+
+    .hero-badge::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-cyan);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .hero h1 {
+      font-family: var(--font-mono);
+      font-size: clamp(40px, 7vw, 80px);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+      margin-bottom: 24px;
+      animation: fadeInUp 0.7s ease-out 0.1s both;
+      background: linear-gradient(135deg, #aaffaa 0%, #00ff41 40%, #00cc33 60%, #aaffaa 100%);
+      background-size: 200% 200%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: fadeInUp 0.7s ease-out 0.1s both, gradientShift 6s ease infinite;
+    }
+
+    .hero-tagline {
+      font-size: clamp(18px, 2.5vw, 24px);
+      font-weight: 400;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      max-width: 680px;
+      margin: 0 auto 16px;
+      animation: fadeInUp 0.7s ease-out 0.2s both;
+    }
+
+    .hero-subtext {
+      font-size: clamp(15px, 2vw, 18px);
+      color: var(--text-muted);
+      font-weight: 400;
+      margin-bottom: 48px;
+      animation: fadeInUp 0.7s ease-out 0.3s both;
+    }
+
+    .hero-cta {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+      animation: fadeInUp 0.7s ease-out 0.4s both;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 32px;
+      background: var(--accent-cyan);
+      color: var(--bg-primary);
+      font-weight: 600;
+      font-size: 15px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
+    }
+
+    .btn-primary:hover {
+      opacity: 1;
+      transform: translateY(-2px);
+      box-shadow: 0 0 40px rgba(0, 255, 65, 0.35);
+    }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 32px;
+      background: transparent;
+      color: var(--text-primary);
+      font-weight: 500;
+      font-size: 15px;
+      border-radius: 10px;
+      border: 1px solid var(--border-card);
+      cursor: pointer;
+      transition: all 0.25s ease;
+    }
+
+    .btn-secondary:hover {
+      opacity: 1;
+      border-color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.03);
+      transform: translateY(-2px);
+    }
+
+    /* ── Hero product mockup ─────────────────────────── */
+    .hero-screenshot {
+      margin-top: 72px;
+      padding: 3px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, rgba(0, 255, 65, 0.35), rgba(0, 204, 51, 0.25), rgba(0, 180, 40, 0.15));
+      animation: fadeInUp 0.7s ease-out 0.6s both, glowPulse 4s ease-in-out infinite;
+      max-width: 960px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .hero-screenshot-inner {
+      background: #001a00;
+      border-radius: 14px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* macOS window chrome */
+    .tm-titlebar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: #0a1a0a;
+    }
+
+    .titlebar-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .titlebar-dot.red { background: #ff5f57; }
+    .titlebar-dot.yellow { background: #febc2e; }
+    .titlebar-dot.green { background: #28c840; }
+
+    .tm-titlebar-text {
+      flex: 1;
+      text-align: center;
+      color: #999;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    /* Dual-panel file manager area */
+    .tm-body {
+      display: flex;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      line-height: 1.55;
+      color: #e0e0e0;
+      position: relative;
+    }
+
+    .tm-panel {
+      flex: 1;
+      border: 1px solid #00cc33;
+      margin: 2px;
+      background: #001a00;
+    }
+
+    .tm-panel-header {
+      background: #00aa33;
+      color: #001100;
+      padding: 1px 8px;
+      font-weight: 600;
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    .tm-col-header {
+      display: flex;
+      padding: 0 6px;
+      color: #66cc66;
+      font-size: 10.5px;
+      border-bottom: 1px solid #004400;
+    }
+
+    .tm-col-header span:first-child { flex: 1; }
+    .tm-col-header span { text-align: right; min-width: 50px; }
+
+    .tm-file-row {
+      display: flex;
+      padding: 0 6px;
+      white-space: nowrap;
+    }
+
+    .tm-file-row span:first-child { flex: 1; color: #b0d8b0; }
+    .tm-file-row span { text-align: right; min-width: 50px; color: #669966; font-size: 10.5px; }
+    .tm-file-row.dir span:first-child { color: #d0f0d0; font-weight: 600; }
+    .tm-file-row.sel { background: #003300; }
+
+    /* Welcome dialog overlay */
+    .tm-dialog {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 58%;
+      background: #001a08;
+      border: 1px solid #00cc33;
+      border-radius: 2px;
+      padding: 18px 22px 14px;
+      box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+      z-index: 2;
+      text-align: center;
+    }
+
+    .tm-logo {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 18px;
+      color: #00ff41;
+      letter-spacing: 3px;
+      margin-bottom: 4px;
+    }
+
+    .tm-logo-sub {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 15px;
+      color: #00ff41;
+      letter-spacing: 2px;
+      margin-bottom: 10px;
+    }
+
+    .tm-version {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #ccc;
+      margin-bottom: 14px;
+    }
+
+    .tm-section-title {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: #88cc44;
+      font-weight: 700;
+      text-align: left;
+      margin: 10px 0 4px;
+    }
+
+    .tm-body-text {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #c0c0c0;
+      text-align: left;
+      line-height: 1.5;
+    }
+
+    .tm-body-text .hl-green { color: #00ff41; }
+    .tm-body-text .hl-cyan { color: #00ff41; }
+
+    .tm-shortcut-row {
+      display: flex;
+      gap: 16px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #c0c0c0;
+      text-align: left;
+      line-height: 1.7;
+    }
+
+    .tm-shortcut-row .key { color: #00ff41; min-width: 60px; }
+
+    .tm-footer-text {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: #999;
+      margin-top: 14px;
+    }
+
+    .tm-press-key {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: #aaa;
+      margin-top: 8px;
+    }
+
+    /* Function bar at bottom */
+    .tm-funcbar {
+      background: #002200;
+      padding: 2px 6px;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: #00cc33;
+      display: flex;
+      gap: 6px;
+      border-top: 1px solid #004400;
+    }
+
+    .tm-funcbar span {
+      color: #00cc33;
+    }
+
+    .tm-funcbar .fkey {
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    @media (max-width: 700px) {
+      .tm-dialog { width: 80%; padding: 12px 14px 10px; }
+      .tm-logo { font-size: 14px; }
+      .tm-logo-sub { font-size: 12px; }
+      .tm-body { font-size: 9.5px; }
+      .tm-funcbar { font-size: 9px; }
+    }
+
+    /* ========================================
+       SECTION SHARED STYLES
+       ======================================== */
+    section {
+      padding: var(--section-padding);
+      position: relative;
+    }
+
+    .section-label {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--accent-cyan);
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: clamp(28px, 4vw, 44px);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin-bottom: 20px;
+    }
+
+    .section-subtitle {
+      font-size: clamp(16px, 2vw, 19px);
+      color: var(--text-secondary);
+      max-width: 600px;
+      line-height: 1.6;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 72px;
+    }
+
+    .section-header .section-subtitle {
+      margin: 0 auto;
+    }
+
+    .divider {
+      width: 100%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border-card), transparent);
+    }
+
+    /* ========================================
+       PROBLEM SECTION
+       ======================================== */
+    #problem {
+      background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+    }
+
+    .problem-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+
+    .problem-card {
+      padding: 36px 32px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      transition: all 0.35s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .problem-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent-red), transparent);
+      opacity: 0;
+      transition: opacity 0.35s ease;
+    }
+
+    .problem-card:hover {
+      border-color: rgba(248, 81, 73, 0.2);
+      background: var(--bg-card-hover);
+      transform: translateY(-4px);
+    }
+
+    .problem-card:hover::before {
+      opacity: 1;
+    }
+
+    .problem-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      margin-bottom: 20px;
+      background: rgba(248, 81, 73, 0.1);
+      border: 1px solid rgba(248, 81, 73, 0.15);
+    }
+
+    .problem-card h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      letter-spacing: -0.01em;
+    }
+
+    .problem-card p {
+      font-size: 15px;
+      color: var(--text-secondary);
+      line-height: 1.65;
+    }
+
+    /* ========================================
+       SOLUTION SECTION
+       ======================================== */
+    #solution {
+      background: var(--bg-secondary);
+    }
+
+    .solution-content {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 64px;
+      align-items: center;
+    }
+
+    .solution-protocol {
+      background: var(--bg-code);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      overflow: hidden;
+      animation: glowPulse 4s ease-in-out infinite;
+    }
+
+    .protocol-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .protocol-header-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .protocol-header-label {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+
+    .protocol-body {
+      padding: 24px;
+    }
+
+    .protocol-body pre {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--text-secondary);
+      overflow-x: auto;
+    }
+
+    .protocol-body .marker {
+      color: var(--accent-cyan);
+      font-weight: 600;
+    }
+
+    .protocol-body .agent-name {
+      color: var(--accent-green);
+      font-weight: 500;
+    }
+
+    .protocol-body .message-content {
+      color: var(--text-primary);
+    }
+
+    .protocol-body .comment {
+      color: var(--text-muted);
+    }
+
+    .solution-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    .solution-step {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+    }
+
+    .step-number {
+      flex-shrink: 0;
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 16px;
+      background: var(--accent-cyan-dim);
+      color: var(--accent-cyan);
+      border: 1px solid rgba(0, 255, 65, 0.2);
+    }
+
+    .step-content h3 {
+      font-size: 17px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .step-content p {
+      font-size: 15px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    .step-keyword {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--accent-cyan);
+    }
+
+    /* ========================================
+       FEATURES SECTION
+       ======================================== */
+    #features {
+      background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .feature-card {
+      padding: 32px 28px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      transition: all 0.35s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .feature-card:hover {
+      border-color: var(--border-glow);
+      background: var(--bg-card-hover);
+      transform: translateY(-4px);
+      box-shadow: 0 8px 32px rgba(0, 255, 65, 0.08);
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      margin-bottom: 20px;
+    }
+
+    .feature-icon.cyan {
+      background: var(--accent-cyan-dim);
+      border: 1px solid rgba(0, 255, 65, 0.2);
+    }
+
+    .feature-icon.green {
+      background: var(--accent-green-dim);
+      border: 1px solid rgba(0, 204, 51, 0.2);
+    }
+
+    .feature-icon.purple {
+      background: var(--accent-purple-dim);
+      border: 1px solid rgba(102, 255, 136, 0.2);
+    }
+
+    .feature-icon.orange {
+      background: var(--accent-orange-dim);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+    }
+
+    .feature-card h3 {
+      font-size: 17px;
+      font-weight: 600;
+      margin-bottom: 10px;
+      letter-spacing: -0.01em;
+    }
+
+    .feature-card p {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    .feature-tag {
+      display: inline-block;
+      margin-top: 16px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-muted);
+      border: 1px solid var(--border-subtle);
+    }
+
+    /* ========================================
+       HOW IT WORKS SECTION
+       ======================================== */
+    #how-it-works {
+      background: var(--bg-primary);
+    }
+
+    .flow-diagram {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      gap: 0;
+      align-items: center;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    .flow-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      overflow: hidden;
+      transition: all 0.35s ease;
+    }
+
+    .flow-panel:hover {
+      border-color: var(--border-glow);
+      box-shadow: 0 8px 32px rgba(0, 255, 65, 0.08);
+    }
+
+    .flow-panel-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .flow-panel-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .flow-panel-indicator.active {
+      background: var(--accent-green);
+      box-shadow: 0 0 8px rgba(0, 204, 51, 0.5);
+    }
+
+    .flow-panel-name {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .flow-panel-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+
+    .flow-panel-body {
+      padding: 20px 16px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.8;
+    }
+
+    .flow-panel-body .output {
+      color: var(--text-secondary);
+    }
+
+    .flow-panel-body .protocol-msg {
+      color: var(--accent-cyan);
+      font-weight: 500;
+    }
+
+    .flow-panel-body .incoming {
+      color: var(--accent-green);
+    }
+
+    .flow-arrow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 0 16px;
+    }
+
+    .flow-arrow-line {
+      font-family: var(--font-mono);
+      font-size: 20px;
+      color: var(--accent-cyan);
+      animation: flowArrow 2s ease-in-out infinite;
+      letter-spacing: -2px;
+    }
+
+    .flow-arrow-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      margin-top: 4px;
+    }
+
+    .flow-center {
+      background: var(--bg-card);
+      border: 2px solid var(--accent-cyan);
+      border-radius: 16px;
+      padding: 24px 20px;
+      text-align: center;
+      box-shadow: 0 0 30px rgba(0, 255, 65, 0.1);
+    }
+
+    .flow-center-icon {
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+
+    .flow-center-title {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--accent-cyan);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .flow-center-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .flow-message-detail {
+      margin-top: 56px;
+      background: var(--bg-code);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 800px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .flow-message-title {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 20px;
+    }
+
+    .flow-message-format {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 2;
+    }
+
+    .fmt-marker { color: var(--accent-cyan); font-weight: 600; }
+    .fmt-keyword { color: var(--accent-purple); }
+    .fmt-agent { color: var(--accent-green); }
+    .fmt-panel { color: var(--accent-orange); }
+    .fmt-content { color: var(--text-primary); }
+    .fmt-dim { color: var(--text-muted); }
+
+    /* ========================================
+       COMPARISON SECTION
+       ======================================== */
+    #comparison {
+      background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+    }
+
+    .comparison-table-wrapper {
+      overflow-x: auto;
+      border-radius: 16px;
+      border: 1px solid var(--border-card);
+    }
+
+    .comparison-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .comparison-table thead th {
+      padding: 20px 24px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.02);
+      border-bottom: 1px solid var(--border-card);
+      white-space: nowrap;
+    }
+
+    .comparison-table thead th:first-child {
+      color: var(--text-secondary);
+    }
+
+    .comparison-table thead th.highlight {
+      color: var(--accent-cyan);
+      background: var(--accent-cyan-dim);
+      border-bottom-color: rgba(0, 255, 65, 0.15);
+    }
+
+    .comparison-table tbody td {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      vertical-align: top;
+    }
+
+    .comparison-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .comparison-table tbody td:first-child {
+      font-weight: 500;
+      color: var(--text-primary);
+      white-space: nowrap;
+    }
+
+    .comparison-table tbody td.highlight {
+      background: rgba(0, 255, 65, 0.04);
+      color: var(--text-primary);
+    }
+
+    .comparison-table .check {
+      color: var(--accent-green);
+      font-weight: 700;
+    }
+
+    .comparison-table .cross {
+      color: var(--accent-red);
+      opacity: 0.6;
+    }
+
+    .comparison-table .partial {
+      color: var(--accent-orange);
+    }
+
+    /* ========================================
+       INSTALL SECTION
+       ======================================== */
+    #install {
+      background: var(--bg-secondary);
+    }
+
+    .install-content {
+      max-width: 700px;
+      margin: 0 auto;
+    }
+
+    .install-block {
+      background: var(--bg-code);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    .install-block-header {
+      display: flex;
+      align-items: center;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .install-block-header .dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .install-block-header .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .install-block-title {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+
+    .install-block-body {
+      padding: 24px;
+    }
+
+    .install-block-body pre {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 2;
+      color: var(--text-primary);
+      overflow-x: auto;
+    }
+
+    .install-block-body .prompt-char {
+      color: var(--accent-green);
+      user-select: none;
+    }
+
+    .install-block-body .flag {
+      color: var(--accent-cyan);
+    }
+
+    .install-block-body .comment-line {
+      color: var(--text-muted);
+    }
+
+    .install-note {
+      text-align: center;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .install-note a {
+      color: var(--accent-cyan);
+      font-weight: 500;
+    }
+
+    /* ========================================
+       FOOTER
+       ======================================== */
+    footer {
+      padding: 48px 0;
+      border-top: 1px solid var(--border-subtle);
+      background: var(--bg-secondary);
+    }
+
+    .footer-content {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .footer-left {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .footer-left strong {
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .footer-right {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .footer-right a {
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+
+    .footer-right a:hover {
+      color: var(--accent-cyan);
+      opacity: 1;
+    }
+
+    /* ========================================
+       RESPONSIVE
+       ======================================== */
+    @media (max-width: 1024px) {
+      .flow-diagram {
+        grid-template-columns: 1fr;
+        gap: 16px;
+        max-width: 500px;
+      }
+
+      .flow-arrow {
+        transform: rotate(90deg);
+        padding: 8px 0;
+      }
+
+      .flow-arrow-label {
+        transform: rotate(-90deg);
+      }
+    }
+
+    @media (max-width: 900px) {
+      :root {
+        --section-padding: 80px 0;
+      }
+
+      .problem-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+
+      .solution-content {
+        grid-template-columns: 1fr;
+        gap: 40px;
+      }
+
+      .features-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 16px;
+      }
+
+      .comparison-table {
+        font-size: 13px;
+      }
+
+      .comparison-table thead th,
+      .comparison-table tbody td {
+        padding: 12px 16px;
+      }
+
+      .nav-links {
+        display: none;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        padding: 0 16px;
+      }
+
+      .features-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        padding: 120px 0 80px;
+      }
+
+      .hero-cta {
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .btn-primary, .btn-secondary {
+        width: 100%;
+        justify-content: center;
+        max-width: 300px;
+      }
+
+      .footer-content {
+        flex-direction: column;
+        text-align: center;
+      }
+
+      .flow-message-detail {
+        padding: 20px;
+      }
+
+      .flow-message-format {
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ==================== NAVIGATION ==================== -->
+  <nav>
+    <div class="container">
+      <div class="nav-logo"><img src="logo.png" alt="AC" style="height:28px;vertical-align:middle;margin-right:8px;border-radius:4px"><span>&gt;_</span> agents-commander</div>
+      <ul class="nav-links">
+        <li><a href="#problem">Problem</a></li>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#how-it-works">How It Works</a></li>
+        <li><a href="#comparison">Compare</a></li>
+        <li><a href="#install">Install</a></li>
+      </ul>
+      <span class="nav-version">v0.1.0</span>
+    </div>
+  </nav>
+
+  <!-- ==================== HERO ==================== -->
+  <section class="hero">
+    <div class="container">
+      <div class="hero-content">
+        <div class="hero-badge">Open Source &mdash; Available Now</div>
+        <img src="logo.png" alt="Agents Commander" style="display:block;margin:0 auto 32px;width:220px;border-radius:24px;filter:drop-shadow(0 0 40px rgba(0,255,65,0.3));animation:fadeInUp 0.7s ease-out 0.05s both">
+        <h1>AGENTS<br>COMMANDER</h1>
+        <p class="hero-tagline">The first terminal-native protocol for multi-agent AI collaboration</p>
+        <p class="hero-subtext">Run Claude, Codex, and Gemini side by side. Make them talk to each other.</p>
+        <div class="hero-cta">
+          <a href="#install" class="btn-primary">Get Started</a>
+          <a href="https://github.com/ArekLech/agents-commander" class="btn-secondary">View on GitHub</a>
+        </div>
+
+        <div class="hero-screenshot">
+          <div class="hero-screenshot-inner">
+            <!-- macOS title bar -->
+            <div class="tm-titlebar">
+              <span class="titlebar-dot red"></span>
+              <span class="titlebar-dot yellow"></span>
+              <span class="titlebar-dot green"></span>
+              <span class="tm-titlebar-text">agents commander &mdash; Agents Commander &mdash; node</span>
+            </div>
+
+            <!-- Dual-panel file manager with welcome dialog -->
+            <div class="tm-body">
+              <!-- Left panel -->
+              <div class="tm-panel">
+                <div class="tm-panel-header">~/products/agents commander</div>
+                <div class="tm-col-header"><span>Name</span><span>Size</span><span>Modified</span></div>
+                <div class="tm-file-row sel"><span>/..</span><span></span><span style="color:#00ff41">&lt;UP&gt;</span></div>
+                <div class="tm-file-row dir"><span>/bin</span><span>&lt;DIR&gt;</span><span>03/11/26</span></div>
+                <div class="tm-file-row dir"><span>/dist</span><span>&lt;DIR&gt;</span><span>03/11/26</span></div>
+                <div class="tm-file-row dir"><span>/docs</span><span>&lt;DIR&gt;</span><span>03/16/26</span></div>
+                <div class="tm-file-row dir"><span>/src</span><span>&lt;DIR&gt;</span><span>03/16/26</span></div>
+                <div class="tm-file-row dir"><span>/tests</span><span>&lt;DIR&gt;</span><span>03/16/26</span></div>
+                <div class="tm-file-row"><span>CLAUDE.md</span><span>1.1K</span><span>03/16/26</span></div>
+                <div class="tm-file-row"><span>package.json</span><span>14.3K</span><span>03/16/26</span></div>
+                <div class="tm-file-row"><span>README.md</span><span>508B</span><span>03/16/26</span></div>
+              </div>
+
+              <!-- Right panel -->
+              <div class="tm-panel">
+                <div class="tm-panel-header">~/products/agents commander</div>
+                <div class="tm-col-header"><span>Name</span><span>Size</span><span>Modified</span></div>
+                <div class="tm-file-row sel"><span>/..</span><span></span><span style="color:#00ff41">&lt;UP&gt;</span></div>
+                <div class="tm-file-row dir"><span>/bin</span><span>&lt;DIR&gt;</span><span>03/11/26</span></div>
+                <div class="tm-file-row dir"><span>/dist</span><span>&lt;DIR&gt;</span><span>03/11/26</span></div>
+                <div class="tm-file-row dir"><span>/docs</span><span>&lt;DIR&gt;</span><span>03/16/26</span></div>
+                <div class="tm-file-row dir"><span>/scripts</span><span>&lt;DIR&gt;</span><span>03/16/26</span></div>
+                <div class="tm-file-row dir"><span>/src</span><span>&lt;DIR&gt;</span><span>03/11/26</span></div>
+                <div class="tm-file-row"><span>package-lock.json</span><span>102.1K</span><span>03/11/26</span></div>
+                <div class="tm-file-row"><span>package.json</span><span>14.3K</span><span>03/16/26</span></div>
+                <div class="tm-file-row"><span>tsconfig.json</span><span>516B</span><span>03/11/26</span></div>
+              </div>
+
+              <!-- Welcome dialog overlay -->
+              <div class="tm-dialog">
+                <div class="tm-logo">AGENTS</div>
+                <div class="tm-logo-sub">COMMANDER</div>
+                <div class="tm-version"><b>v0.1.0</b> &mdash; Multi-Agent Terminal Manager</div>
+
+                <div class="tm-section-title">Run multiple AI agents side by side</div>
+                <div class="tm-body-text">
+                  Launch <span class="hl-green">Claude</span>, <span class="hl-green">Codex</span>, and <span class="hl-green">Gemini</span> in parallel panels.<br>
+                  Agents talk to each other via the Commander protocol<br>
+                  &mdash; one delegates, another executes, results flow back.
+                </div>
+
+                <div class="tm-section-title">Key Features</div>
+                <div class="tm-shortcut-row"><span class="key">F2</span><span>Launch an AI agent in any panel</span></div>
+                <div class="tm-shortcut-row"><span class="key">Ctrl+O</span><span>Send a task to any agent</span></div>
+                <div class="tm-shortcut-row"><span class="key">Ctrl+B</span><span>Browse 120 prompt templates</span></div>
+                <div class="tm-shortcut-row"><span class="key">Ctrl+P</span><span>Teach agents to collaborate</span></div>
+                <div class="tm-shortcut-row"><span class="key">F12</span><span>Inter-agent communication guide</span></div>
+
+                <div class="tm-footer-text"><b>by Lech Kalinowski</b> &mdash; CC BY-NC 4.0</div>
+                <div class="tm-press-key">Press any key to start...</div>
+              </div>
+            </div>
+
+            <!-- Function bar -->
+            <div class="tm-funcbar">
+              <span><span class="fkey">1</span>Help</span>
+              <span><span class="fkey">2</span>Agent</span>
+              <span><span class="fkey">3</span>+Panel</span>
+              <span><span class="fkey">4</span>View</span>
+              <span><span class="fkey">5</span>Edit</span>
+              <span><span class="fkey">6</span>Copy</span>
+              <span><span class="fkey">7</span>Move</span>
+              <span><span class="fkey">8</span>Mkdir</span>
+              <span><span class="fkey">9</span>Delete</span>
+              <span><span class="fkey">10</span>Quit</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ==================== PROBLEM ==================== -->
+  <section id="problem">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-label">The Problem</span>
+        <h2 class="section-title">AI agents are powerful. But isolated.</h2>
+        <p class="section-subtitle">Every agent runs in its own silo. There is no standard way to orchestrate them together from the terminal.</p>
+      </div>
+
+      <div class="problem-grid">
+        <div class="problem-card animate-in animate-in-delay-1">
+          <div class="problem-icon">&#9747;</div>
+          <h3>No Standard Protocol</h3>
+          <p>There is no universal way for terminal-based AI agents to communicate. Each tool invents its own integration layer, creating fragmentation.</p>
+        </div>
+        <div class="problem-card animate-in animate-in-delay-2">
+          <div class="problem-icon">&#9940;</div>
+          <h3>Isolated Processes</h3>
+          <p>Claude cannot talk to Codex. Gemini cannot hand off to Aider. Each agent operates in a vacuum, blind to what other agents are doing.</p>
+        </div>
+        <div class="problem-card animate-in animate-in-delay-3">
+          <div class="problem-icon">&#9888;</div>
+          <h3>API-Only Solutions</h3>
+          <p>Existing multi-agent frameworks require API keys, custom code, and cloud infrastructure. Nothing works natively in the terminal where developers live.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ==================== SOLUTION ==================== -->
+  <section id="solution">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-label">The Solution</span>
+        <h2 class="section-title">One terminal. Multiple agents. Zero integration.</h2>
+        <p class="section-subtitle">The Commander Protocol is a simple, text-based messaging format that any agent can produce and any terminal can route.</p>
+      </div>
+
+      <div class="solution-content">
+        <div class="solution-protocol">
+          <div class="protocol-header">
+            <span class="protocol-header-dot titlebar-dot red"></span>
+            <span class="protocol-header-dot titlebar-dot yellow"></span>
+            <span class="protocol-header-dot titlebar-dot green"></span>
+            <span class="protocol-header-label">commander-protocol.md</span>
+          </div>
+          <div class="protocol-body">
+<pre><span class="comment">// SEND &mdash; direct message to an agent</span>
+<span class="marker">===COMMANDER:SEND:codex:2===</span>
+<span class="message-content">Write unit tests for src/auth/</span>
+<span class="marker">===COMMANDER:END===</span>
+
+<span class="comment">// REPLY &mdash; respond to last sender</span>
+<span class="marker">===COMMANDER:REPLY===</span>
+<span class="message-content">12 tests passing, 0 failing.</span>
+<span class="marker">===COMMANDER:END===</span>
+
+<span class="comment">// BROADCAST &bull; STATUS &bull; QUERY</span>
+<span class="comment">// 5 commands, fully bidirectional</span>
+<span class="comment">// Sender gets ACK after delivery</span></pre>
+          </div>
+        </div>
+
+        <div class="solution-steps">
+          <div class="solution-step animate-in animate-in-delay-1">
+            <div class="step-number">1</div>
+            <div class="step-content">
+              <h3><span class="step-keyword">Inject</span> &mdash; Skill Files</h3>
+              <p>Agents Commander injects a skill file into each agent's context, teaching it the Commander Protocol message format. No API integration needed.</p>
+            </div>
+          </div>
+          <div class="solution-step animate-in animate-in-delay-2">
+            <div class="step-number">2</div>
+            <div class="step-content">
+              <h3><span class="step-keyword">Scan</span> &mdash; Output Monitoring</h3>
+              <p>The Commander continuously scans each agent's terminal output for protocol markers. Pure text matching &mdash; works with any agent that can print text.</p>
+            </div>
+          </div>
+          <div class="solution-step animate-in animate-in-delay-3">
+            <div class="step-number">3</div>
+            <div class="step-content">
+              <h3><span class="step-keyword">Route</span> &mdash; Message Delivery</h3>
+              <p>When a marker is detected, Commander extracts the message and injects it into the target agent's stdin. The receiving agent sees it as a new prompt.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ==================== FEATURES ==================== -->
+  <section id="features">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-label">Features</span>
+        <h2 class="section-title">Everything you need. Nothing you don't.</h2>
+        <p class="section-subtitle">A purpose-built terminal UI for managing multiple AI agents, with zero configuration required.</p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card animate-in animate-in-delay-1">
+          <div class="feature-icon cyan">&#9638;</div>
+          <h3>Multi-Agent Terminal</h3>
+          <p>Run up to 4 AI agents simultaneously in a split-panel terminal UI. Each agent gets its own fully isolated PTY with real shell integration.</p>
+          <span class="feature-tag">Ctrl+2 / Ctrl+3 / Ctrl+4</span>
+        </div>
+
+        <div class="feature-card animate-in animate-in-delay-2">
+          <div class="feature-icon green">&#8644;</div>
+          <h3>Inter-Agent Communication</h3>
+          <p>5 protocol commands: SEND, REPLY, BROADCAST, STATUS, QUERY. Agents talk, get ACKs, report progress. No APIs, no SDKs.</p>
+          <span class="feature-tag">Commander Protocol v2</span>
+        </div>
+
+        <div class="feature-card animate-in animate-in-delay-3">
+          <div class="feature-icon purple">&#9776;</div>
+          <h3>120 Prompt Templates</h3>
+          <p>Browse and inject from a curated library of prompt templates. Architecture reviews, code generation, testing strategies, and more.</p>
+          <span class="feature-tag">Ctrl+B</span>
+        </div>
+
+        <div class="feature-card animate-in animate-in-delay-4">
+          <div class="feature-icon orange">&#9783;</div>
+          <h3>Built-in File Manager</h3>
+          <p>Dual-panel file browser with copy, move, delete, and mkdir operations. Navigate your codebase without leaving the commander.</p>
+          <span class="feature-tag">F6 Copy / F7 Move / F8 Mkdir</span>
+        </div>
+
+        <div class="feature-card animate-in animate-in-delay-5">
+          <div class="feature-icon green">&#9673;</div>
+          <h3>10 Agent Types</h3>
+          <p>First-class support for Claude, Codex, Gemini, Aider, Cline, OpenCode, Goose, Kiro, Amp, and a Generic adapter for any CLI agent.</p>
+          <span class="feature-tag">F2 Agent Selector</span>
+        </div>
+
+        <div class="feature-card animate-in animate-in-delay-6">
+          <div class="feature-icon cyan">&#9618;</div>
+          <h3>Full Terminal Emulation</h3>
+          <p>xterm-256color support, mouse events, TUI rendering. Agents see a real terminal, not a dumb pipe. ANSI colors, cursor control, the works.</p>
+          <span class="feature-tag">FORCE_COLOR=1</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ==================== HOW IT WORKS ==================== -->
+  <section id="how-it-works">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-label">Architecture</span>
+        <h2 class="section-title">See it in action</h2>
+        <p class="section-subtitle">A message flows from one agent to another in milliseconds &mdash; through pure text.</p>
+      </div>
+
+      <div class="flow-diagram">
+        <!-- Panel 1: Claude -->
+        <div class="flow-panel">
+          <div class="flow-panel-header">
+            <span class="flow-panel-indicator active"></span>
+            <span class="flow-panel-name">Claude</span>
+            <span class="flow-panel-label">Panel 1</span>
+          </div>
+          <div class="flow-panel-body">
+            <div class="output">Analyzing codebase...</div>
+            <div class="output">Found auth vulnerability.</div>
+            <br>
+            <div class="protocol-msg">===COMMANDER:SEND:codex:2===</div>
+            <div class="output">Fix the SQL injection in</div>
+            <div class="output">src/auth/login.ts line 42</div>
+            <div class="protocol-msg">===COMMANDER:END===</div>
+          </div>
+        </div>
+
+        <!-- Arrow 1 -->
+        <div class="flow-arrow">
+          <span class="flow-arrow-line">&#10132;</span>
+          <span class="flow-arrow-label">detect</span>
+        </div>
+
+        <!-- Commander -->
+        <div class="flow-center">
+          <div class="flow-center-icon">&#9881;</div>
+          <div class="flow-center-title">Commander</div>
+          <div class="flow-center-sub">scan &bull; parse &bull; route</div>
+        </div>
+
+        <!-- Arrow 2 -->
+        <div class="flow-arrow">
+          <span class="flow-arrow-line">&#10132;</span>
+          <span class="flow-arrow-label">inject</span>
+        </div>
+
+        <!-- Panel 2: Codex -->
+        <div class="flow-panel">
+          <div class="flow-panel-header">
+            <span class="flow-panel-indicator active"></span>
+            <span class="flow-panel-name">Codex</span>
+            <span class="flow-panel-label">Panel 2</span>
+          </div>
+          <div class="flow-panel-body">
+            <div class="incoming">[Commander: from Claude]</div>
+            <div class="output">Fix the SQL injection in</div>
+            <div class="output">src/auth/login.ts line 42</div>
+            <br>
+            <div class="output">On it. Applying parameterized</div>
+            <div class="output">query pattern...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Message format detail -->
+      <div class="flow-message-detail">
+        <div class="flow-message-title">Protocol Message Format</div>
+        <div class="flow-message-format">
+          <span class="fmt-marker">===COMMANDER</span><span class="fmt-dim">:</span><span class="fmt-keyword">SEND</span><span class="fmt-dim">:</span><span class="fmt-agent">{target_agent}</span><span class="fmt-dim">:</span><span class="fmt-panel">{panel_number}</span><span class="fmt-marker">===</span><br>
+          <span class="fmt-content">{message content &mdash; any text, any length}</span><br>
+          <span class="fmt-marker">===COMMANDER</span><span class="fmt-dim">:</span><span class="fmt-keyword">END</span><span class="fmt-marker">===</span>
+          <br><br>
+          <span class="fmt-dim">Fields: &nbsp;</span>
+          <span class="fmt-keyword">SEND</span> <span class="fmt-dim">&mdash; action &nbsp;|&nbsp; </span>
+          <span class="fmt-agent">codex</span> <span class="fmt-dim">&mdash; target agent &nbsp;|&nbsp; </span>
+          <span class="fmt-panel">2</span> <span class="fmt-dim">&mdash; target panel number</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ==================== COMPARISON ==================== -->
+  <section id="comparison">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-label">Compare</span>
+        <h2 class="section-title">Built different</h2>
+        <p class="section-subtitle">How Commander Protocol compares to existing approaches for multi-agent orchestration.</p>
+      </div>
+
+      <div class="comparison-table-wrapper">
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th class="highlight">Commander Protocol</th>
+              <th>MCP (Anthropic)</th>
+              <th>LangGraph / CrewAI</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Architecture</td>
+              <td class="highlight">Terminal-native, text-based</td>
+              <td>Client-server, JSON-RPC</td>
+              <td>Framework, Python/JS SDK</td>
+            </tr>
+            <tr>
+              <td>Integration Effort</td>
+              <td class="highlight"><span class="check">&#10003;</span> Zero &mdash; just run agents</td>
+              <td>SDK + server implementation</td>
+              <td>Custom code + configuration</td>
+            </tr>
+            <tr>
+              <td>Agent Support</td>
+              <td class="highlight"><span class="check">&#10003;</span> Any CLI agent</td>
+              <td>MCP-compatible clients only</td>
+              <td>Framework-wrapped agents only</td>
+            </tr>
+            <tr>
+              <td>Infrastructure</td>
+              <td class="highlight"><span class="check">&#10003;</span> None &mdash; runs locally</td>
+              <td>Server process required</td>
+              <td>Runtime + dependencies</td>
+            </tr>
+            <tr>
+              <td>API Keys Required</td>
+              <td class="highlight"><span class="check">&#10003;</span> No (agents handle their own)</td>
+              <td>Per-server configuration</td>
+              <td>Yes, centrally managed</td>
+            </tr>
+            <tr>
+              <td>Real Terminal UI</td>
+              <td class="highlight"><span class="check">&#10003;</span> Full TUI with panels</td>
+              <td><span class="cross">&#10007;</span> No UI</td>
+              <td><span class="cross">&#10007;</span> No UI</td>
+            </tr>
+            <tr>
+              <td>File Management</td>
+              <td class="highlight"><span class="check">&#10003;</span> Built-in dual-panel</td>
+              <td><span class="cross">&#10007;</span> Not included</td>
+              <td><span class="cross">&#10007;</span> Not included</td>
+            </tr>
+            <tr>
+              <td>Learning Curve</td>
+              <td class="highlight"><span class="check">&#10003;</span> Instant &mdash; text markers</td>
+              <td>Moderate &mdash; protocol spec</td>
+              <td>Steep &mdash; framework concepts</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ==================== INSTALL ==================== -->
+  <section id="install">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-label">Get Started</span>
+        <h2 class="section-title">Up and running in 30 seconds</h2>
+        <p class="section-subtitle">One command to install. One command to start collaborating.</p>
+      </div>
+
+      <div class="install-content">
+        <div class="install-block">
+          <div class="install-block-header">
+            <div class="dots">
+              <span class="dot titlebar-dot red"></span>
+              <span class="dot titlebar-dot yellow"></span>
+              <span class="dot titlebar-dot green"></span>
+            </div>
+            <span class="install-block-title">terminal</span>
+          </div>
+          <div class="install-block-body">
+<pre><span class="comment-line"># Install globally</span>
+<span class="prompt-char">$ </span>npm install <span class="flag">-g</span> agents-commander
+
+<span class="comment-line"># Launch in your project directory</span>
+<span class="prompt-char">$ </span><span class="flag">cd</span> your-project/
+<span class="prompt-char">$ </span>agents-commander
+
+<span class="comment-line"># Or run directly with npx</span>
+<span class="prompt-char">$ </span>npx agents-commander</pre>
+          </div>
+        </div>
+
+        <div class="install-block">
+          <div class="install-block-header">
+            <div class="dots">
+              <span class="dot titlebar-dot red"></span>
+              <span class="dot titlebar-dot yellow"></span>
+              <span class="dot titlebar-dot green"></span>
+            </div>
+            <span class="install-block-title">quick start</span>
+          </div>
+          <div class="install-block-body">
+<pre><span class="comment-line"># Press F2 to select an agent (Claude, Codex, Gemini...)</span>
+<span class="comment-line"># Press Ctrl+3 for 3-panel layout</span>
+<span class="comment-line"># Press Ctrl+B to browse 120 prompt templates</span>
+<span class="comment-line"># Agents auto-discover Commander Protocol via skill files</span></pre>
+          </div>
+        </div>
+
+        <p class="install-note">Requires Node.js 18+ &nbsp;&bull;&nbsp; Works on macOS, Linux, and WSL &nbsp;&bull;&nbsp; <a href="https://github.com/ArekLech/agents-commander">Full documentation on GitHub</a></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== FOOTER ==================== -->
+  <footer>
+    <div class="container">
+      <div class="footer-content">
+        <div class="footer-left">
+          Built by <strong>Lech Kalinowski</strong> &nbsp;&bull;&nbsp; CC BY-NC 4.0 &nbsp;&bull;&nbsp; v0.1.0
+        </div>
+        <div class="footer-right">
+          <a href="https://github.com/ArekLech/agents-commander">GitHub</a>
+          <a href="#install">Install</a>
+          <a href="#features">Features</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

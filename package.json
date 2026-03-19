@@ -1,0 +1,73 @@
+{
+  "name": "agents-commander",
+  "version": "0.1.0",
+  "description": "Terminal UI for managing multiple AI agent CLIs",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "bin": {
+    "agents-commander": "./dist/bin/agents-commander.js",
+    "ac": "./dist/bin/agents-commander.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.py",
+    "dist/**/*.md",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup && mkdir -p dist/agents dist/templates && cp src/agents/pty-helper.py dist/agents/ && cp src/templates/builtin/*.md dist/templates/",
+    "dev": "tsup --watch",
+    "start": "node dist/bin/agents-commander.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm run test"
+  },
+  "keywords": [
+    "terminal",
+    "tui",
+    "file-manager",
+    "ai-agents",
+    "claude",
+    "gemini",
+    "codex",
+    "aider",
+    "goose",
+    "multi-agent",
+    "orchestration"
+  ],
+  "author": "Lech Kalinowski",
+  "license": "CC-BY-NC-4.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lkalinowski/agents-commander.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lkalinowski/agents-commander/issues"
+  },
+  "homepage": "https://github.com/lkalinowski/agents-commander#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "chokidar": "^5.0.0",
+    "commander": "^14.0.3",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.4.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

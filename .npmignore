@@ -1,0 +1,14 @@
+# Source maps — not needed in published package
+*.map
+
+# Dev/build files
+src/
+tests/
+tsconfig.json
+tsup.config.ts
+*.tsbuildinfo
+.DS_Store
+.env*
+
+# Presentation
+*.pptx

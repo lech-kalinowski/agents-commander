@@ -765,15 +765,18 @@ export class TerminalPanel {
   }
 
   private findPtyHelper(): string {
-    const candidates = [
-      path.join(process.cwd(), 'src', 'agents', 'pty-helper.py'),
-      path.join(process.cwd(), 'dist', 'agents', 'pty-helper.py'),
-    ];
+    const candidates: string[] = [];
     try {
       const thisDir = path.dirname(fileURLToPath(import.meta.url));
+      // npm install: dist/src/index.js -> dist/agents/pty-helper.py
+      candidates.push(path.join(thisDir, '..', 'agents', 'pty-helper.py'));
+      // Local dev variants
       candidates.push(path.join(thisDir, '..', 'src', 'agents', 'pty-helper.py'));
       candidates.push(path.join(thisDir, '..', '..', 'src', 'agents', 'pty-helper.py'));
     } catch { /* ignore */ }
+    // Fallback: CWD-relative (works when running from repo root)
+    candidates.push(path.join(process.cwd(), 'src', 'agents', 'pty-helper.py'));
+    candidates.push(path.join(process.cwd(), 'dist', 'agents', 'pty-helper.py'));
 
     for (const p of candidates) {
       if (fs.existsSync(p)) return p;

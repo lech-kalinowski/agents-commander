@@ -1,6 +1,6 @@
 <p align="center">
   <br>
-  <img width="180" src="./assets/logo.png" alt="Agents Commander">
+  <img width="180" src="https://github.com/lech-kalinowski/agents-commander/blob/main/assets/logo.png" alt="Agents Commander">
   <br>
   <br>
 </p>
@@ -41,11 +41,8 @@
 ## Quick Start
 
 ```bash
-git clone https://github.com/lech-kalinowski/agents-commander.git
-cd agents-commander
-npm install
-npm run build
-npm start
+npm install -g agents-commander
+agents-commander
 ```
 
 ---

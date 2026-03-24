@@ -8,8 +8,7 @@
     ".": "./dist/src/index.js"
   },
   "bin": {
-    "agents-commander": "./dist/bin/agents-commander.js",
-    "ac": "./dist/bin/agents-commander.js"
+    "agents-commander": "./dist/bin/agents-commander.js"
   },
   "files": [
     "dist/**/*.js",

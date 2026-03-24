@@ -1,6 +1,6 @@
 {
   "name": "agents-commander",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Terminal UI for managing multiple AI agent CLIs",
   "type": "module",
   "main": "./dist/src/index.js",

@@ -389,7 +389,7 @@ export class VTerm {
 
         // CSI: ESC [ ... letter
         // Params may use colons as sub-parameter separators (modern SGR)
-        const csiMatch = remaining.match(/^\x1b\[([?!>]?)([0-9;:]*)([ -/]*[A-Za-z@`])/);
+        const csiMatch = remaining.match(/^\x1b\[([?!><=]?)([0-9;:]*)([ -/]*[@-~])/);
         if (csiMatch) {
           // Normalize colons to semicolons for handleCSI (sub-params are
           // treated as regular params — good enough for SGR color support)
@@ -766,14 +766,14 @@ export class VTerm {
           }
         }
         break;
-      case 'm': // SGR — Select Graphic Rendition
-        this.handleSGR(nums);
+      case 'm': // SGR — Select Graphic Rendition (only standard, not >-prefixed XTMODKEYS)
+        if (!prefix) this.handleSGR(nums);
         break;
       case 's': // Save cursor position (ANSI.SYS)
         this.savedCursor = { row: this.cursorRow, col: this.cursorCol, style: cloneStyle(this.style) };
         break;
-      case 'u': // Restore cursor position (ANSI.SYS)
-        if (this.savedCursor) {
+      case 'u': // Restore cursor position (ANSI.SYS) — only unprefixed, not Kitty keyboard >u/<u
+        if (!prefix && this.savedCursor) {
           this.cursorRow = this.savedCursor.row;
           this.cursorCol = this.savedCursor.col;
           this.style = cloneStyle(this.savedCursor.style);

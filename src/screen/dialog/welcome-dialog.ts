@@ -11,7 +11,7 @@ const LOGO = `
               ┃  ┃ ┃┃┃┃┃┃┃┣━┫┃┗┫ ┃┃┣╸ ┣┳┛
               ┗━╸┗━┛╹ ╹╹ ╹╹ ╹╹ ╹╺┻┛┗━╸╹┗╸{/cyan-fg}{/bold}
 
-         {bold}v0.1.0{/bold}  —  Multi-Agent Terminal Manager
+         {bold}v0.1.3{/bold}  —  Multi-Agent Terminal Manager
 
 
   {bold}{yellow-fg}Run multiple AI agents side by side{/yellow-fg}{/bold}

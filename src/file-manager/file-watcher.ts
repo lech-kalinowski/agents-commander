@@ -1,25 +1,29 @@
 import { watch, type FSWatcher } from 'chokidar';
 import { appEvents } from '../utils/events.js';
 import { logger } from '../utils/logger.js';
+import path from 'node:path';
 
 let watcher: FSWatcher | null = null;
+const IGNORED_DIRECTORIES = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  '.next',
+  'build',
+  '__pycache__',
+]);
+
+export function isIgnoredWatchPath(filePath: string): boolean {
+  return path.resolve(filePath).split(path.sep).some((part) => IGNORED_DIRECTORIES.has(part));
+}
 
 export function startWatching(rootPath: string, debounceMs = 100): void {
   if (watcher) {
     watcher.close();
   }
 
-  const ignored = [
-    '**/node_modules/**',
-    '**/.git/**',
-    '**/dist/**',
-    '**/.next/**',
-    '**/build/**',
-    '**/__pycache__/**',
-  ];
-
   watcher = watch(rootPath, {
-    ignored,
+    ignored: isIgnoredWatchPath,
     persistent: true,
     ignoreInitial: true,
     awaitWriteFinish: { stabilityThreshold: debounceMs, pollInterval: 50 },

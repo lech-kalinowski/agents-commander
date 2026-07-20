@@ -126,4 +126,14 @@ export const KNOWN_AGENTS: Omit<AgentInfo, 'installed'>[] = [
     installCommand: 'npm install -g @sourcegraph/amp',
     supported: false,
   },
+  {
+    type: 'generic',
+    name: 'Shell',
+    command: 'bash',
+    args: [],
+    env: {},
+    description: 'Generic interactive shell',
+    installCommand: 'Install bash or configure agents.generic.command',
+    supported: true,
+  },
 ];

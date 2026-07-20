@@ -86,4 +86,29 @@ describe('MessageLedger', () => {
       error: 'transport closed',
     });
   });
+
+  it('bounds completed history while retaining queued messages', () => {
+    const ledger = new MessageLedger(2);
+    const source = {
+      sessionId: 'src-1',
+      panelIndex: 0,
+      agentName: 'Codex CLI',
+      agentType: 'codex' as const,
+    };
+    const target = {
+      sessionId: 'dst-1',
+      panelIndex: 1,
+      agentName: 'Claude Code',
+      agentType: 'claude' as const,
+    };
+
+    const oldest = ledger.createMessage({ kind: 'send', source, target, content: 'one' });
+    ledger.markDelivered(oldest.messageId);
+    const middle = ledger.createMessage({ kind: 'send', source, target, content: 'two' });
+    ledger.markDelivered(middle.messageId);
+    const queued = ledger.createMessage({ kind: 'send', source, target, content: 'three' });
+
+    expect(ledger.getMessage(oldest.messageId)).toBeNull();
+    expect(ledger.getRecentMessages()).toEqual([queued, middle]);
+  });
 });

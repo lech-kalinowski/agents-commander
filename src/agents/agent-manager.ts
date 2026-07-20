@@ -2,6 +2,7 @@ import type { AgentType, AgentInfo } from './types.js';
 import { getAgentInfo } from './agent-registry.js';
 import { TerminalPanel } from '../panels/terminal-panel.js';
 import { logger } from '../utils/logger.js';
+import type { AgentCommandConfig } from '../config/types.js';
 
 interface ManagedAgent {
   type: AgentType;
@@ -10,6 +11,7 @@ interface ManagedAgent {
   launchedAt: Date;
   restartCount: number;
   sessionId: string;
+  restartTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export interface RunningAgentInfo {
@@ -36,8 +38,10 @@ export class AgentManager {
   private sessionSeq = 1;
   private lifecycleListeners = new Set<(event: AgentLifecycleEvent) => void>();
 
+  constructor(private agentOverrides?: Record<string, AgentCommandConfig>) {}
+
   launchAgent(agentType: AgentType, panel: TerminalPanel): boolean {
-    const info = getAgentInfo(agentType);
+    const info = getAgentInfo(agentType, this.agentOverrides);
     if (!info) {
       logger.error(`Unknown agent type: ${agentType}`);
       return false;
@@ -51,6 +55,19 @@ export class AgentManager {
     if (!info.supported) {
       logger.error(`Agent not yet supported: ${info.name}`);
       return false;
+    }
+
+    const previous = this.agents.get(panel.panelIndex);
+    if (previous) {
+      this.cancelRestart(previous);
+      this.emitLifecycle({
+        type: 'exited',
+        panelIndex: panel.panelIndex,
+        sessionId: previous.sessionId,
+        agentType: previous.type,
+        agentName: previous.info.name,
+      });
+      this.agents.delete(panel.panelIndex);
     }
 
     // Set exit handler for auto-restart
@@ -69,6 +86,7 @@ export class AgentManager {
       launchedAt: new Date(),
       restartCount: 0,
       sessionId,
+      restartTimer: null,
     });
     this.emitLifecycle({
       type: 'launched',
@@ -110,6 +128,7 @@ export class AgentManager {
   private handleAgentExit(panelIndex: number, code: number | null, signal: string | null): void {
     const managed = this.agents.get(panelIndex);
     if (!managed) return;
+    if (managed.restartTimer) return;
 
     // Only restart if it crashed (non-zero exit code) and not killed by a signal
     if (code !== 0 && code !== null && signal === null) {
@@ -118,26 +137,32 @@ export class AgentManager {
         logger.warn(`Agent manager: ${managed.info.name} on panel ${panelIndex} crashed (code=${code}). Restarting (${managed.restartCount}/${AgentManager.MAX_RESTARTS})...`);
         
         // Wait a bit before restarting to avoid tight loops
-        setTimeout(() => {
+        managed.restartTimer = setTimeout(() => {
+          managed.restartTimer = null;
+          const currentPanelIndex = this.findManagedPanelIndex(managed);
+          if (currentPanelIndex === null) return;
+
           const previousSessionId = managed.sessionId;
           const relaunched = this.performLaunch(managed.type, managed.info, managed.panel);
           if (!relaunched) {
             this.emitLifecycle({
               type: 'exited',
-              panelIndex,
+              panelIndex: currentPanelIndex,
               sessionId: previousSessionId,
               agentType: managed.type,
               agentName: managed.info.name,
             });
-            this.agents.delete(panelIndex);
+            if (this.agents.get(currentPanelIndex) === managed) {
+              this.agents.delete(currentPanelIndex);
+            }
             return;
           }
 
-          managed.sessionId = this.makeSessionId(managed.type, panelIndex);
+          managed.sessionId = this.makeSessionId(managed.type, currentPanelIndex);
           managed.launchedAt = new Date();
           this.emitLifecycle({
             type: 'restarted',
-            panelIndex,
+            panelIndex: currentPanelIndex,
             sessionId: managed.sessionId,
             previousSessionId,
             agentType: managed.type,
@@ -164,6 +189,7 @@ export class AgentManager {
   killAgent(panelIndex: number): void {
     const managed = this.agents.get(panelIndex);
     if (managed) {
+      this.cancelRestart(managed);
       managed.panel.killAgent();
       this.emitLifecycle({
         type: 'exited',
@@ -179,6 +205,7 @@ export class AgentManager {
 
   killAll(): void {
     for (const [idx, managed] of this.agents) {
+      this.cancelRestart(managed);
       managed.panel.killAgent();
       this.emitLifecycle({
         type: 'exited',
@@ -195,7 +222,10 @@ export class AgentManager {
   reindexAfterPanelRemoval(removedPanelIndex: number): void {
     const reindexed = new Map<number, ManagedAgent>();
     for (const [panelIndex, managed] of this.agents) {
-      if (panelIndex === removedPanelIndex) continue;
+      if (panelIndex === removedPanelIndex) {
+        this.cancelRestart(managed);
+        continue;
+      }
       const nextIndex = panelIndex > removedPanelIndex ? panelIndex - 1 : panelIndex;
       reindexed.set(nextIndex, managed);
     }
@@ -207,7 +237,7 @@ export class AgentManager {
     const now = new Date().getTime();
 
     for (const [idx, managed] of this.agents) {
-      if (!managed.panel.isRunning) {
+      if (!managed.panel.isRunning && !managed.restartTimer) {
         // Stale entry cleanup (though onExit should handle most cases)
         this.agents.delete(idx);
         continue;
@@ -218,7 +248,7 @@ export class AgentManager {
         sessionId: managed.sessionId,
         type: managed.type,
         name: managed.info.name,
-        status: managed.panel.status,
+        status: managed.restartTimer ? 'restarting' : managed.panel.status,
         uptime: Math.floor((now - managed.launchedAt.getTime()) / 1000),
       });
     }
@@ -228,6 +258,10 @@ export class AgentManager {
   isAgentRunning(panelIndex: number): boolean {
     const managed = this.agents.get(panelIndex);
     return managed?.panel.isRunning ?? false;
+  }
+
+  hasAgent(panelIndex: number): boolean {
+    return this.agents.has(panelIndex);
   }
 
   getAgentType(panelIndex: number): AgentType | null {
@@ -266,6 +300,19 @@ export class AgentManager {
         logger.error('Agent manager: lifecycle listener failed', err);
       }
     }
+  }
+
+  private cancelRestart(managed: ManagedAgent): void {
+    if (!managed.restartTimer) return;
+    clearTimeout(managed.restartTimer);
+    managed.restartTimer = null;
+  }
+
+  private findManagedPanelIndex(managed: ManagedAgent): number | null {
+    for (const [panelIndex, candidate] of this.agents) {
+      if (candidate === managed) return panelIndex;
+    }
+    return null;
   }
 
   private makeSessionId(agentType: AgentType, panelIndex: number): string {

@@ -11,8 +11,15 @@ export async function readDirectory(dirPath: string, showHidden: boolean): Promi
 
     const fullPath = path.join(dirPath, dirent.name);
     try {
-      const stat = await fs.stat(fullPath);
       const lstat = await fs.lstat(fullPath);
+      let stat = lstat;
+      if (lstat.isSymbolicLink()) {
+        try {
+          stat = await fs.stat(fullPath);
+        } catch {
+          // Keep broken symlinks visible so users can inspect or remove them.
+        }
+      }
       entries.push({
         name: dirent.name,
         fullPath,
@@ -41,8 +48,15 @@ function formatPermissions(mode: number): string {
 
 export async function getFileInfo(filePath: string): Promise<FileEntry | null> {
   try {
-    const stat = await fs.stat(filePath);
     const lstat = await fs.lstat(filePath);
+    let stat = lstat;
+    if (lstat.isSymbolicLink()) {
+      try {
+        stat = await fs.stat(filePath);
+      } catch {
+        // Report metadata for the link itself when its target is missing.
+      }
+    }
     return {
       name: path.basename(filePath),
       fullPath: filePath,

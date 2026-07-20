@@ -7,6 +7,12 @@ import { sortFiles } from '../file-manager/file-sorter.js';
 import { formatFileSize, formatDate, truncate } from '../utils/format.js';
 import { logger } from '../utils/logger.js';
 
+interface FilePanelOptions {
+  showHidden?: boolean;
+  sortBy?: SortOptions['field'];
+  sortAscending?: boolean;
+}
+
 export class FilePanel {
   public box: blessed.Widgets.BoxElement;
   public list: blessed.Widgets.ListElement;
@@ -28,6 +34,8 @@ export class FilePanel {
 
   /** Called when the user clicks anywhere on this panel (for focus switching). */
   public onMouseClick: (() => void) | null = null;
+  /** Called when keyboard or mouse navigation changes the current entry. */
+  public onSelectionChange: (() => void) | null = null;
 
   get currentPath(): string {
     return this._currentPath;
@@ -61,11 +69,18 @@ export class FilePanel {
     panelIndex: number,
     initialPath: string,
     position: { top: number | string; left: number | string; width: number | string; height: number | string },
+    options: FilePanelOptions = {},
   ) {
     this.screen = screen;
     this.theme = theme;
     this.panelIndex = panelIndex;
     this._currentPath = initialPath;
+    this.showHidden = options.showHidden ?? false;
+    this.sortOptions = {
+      ...this.sortOptions,
+      field: options.sortBy ?? this.sortOptions.field,
+      ascending: options.sortAscending ?? this.sortOptions.ascending,
+    };
 
     // Main container box with border
     this.box = blessed.box({
@@ -243,6 +258,7 @@ export class FilePanel {
   private setupKeyBindings(): void {
     this.list.on('select item', (_item: any, index: number) => {
       this.cursorIndex = index;
+      this.onSelectionChange?.();
     });
 
     // Enter key - navigate into directory or trigger file open

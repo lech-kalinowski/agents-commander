@@ -50,7 +50,7 @@ export class App {
     if (overrides?.showHidden !== undefined) this.config.showHidden = overrides.showHidden;
     this.theme = getTheme(this.config.theme);
     this.workingDir = workingDir || process.cwd();
-    this.agentManager = new AgentManager();
+    this.agentManager = new AgentManager(this.config.agents);
   }
 
   async run(): Promise<void> {
@@ -349,6 +349,7 @@ export class App {
       this.theme,
       this.layout.panelCount,
       this.layout.allPanels.indexOf(this.layout.activePanel),
+      this.config.agents,
     );
 
     if (choice) {
@@ -399,6 +400,7 @@ export class App {
         this.theme,
         this.layout.panelCount,
         panelIndex,
+        this.config.agents,
       );
       if (agentChoice) {
         const targetPanel = agentChoice.panelIndex;
@@ -507,12 +509,10 @@ export class App {
       if (this.layout.panelCount <= 2) return;
       const idx = this.layout.allPanels.indexOf(this.layout.activePanel);
       const tp = this.layout.getTerminalPanel(idx);
-      if (tp?.isRunning) {
-        if (this.agentManager.isAgentRunning(tp.panelIndex)) {
-          this.agentManager.killAgent(tp.panelIndex);
-        } else {
-          tp.killAgent(true);
-        }
+      if (this.agentManager.hasAgent(idx)) {
+        this.agentManager.killAgent(idx);
+      } else if (tp?.isRunning) {
+        tp.killAgent(true);
       }
       if (tp) {
         this.orchestrator.disconnectPanel(idx);
@@ -632,15 +632,16 @@ export class App {
       const idx = this.layout.allPanels.indexOf(this.layout.activePanel);
       if (this.layout.isTerminalPanel(idx)) {
         const tp = this.layout.getTerminalPanel(idx);
-        if (tp?.isRunning) {
+        const hasManagedAgent = this.agentManager.hasAgent(idx);
+        if (tp?.isRunning || hasManagedAgent) {
           const confirmed = await showConfirmDialog(
             screen, this.theme, 'Close Terminal',
             'A session is running. Kill it and switch back to a file panel?',
           );
           if (!confirmed) return;
-          if (this.agentManager.isAgentRunning(idx)) {
+          if (hasManagedAgent) {
             this.agentManager.killAgent(idx);
-          } else {
+          } else if (tp) {
             tp.killAgent(true);
           }
         }
@@ -698,15 +699,6 @@ export class App {
       showToast(screen, 'Panels reset to default');
     }));
 
-    // Update status on list navigation
-    for (const panel of this.layout.allPanels) {
-      if (panel instanceof FilePanel) {
-        panel.list.on('select item', () => {
-          this.updateStatus();
-          screen.render();
-        });
-      }
-    }
   }
 
   private updateStatus(): void {
@@ -742,6 +734,7 @@ export class App {
         this.layout.refreshAll();
         this.layout.activePanel.setFocus(true);
       },
+      this.config.editor,
     );
     await editor.open();
   }

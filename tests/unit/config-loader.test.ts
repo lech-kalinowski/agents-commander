@@ -48,4 +48,44 @@ describe('loadConfig', () => {
 
     expect(loadConfig()).toEqual(defaultConfig);
   });
+
+  it('rejects invalid values instead of returning an unsafe typed config', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+      panelCount: 99,
+      showHidden: 'yes',
+      sortBy: 'random',
+      watchDebounce: -1,
+      editor: { tabSize: 0, wordWrap: 'no' },
+      agents: {
+        codex: { command: '', args: 'fast', env: { VALID: 'yes', INVALID: 1 } },
+      },
+      orchestration: { ackTimeout: 'forever', maxContentLines: 0 },
+    }) as never);
+
+    const config = loadConfig();
+
+    expect(config.panelCount).toBe(defaultConfig.panelCount);
+    expect(config.showHidden).toBe(defaultConfig.showHidden);
+    expect(config.sortBy).toBe(defaultConfig.sortBy);
+    expect(config.watchDebounce).toBe(defaultConfig.watchDebounce);
+    expect(config.editor).toEqual(defaultConfig.editor);
+    expect(config.agents.codex).toEqual({
+      ...defaultConfig.agents.codex,
+      env: { VALID: 'yes' },
+    });
+    expect(config.orchestration).toEqual(defaultConfig.orchestration);
+  });
+
+  it('returns fresh nested defaults on every load', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+
+    const first = loadConfig();
+    first.editor.tabSize = 8;
+    first.agents.codex.args.push('--changed');
+
+    const second = loadConfig();
+    expect(second.editor.tabSize).toBe(defaultConfig.editor.tabSize);
+    expect(second.agents.codex.args).toEqual(defaultConfig.agents.codex.args);
+  });
 });

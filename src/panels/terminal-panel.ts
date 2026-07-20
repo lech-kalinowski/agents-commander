@@ -427,8 +427,15 @@ export class TerminalPanel {
 
     try {
       const helperPath = this.findPtyHelper();
+      const pythonPath = this.resolveFullPath('python3');
+      if (!helperPath) {
+        throw new Error('pty-helper.py not found in the installed package');
+      }
+      if (!pythonPath) {
+        throw new Error('python3 is required to launch terminal sessions');
+      }
 
-      this.proc = spawn('python3', [helperPath, '--cwd', this.cwd, '--', resolvedPath, ...args], {
+      this.proc = spawn(pythonPath, [helperPath, '--cwd', this.cwd, '--', resolvedPath, ...args], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: spawnEnv,
       });
@@ -482,12 +489,21 @@ export class TerminalPanel {
         this.scheduleRender();
       });
 
+      const thisProc = this.proc;
       this.proc.on('error', (err: Error) => {
-        this._status = 'error';
-        this.vterm.write(`\r\nProcess error: ${err.message}\r\n`);
-        this.updateHeader();
-        this.proc = null;
-        this.scheduleRender();
+        if (this.proc === thisProc) {
+          this._status = 'error';
+          this.vterm.write(`\r\nProcess error: ${err.message}\r\n`);
+          this.updateHeader();
+          this.proc = null;
+          this.stdoutDecoder = null;
+          this.stderrDecoder = null;
+          this.scanner = null;
+          this.scannerEnabled = false;
+          this.onExit?.(null, null);
+          this.runExitHandler();
+          this.scheduleRender();
+        }
         logger.error(`Terminal session error: ${this.agentName}`, err);
       });
 
@@ -495,7 +511,6 @@ export class TerminalPanel {
       // cleans up if THIS process is still the active one.  Without this
       // guard, killing an agent and immediately launching a new one causes
       // the old process's close event to null out the NEW scanner.
-      const thisProc = this.proc;
       this.proc.on('close', (code: number | null, signal: string | null) => {
         if (this.proc === thisProc) {
           this.flushDecodedPtyStreams();
@@ -764,7 +779,7 @@ export class TerminalPanel {
     }, 50); // ~20fps, single repaint for all panels
   }
 
-  private findPtyHelper(): string {
+  private findPtyHelper(): string | null {
     const candidates: string[] = [];
     try {
       const thisDir = path.dirname(fileURLToPath(import.meta.url));
@@ -784,7 +799,7 @@ export class TerminalPanel {
     const fallback = path.join(os.homedir(), '.agents-commander', 'pty-helper.py');
     if (fs.existsSync(fallback)) return fallback;
     logger.error('pty-helper.py not found');
-    return candidates[0];
+    return null;
   }
 
   private resolveFullPath(command: string): string | null {

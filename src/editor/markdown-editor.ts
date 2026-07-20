@@ -14,6 +14,8 @@ export class MarkdownEditor {
   private filePath: string;
   private modified = false;
   private onClose: () => void;
+  private tabSize: number;
+  private wordWrap: boolean;
 
   private lines: string[] = [''];
   private cursorRow = 0;
@@ -25,11 +27,14 @@ export class MarkdownEditor {
     theme: Theme,
     filePath: string,
     onClose: () => void,
+    options: { tabSize?: number; wordWrap?: boolean } = {},
   ) {
     this.screen = screen;
     this.theme = theme;
     this.filePath = filePath;
     this.onClose = onClose;
+    this.tabSize = Math.max(1, Math.min(16, Math.trunc(options.tabSize ?? 2)));
+    this.wordWrap = options.wordWrap ?? true;
 
     // Full-screen container
     this.container = blessed.box({
@@ -78,6 +83,7 @@ export class MarkdownEditor {
         fg: theme.editor.fg,
       },
       tags: true,
+      wrap: this.wordWrap,
     });
 
     // Status line
@@ -293,7 +299,7 @@ export class MarkdownEditor {
 
     // Tab - insert spaces
     this.container.key(['tab'], () => {
-      const spaces = '  ';
+      const spaces = ' '.repeat(this.tabSize - (this.cursorCol % this.tabSize));
       const line = this.lines[this.cursorRow];
       this.lines[this.cursorRow] = line.slice(0, this.cursorCol) + spaces + line.slice(this.cursorCol);
       this.cursorCol += spaces.length;

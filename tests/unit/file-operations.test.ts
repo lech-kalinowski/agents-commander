@@ -6,11 +6,14 @@ vi.mock('node:fs/promises', () => ({
   default: {
     cp: vi.fn(),
     copyFile: vi.fn(),
+    lstat: vi.fn(),
     mkdir: vi.fn(),
+    readlink: vi.fn(),
     readdir: vi.fn(),
     rename: vi.fn(),
     rm: vi.fn(),
     stat: vi.fn(),
+    symlink: vi.fn(),
   },
 }));
 
@@ -20,12 +23,15 @@ describe('file operations', () => {
   });
 
   it('uses fs.cp for directory copies', async () => {
-    vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as Awaited<ReturnType<typeof fs.stat>>);
+    vi.mocked(fs.lstat).mockResolvedValue({
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+    } as Awaited<ReturnType<typeof fs.lstat>>);
     vi.mocked(fs.cp).mockResolvedValue(undefined);
 
     await copyFile('src-dir', 'dest-dir');
 
-    expect(fs.cp).toHaveBeenCalledWith('src-dir', 'dest-dir', { recursive: true });
+    expect(fs.cp).toHaveBeenCalledWith('src-dir', 'dest-dir', { recursive: true, dereference: false });
     expect(fs.copyFile).not.toHaveBeenCalled();
   });
 
@@ -39,7 +45,10 @@ describe('file operations', () => {
 
   it('falls back to copy and delete on EXDEV', async () => {
     vi.mocked(fs.rename).mockRejectedValue(Object.assign(new Error('cross-device'), { code: 'EXDEV' }));
-    vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as Awaited<ReturnType<typeof fs.stat>>);
+    vi.mocked(fs.lstat).mockResolvedValue({
+      isDirectory: () => false,
+      isSymbolicLink: () => false,
+    } as Awaited<ReturnType<typeof fs.lstat>>);
     vi.mocked(fs.copyFile).mockResolvedValue(undefined);
     vi.mocked(fs.rm).mockResolvedValue(undefined);
 
@@ -56,8 +65,24 @@ describe('file operations', () => {
 
     await expect(moveFile('src.txt', 'dest.txt')).rejects.toBe(error);
 
-    expect(fs.stat).not.toHaveBeenCalled();
+    expect(fs.lstat).not.toHaveBeenCalled();
     expect(fs.copyFile).not.toHaveBeenCalled();
     expect(fs.rm).not.toHaveBeenCalled();
+  });
+
+  it('copies symbolic links without dereferencing their targets', async () => {
+    vi.mocked(fs.lstat).mockResolvedValue({
+      isDirectory: () => false,
+      isSymbolicLink: () => true,
+    } as Awaited<ReturnType<typeof fs.lstat>>);
+    vi.mocked(fs.readlink).mockResolvedValue('../target.txt');
+    vi.mocked(fs.symlink).mockResolvedValue(undefined);
+
+    await copyFile('source-link', 'dest-link');
+
+    expect(fs.readlink).toHaveBeenCalledWith('source-link');
+    expect(fs.symlink).toHaveBeenCalledWith('../target.txt', 'dest-link');
+    expect(fs.copyFile).not.toHaveBeenCalled();
+    expect(fs.cp).not.toHaveBeenCalled();
   });
 });

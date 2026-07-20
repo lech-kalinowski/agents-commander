@@ -4,6 +4,7 @@ import type { AgentType } from '../../agents/types.js';
 import { discoverAgents } from '../../agents/agent-registry.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
 import { renderPanelBoxes } from './panel-picker.js';
+import type { AgentCommandConfig } from '../../config/types.js';
 
 export interface AgentLaunchChoice {
   agentType: AgentType;
@@ -17,13 +18,14 @@ export function showAgentDialog(
   theme: Theme,
   panelCount: number,
   activePanelIndex: number,
+  agentOverrides?: Record<string, AgentCommandConfig>,
 ): Promise<AgentLaunchChoice | null> {
   if (agentDialogOpen) return Promise.resolve(null);
   agentDialogOpen = true;
   enterDialog();
 
   return new Promise((resolve) => {
-    const agents = discoverAgents();
+    const agents = discoverAgents(agentOverrides);
 
     const dialog = blessed.box({
       parent: screen,

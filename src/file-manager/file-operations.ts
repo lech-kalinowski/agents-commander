@@ -4,7 +4,11 @@ import path from 'node:path';
 export type ProgressCallback = (current: number, total: number, name: string) => void;
 
 export async function copyFile(src: string, dest: string): Promise<void> {
-  const stat = await fs.stat(src);
+  const stat = await fs.lstat(src);
+  if (stat.isSymbolicLink()) {
+    await fs.symlink(await fs.readlink(src), dest);
+    return;
+  }
   if (stat.isDirectory()) {
     await copyDirectory(src, dest);
   } else {
@@ -13,7 +17,7 @@ export async function copyFile(src: string, dest: string): Promise<void> {
 }
 
 async function copyDirectory(src: string, dest: string): Promise<void> {
-  await fs.cp(src, dest, { recursive: true });
+  await fs.cp(src, dest, { recursive: true, dereference: false });
 }
 
 export async function moveFile(src: string, dest: string): Promise<void> {
@@ -46,8 +50,8 @@ export async function copyFiles(
   for (let i = 0; i < sources.length; i++) {
     const src = sources[i];
     const destPath = path.join(destDir, path.basename(src));
-    onProgress?.(i + 1, sources.length, path.basename(src));
     await copyFile(src, destPath);
+    onProgress?.(i + 1, sources.length, path.basename(src));
   }
 }
 
@@ -59,8 +63,8 @@ export async function moveFiles(
   for (let i = 0; i < sources.length; i++) {
     const src = sources[i];
     const destPath = path.join(destDir, path.basename(src));
-    onProgress?.(i + 1, sources.length, path.basename(src));
     await moveFile(src, destPath);
+    onProgress?.(i + 1, sources.length, path.basename(src));
   }
 }
 
@@ -69,7 +73,7 @@ export async function deleteFiles(
   onProgress?: ProgressCallback,
 ): Promise<void> {
   for (let i = 0; i < sources.length; i++) {
-    onProgress?.(i + 1, sources.length, path.basename(sources[i]));
     await deleteFile(sources[i]);
+    onProgress?.(i + 1, sources.length, path.basename(sources[i]));
   }
 }

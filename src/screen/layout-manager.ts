@@ -79,6 +79,11 @@ export class LayoutManager {
         if (this.onPanelFocused) this.onPanelFocused();
       }
     };
+    if (panel instanceof FilePanel) {
+      panel.onSelectionChange = () => {
+        this.onPanelFocused?.();
+      };
+    }
   }
 
   async initialize(initialPath: string, panelCount: LayoutMode = 2): Promise<void> {
@@ -93,6 +98,7 @@ export class LayoutManager {
         i,
         initialPath,
         positions[i],
+        this.filePanelOptions(),
       );
       this.panels.push(panel);
       this.attachMouseFocus(panel, i);
@@ -195,6 +201,7 @@ export class LayoutManager {
       panelIndex,
       initialPath ?? this.workingDir,
       pos,
+      this.filePanelOptions(),
     );
     this.panels[panelIndex] = fp;
     this.attachMouseFocus(fp, panelIndex);
@@ -240,6 +247,7 @@ export class LayoutManager {
       this.panels.length,
       this.workingDir,
       positions[this.panels.length],
+      this.filePanelOptions(),
     );
     this.panels.push(newPanel);
     this.attachMouseFocus(newPanel, this.panels.length - 1);
@@ -309,6 +317,7 @@ export class LayoutManager {
         i,
         this.workingDir,
         positions[i],
+        this.filePanelOptions(),
       );
       this.panels.push(panel);
       this.attachMouseFocus(panel, i);
@@ -341,6 +350,7 @@ export class LayoutManager {
         i,
         this.workingDir,
         positions[i],
+        this.filePanelOptions(),
       );
       this.panels.push(panel);
       this.attachMouseFocus(panel, i);
@@ -357,6 +367,14 @@ export class LayoutManager {
         await panel.loadDirectory();
       }
     }
+  }
+
+  private filePanelOptions(): Pick<AppConfig, 'showHidden' | 'sortBy' | 'sortAscending'> {
+    return {
+      showHidden: this.config.showHidden,
+      sortBy: this.config.sortBy,
+      sortAscending: this.config.sortAscending,
+    };
   }
 
   handleResize(): void {

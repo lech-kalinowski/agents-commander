@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentManager } from '../../src/agents/agent-manager.js';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('AgentManager', () => {
   it('filters out stale agents and removes them from the registry', () => {
@@ -35,11 +39,13 @@ describe('AgentManager', () => {
     expect(manager.agents.has(1)).toBe(false);
   });
 
-  it('handles agent crashes with auto-restart', async () => {
+  it('keeps crashed agents registered while an auto-restart is pending', async () => {
+    vi.useFakeTimers();
     const manager = new AgentManager() as any;
     const mockPanel = {
       panelIndex: 0,
-      isRunning: true,
+      isRunning: false,
+      status: 'error',
       workingDir: '/tmp',
       launchAgent: vi.fn().mockReturnValue(true),
       killAgent: vi.fn(),
@@ -57,12 +63,73 @@ describe('AgentManager', () => {
     // Simulate crash (exit code 1)
     manager.handleAgentExit(0, 1, null);
 
-    // Should have incremented restart count
     expect(manager.agents.get(0).restartCount).toBe(1);
-    
-    // performLaunch should be called after a delay
-    await new Promise(r => setTimeout(r, 1100));
+    expect(manager.getRunningAgents()).toEqual([
+      expect.objectContaining({ panelIndex: 0, status: 'restarting' }),
+    ]);
+
+    await vi.advanceTimersByTimeAsync(1000);
     expect(mockPanel.launchAgent).toHaveBeenCalled();
+  });
+
+  it('cancels a pending restart when the agent is killed', async () => {
+    vi.useFakeTimers();
+    const manager = new AgentManager() as any;
+    const mockPanel = {
+      panelIndex: 0,
+      isRunning: false,
+      status: 'error',
+      workingDir: '/tmp',
+      launchAgent: vi.fn().mockReturnValue(true),
+      killAgent: vi.fn(),
+    };
+
+    manager.agents.set(0, {
+      type: 'codex',
+      info: { name: 'Codex CLI', args: [] },
+      panel: mockPanel,
+      launchedAt: new Date(),
+      restartCount: 0,
+      sessionId: 'codex-session-0',
+      restartTimer: null,
+    });
+
+    manager.handleAgentExit(0, 1, null);
+    expect(manager.hasAgent(0)).toBe(true);
+    manager.killAgent(0);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(mockPanel.launchAgent).not.toHaveBeenCalled();
+    expect(manager.hasAgent(0)).toBe(false);
+    expect(manager.agents.has(0)).toBe(false);
+  });
+
+  it('uses configured commands, arguments, and environment variables', () => {
+    const manager = new AgentManager({
+      generic: {
+        command: process.execPath,
+        args: ['--version'],
+        env: { AGENTS_COMMANDER_TEST: '1' },
+      },
+    });
+    const mockPanel = {
+      panelIndex: 0,
+      isRunning: false,
+      workingDir: '/tmp',
+      launchAgent: vi.fn().mockReturnValue(true),
+      killAgent: vi.fn(),
+      status: 'idle',
+      onExit: null,
+    };
+
+    expect(manager.launchAgent('generic', mockPanel as never)).toBe(true);
+    expect(mockPanel.launchAgent).toHaveBeenCalledWith(
+      'generic',
+      'Shell',
+      process.execPath,
+      ['--version'],
+      { AGENTS_COMMANDER_TEST: '1' },
+    );
   });
 
   it('stops restarting after reaching max limit', () => {

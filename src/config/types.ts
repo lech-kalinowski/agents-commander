@@ -28,6 +28,12 @@ export interface OrchestrationConfig {
   maxContentLines: number;
 }
 
+export interface AgentCommandConfig {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
 export interface AppConfig {
   theme: string;
   panelCount: 2 | 3 | 4;
@@ -36,6 +42,6 @@ export interface AppConfig {
   sortAscending: boolean;
   watchDebounce: number;
   editor: { tabSize: number; wordWrap: boolean };
-  agents: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
+  agents: Record<string, AgentCommandConfig>;
   orchestration?: Partial<OrchestrationConfig>;
 }

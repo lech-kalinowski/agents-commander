@@ -916,8 +916,11 @@ export class VTerm {
         }
         break;
       case 2: // Entire display
+        this.grid = this.makeGrid();
+        break;
       case 3: // Entire display + scrollback (xterm)
         this.grid = this.makeGrid();
+        this.scrollback = [];
         break;
     }
   }

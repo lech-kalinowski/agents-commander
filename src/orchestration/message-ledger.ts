@@ -56,6 +56,8 @@ export class MessageLedger {
   private threads = new Map<string, ThreadRecord>();
   private pendingReplies = new Map<string, PendingReplyRoute[]>();
 
+  constructor(private readonly maxMessages = 1000) {}
+
   createMessage(input: {
     kind: MessageType;
     source: SessionRef;
@@ -89,6 +91,8 @@ export class MessageLedger {
     if (input.target.sessionId) {
       thread.participants.add(input.target.sessionId);
     }
+
+    this.pruneHistory();
 
     return record;
   }
@@ -189,9 +193,35 @@ export class MessageLedger {
   }
 
   getRecentMessages(limit = 50): MessageRecord[] {
-    return [...this.messages.values()]
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, limit);
+    const count = Math.max(0, Math.trunc(limit));
+    if (count === 0) return [];
+    return [...this.messages.values()].slice(-count).reverse();
+  }
+
+  private pruneHistory(): void {
+    if (this.messages.size <= this.maxMessages) return;
+
+    const protectedMessageIds = new Set<string>();
+    const activeThreadIds = new Set<string>();
+    for (const queue of this.pendingReplies.values()) {
+      for (const route of queue) {
+        protectedMessageIds.add(route.replyToMessageId);
+        activeThreadIds.add(route.threadId);
+      }
+    }
+
+    for (const [messageId, record] of this.messages) {
+      if (this.messages.size <= this.maxMessages) break;
+      if (record.status === 'queued' || protectedMessageIds.has(messageId)) continue;
+      this.messages.delete(messageId);
+    }
+
+    for (const record of this.messages.values()) {
+      activeThreadIds.add(record.threadId);
+    }
+    for (const threadId of this.threads.keys()) {
+      if (!activeThreadIds.has(threadId)) this.threads.delete(threadId);
+    }
   }
 
   private ensureThread(threadId: string, createdAt: number): ThreadRecord {

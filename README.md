@@ -56,6 +56,7 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 ## Requirements
 
 - Node.js 18+
+- Python 3 (used by the PTY bridge)
 - macOS or Linux
 - at least one supported AI agent CLI installed
 
@@ -335,6 +336,7 @@ Create `~/.agents-commander/config.json`:
   "panelCount": 2,
   "showHidden": false,
   "sortBy": "name",
+  "sortAscending": true,
   "watchDebounce": 300,
   "editor": {
     "tabSize": 2,
@@ -343,7 +345,7 @@ Create `~/.agents-commander/config.json`:
   "agents": {
     "claude": {
       "command": "claude",
-      "args": [],
+      "args": ["--dangerously-skip-permissions"],
       "env": {}
     }
   }
@@ -415,6 +417,7 @@ This is not a dumb pipe. It's a terminal emulator inside a terminal emulator.
 ## Requirements
 
 - **Node.js** >= 18.0.0
+- **Python 3** (used by the PTY bridge)
 - **macOS** or **Linux** (PTY support required)
 - At least one AI agent CLI installed:
   - `npm i -g @anthropic-ai/claude-code`

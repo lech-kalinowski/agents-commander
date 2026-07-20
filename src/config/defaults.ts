@@ -12,9 +12,9 @@ export const defaultConfig: AppConfig = {
     wordWrap: true,
   },
   agents: {
-    claude: { command: 'claude', args: [], env: {} },
-    codex: { command: 'codex', args: [], env: {} },
-    gemini: { command: 'gemini', args: [], env: {} },
+    claude: { command: 'claude', args: ['--dangerously-skip-permissions'], env: {} },
+    codex: { command: 'codex', args: ['--full-auto', '--no-alt-screen'], env: {} },
+    gemini: { command: 'gemini', args: ['--yolo'], env: {} },
     aider: { command: 'aider', args: [], env: {} },
     cline: { command: 'cline', args: [], env: {} },
     goose: { command: 'goose', args: [], env: {} },

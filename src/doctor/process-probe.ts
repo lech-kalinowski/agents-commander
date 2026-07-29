@@ -7,6 +7,8 @@ export interface ProcessProbeOptions {
   env?: NodeJS.ProcessEnv;
   /** Keep a private stdin pipe open for helpers that treat immediate EOF as cancellation. */
   keepStdinOpen?: boolean;
+  /** Signal sent at the timeout boundary before SIGKILL escalation. */
+  timeoutSignal?: NodeJS.Signals;
 }
 
 export interface ProcessProbeResult {
@@ -22,6 +24,7 @@ export interface ProcessProbeResult {
 
 const DEFAULT_TIMEOUT_MS = 1500;
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024;
+const TERMINATION_GRACE_MS = 250;
 
 export function runBoundedProcess(
   command: string,
@@ -85,7 +88,7 @@ export function runBoundedProcess(
     const timeout = setTimeout(() => {
       timedOut = true;
       try {
-        child.kill('SIGTERM');
+        child.kill(options.timeoutSignal ?? 'SIGTERM');
       } catch {
         // The close/error handler below still settles the probe.
       }
@@ -95,7 +98,7 @@ export function runBoundedProcess(
         } catch {
           // The hard deadline below bounds even an unusual failed kill.
         }
-      }, 100);
+      }, TERMINATION_GRACE_MS);
     }, timeoutMs);
 
     const hardDeadline = setTimeout(() => {

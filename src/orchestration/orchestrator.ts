@@ -63,7 +63,7 @@ const CLAUDE_DIRECT_SUBMIT_DELAY_MS = 120;
  * Supported protocol commands:
  *   SEND:agent:panel — direct message to a specific agent
  *   REPLY            — continue the latest open thread for this session
- *   BROADCAST        — send to all connected agents
+ *   BROADCAST        — send to all other connected agents
  *   STATUS           — display progress in Commander UI
  *   QUERY            — ask Commander for environment info
  *
@@ -487,7 +487,7 @@ export class Orchestrator {
     });
   }
 
-  // ── BROADCAST — send to all connected agents ───────────────────
+  // ── BROADCAST — send to all other connected agents ─────────────
 
   private handleBroadcast(msg: CommanderMessage): void {
     const source = this.resolveMessageSource(msg);
@@ -626,7 +626,7 @@ export class Orchestrator {
         '[Commander] Available protocol commands:',
         '  SEND:<type>:<panel> — direct message',
         '  REPLY               — continue your latest open thread',
-        '  BROADCAST           — send to all connected agents',
+        '  BROADCAST           — send to all other connected agents',
         '  STATUS              — display progress in UI',
         '  QUERY               — ask for info (agents, panels, status, help, ping)',
       ].join('\n');

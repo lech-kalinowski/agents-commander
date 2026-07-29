@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="#install">Install</a> &bull;
+  <a href="#quick-start">Install</a> &bull;
   <a href="#demo">Demo</a> &bull;
   <a href="#features">Features</a> &bull;
   <a href="#inter-agent-communication">Agent-to-Agent</a> &bull;
@@ -42,8 +42,11 @@
 
 ```bash
 npm install -g agents-commander
-agents-commander
+agents-commander --doctor .
+agents-commander .
 ```
+
+`--doctor` checks the runtime, PTY bridge, packaged assets, and working directory before the TUI starts.
 
 ---
 
@@ -55,28 +58,43 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
-- macOS or Linux
-- at least one supported AI agent CLI installed
+- macOS, Linux, or WSL2
+- For live AI sessions: Claude Code, Codex CLI, or Gemini CLI. The supported Shell adapter can launch a local interactive shell or a configured command.
+
+The deterministic offline demo does not require an AI agent CLI, API credentials, or network access.
 
 ## Demo
 
+Use the presentation-safe preset with live agent CLIs:
+
+```bash
+agents-commander --conference .
+```
+
+Conference Mode uses the `midnight` theme, starts with two panels, hides dotfiles, and skips the welcome dialog. To rehearse without external services, launch the bundled deterministic demo:
+
+```bash
+agents-commander --demo
+```
+
+Demo Mode creates a temporary seeded workspace, applies the Conference Mode defaults, and offers to launch two bundled local demo roles. The workspace is cleaned up when Commander exits.
+
 ```
 +---------------------------+---------------------------+
-|  Panel 1: Claude Code     |  Panel 2: Codex CLI       |
-|  * Analyzing src/app.ts   |  * Writing tests...       |
+| Panel 1: Demo Coordinator | Panel 2: Demo Reviewer    |
+| Seeded workspace ready.   | Waiting for coordinator.  |
 |                           |                           |
-|  Found 3 issues:          |  > Received from Claude:  |
-|  1. Race condition in...  |    "Write tests for these |
-|  2. Missing null check... |     3 functions..."       |
-|  3. Memory leak in...     |                           |
-|                           |  Creating test suite...   |
-|  ===COMMANDER:SEND:codex  |  test('handles race') {   |
-|  :2===                    |    ...                    |
-|  Write unit tests for     |  }                        |
-|  these 3 issues...        |                           |
-|  ===COMMANDER:END===      |  Done. 12 tests passing.  |
+| ===COMMANDER:SEND:        | [From Demo Coordinator]   |
+| generic:2===              | Review brief.md; total?   |
+| Review brief.md. Confirm  |                           |
+| total=42.                 | STATUS: seeded total 42.  |
+| ===COMMANDER:END===       |                           |
+|                           | ===COMMANDER:REPLY===     |
+| ACK msg=m1 thread=t1      | Deterministic review     |
+|                           | passed: total=42.         |
+|                           | ===COMMANDER:END===       |
 |                           |                           |
 +---------------------------+---------------------------+
  F1Help F2Agent F3+Panel F4View F5Edit F6Copy F7Move F8Mkdir F9Del F10Quit
@@ -86,12 +104,16 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 
 ### Multi-Agent Terminal
 
-Run up to **4 AI agents simultaneously** in split panels. Each agent gets its own pseudo-terminal with full ANSI/xterm-256color support. Type directly into any agent -- keystrokes are forwarded in real-time.
+Run up to **4 AI agents simultaneously** in split panels. Each agent gets its own pseudo-terminal with ANSI/xterm-256color rendering for common interactive CLI output. Type directly into any agent -- keystrokes are forwarded in real-time.
+
+Supported adapters:
 
 - **Claude Code** (Anthropic)
 - **Codex CLI** (OpenAI)
 - **Gemini CLI** (Google)
-- More agents coming: Aider, Cline, OpenCode, Goose, Kiro, Amp
+- **Shell** (a generic local shell or configured command)
+
+The selector also catalogues six future presets that are not launchable yet: Aider, Cline, OpenCode, Goose, Kiro, and Amp.
 
 ### Dual-Panel File Manager
 
@@ -99,15 +121,15 @@ A dual-panel file manager built into the same interface. Browse, copy, move, ren
 
 ### Inter-Agent Communication
 
-The killer feature. Agents can **autonomously send tasks to each other** using a lightweight protocol. No API glue, no custom integrations -- just output markers that Commander intercepts and routes.
+The killer feature. Agents can **autonomously send tasks to each other** using a lightweight protocol. Routing uses local output markers instead of a separate orchestration API or SDK.
 
 ### Built-in Editor
 
-View and edit files with syntax highlighting, directly in the terminal. Open any file with `F4`, or jump into `vim` with `Ctrl+G`.
+Preview regular UTF-8 text files with line numbers using `F4`, edit them in the built-in text editor with `F5`, or open the selected file in Vim with `Ctrl+G`.
 
 ### Themes
 
-Ships with `classic-blue` and `midnight` (dark mode). Fully customizable via config.
+Choose between the built-in `classic-blue` and `midnight` themes through the CLI or configuration file.
 
 ## Inter-Agent Communication
 
@@ -116,7 +138,7 @@ This is what makes Agents Commander different from running `tmux` with multiple 
 ### How it works
 
 1. **Launch agents** in different panels (`F2`)
-2. **Inject the protocol** into each agent (`Ctrl+P`) -- this teaches the agent it can talk to other agents
+2. **Send protocol instructions** to each running agent (`Ctrl+P`) -- the instructions are written directly to that agent's terminal session
 3. **Give a task** that requires collaboration:
 
 ```
@@ -128,7 +150,7 @@ to fix every vulnerability you find."
 
 ### The Protocol
 
-Five commands, one shared end marker. All text-based -- any agent that can print text can use them.
+Five commands, one shared end marker. A connected agent session emits the text markers and Commander scans and routes them locally.
 
 **SEND** -- direct message to a specific agent:
 ```
@@ -144,7 +166,7 @@ Tests written. 12 passing, 0 failing.
 ===COMMANDER:END===
 ```
 
-**BROADCAST** -- send to all connected agents at once:
+**BROADCAST** -- send to every other connected agent at once:
 ```
 ===COMMANDER:BROADCAST===
 Phase 1 complete. All agents: begin phase 2.
@@ -168,15 +190,15 @@ agents
 Commander's `ProtocolScanner` watches all agent output in real-time, strips ANSI codes, detects these markers across streaming chunks, and routes the message. The target agent sees:
 
 ```
-[From Claude Code in Panel 1]: Please write unit tests for the auth module...
+[From Claude Code in Panel 1 | thread=t1 | msg=m1]: Please write unit tests for the auth module...
 ```
 
 After delivery, the sender gets an **ACK**:
 ```
-[Commander] Message delivered to codex in Panel 2 (OK)
+[Commander ACK] status=delivered msg=m1 thread=t1 target="Codex CLI" panel=2
 ```
 
-Fully bidirectional. Any agent to any agent.
+Routing is bidirectional between connected supported sessions.
 
 ### Manual Orchestration
 
@@ -184,7 +206,7 @@ Don't want to wait for agents to figure it out? Press `Ctrl+O` to manually send 
 
 ### Prompt Template Library
 
-**120 built-in prompt templates** across 14 categories, from multi-agent collaboration workflows to single-agent tasks like security audits, testing, debugging, and architecture reviews.
+**121 built-in prompt templates** across 14 categories, from multi-agent collaboration workflows to single-agent tasks like security audits, testing, debugging, and architecture reviews.
 
 #### How to use
 
@@ -198,7 +220,7 @@ Don't want to wait for agents to figure it out? Press `Ctrl+O` to manually send 
 
 | Category | Templates | Description |
 |----------|-----------|-------------|
-| **Collaboration** | 28 | Multi-agent workflows using Commander protocol (code review, security audit, TDD, broadcast kickoff, reply chains, etc.) |
+| **Collaboration** | 29 | Multi-agent workflows using Commander protocol (code review, security audit, TDD, broadcast kickoff, reply chains, etc.) |
 | **Testing** | 12 | Unit tests, integration tests, E2E, property-based, mutation testing, load testing, accessibility |
 | **Security** | 10 | OWASP top 10, dependency scanning, secrets detection, auth review, cryptography, compliance |
 | **Code Quality** | 10 | Code smells, complexity, SOLID, DRY, error handling, tech debt, type safety |
@@ -215,7 +237,7 @@ Don't want to wait for agents to figure it out? Press `Ctrl+O` to manually send 
 
 #### Custom templates
 
-Create your own templates in `~/.agents-commander/templates/`. Each template is a `.md` file with YAML frontmatter:
+Create your own templates in `~/.agents-commander/templates/`. Each template is a `.md` file with simple YAML-like frontmatter:
 
 ```markdown
 ---
@@ -233,13 +255,15 @@ numbered steps, or any other text.
 
 **Frontmatter fields:**
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Display name in the template browser |
-| `description` | Yes | One-line description shown in the preview |
-| `category` | Yes | Category for grouping (e.g., `testing`, `security`, or your own) |
-| `agents` | Yes | Recommended agents: `[any]`, `[claude]`, `[claude, codex]`, etc. |
-| `panels` | Yes | Recommended number of panels: `1`, `2`, or `3` |
+| Field | Default | Description |
+|-------|---------|-------------|
+| `name` | Filename without `.md` | Display name in the template browser |
+| `description` | Empty | One-line description shown in the preview |
+| `category` | `other` | Category for grouping (e.g., `testing`, `security`, or your own) |
+| `agents` | `[any]` | Recommended agents: `[any]`, `[claude]`, `[claude, codex]`, etc. |
+| `panels` | `1` | Recommended number of panels from `1` to `4` |
+
+All metadata fields are optional. The lightweight parser supports the scalar and bracketed-list forms shown above; it is not a full YAML parser.
 
 User templates override built-in templates with the same filename. Templates are reloaded each time you open the browser (`Ctrl+B`).
 
@@ -305,7 +329,7 @@ These shortcuts work everywhere, including on terminal panels with running agent
 |-----|--------|
 | `Ctrl+B` | Browse prompt template library |
 | `Ctrl+O` | Orchestrate -- send task to any agent |
-| `Ctrl+P` | Inject protocol into active agent |
+| `Ctrl+P` | Send protocol instructions to the active agent |
 | `Ctrl+T` | Toggle panel: file <-> terminal |
 | `Ctrl+K` | Kill running session on active panel |
 | `Ctrl+W` | Remove active panel |
@@ -314,14 +338,20 @@ These shortcuts work everywhere, including on terminal panels with running agent
 
 ### Layout & System
 
-These shortcuts pass through to agents on terminal panels (use from a file panel via `Tab`):
+These are global application shortcuts:
 
 | Key | Action |
 |-----|--------|
 | `Ctrl+2/3/4` | Switch to 2/3/4 panel layout |
+| `F12` | Routed-message Activity |
+| `Shift+F12` | Inter-agent protocol guide |
+
+These are file-panel actions. On terminal panels they pass through to the running agent, so switch to a file panel with `Tab` first:
+
+| Key | Action |
+|-----|--------|
 | `Ctrl+E` | Reset to default 2-panel view |
 | `Ctrl+G` | Edit selected file in Vim |
-| `F12` | Inter-agent communication guide |
 | `Ctrl+H` | Toggle hidden files |
 | `Ctrl+R` | Refresh all panels |
 | `Ctrl+L` | View application logs |
@@ -345,7 +375,7 @@ Create `~/.agents-commander/config.json`:
   "agents": {
     "claude": {
       "command": "claude",
-      "args": ["--dangerously-skip-permissions"],
+      "args": [],
       "env": {}
     }
   }
@@ -391,7 +421,7 @@ src/
   templates/
     types.ts                # PromptTemplate interface
     loader.ts               # Template loader (builtin + user custom)
-    builtin/                # 120 built-in prompt templates (.md with frontmatter)
+    builtin/                # 121 built-in prompt templates (.md with frontmatter)
   config/
     themes.ts               # Color themes
     loader.ts               # Config file loader (~/.agents-commander/)
@@ -407,38 +437,26 @@ src/
 
 Each agent panel runs a real pseudo-terminal. This means:
 
-- Full TUI support -- agents that use `blessed`, `ink`, or `curses` work correctly
+- PTY-backed support for interactive terminal applications
 - xterm-256color with ANSI escape sequence processing
 - Real-time key forwarding (each keystroke is mapped to its ANSI sequence and sent to stdin)
 - A custom `VTerm` virtual terminal emulator processes the output for display in the blessed UI
 
 This is not a dumb pipe. It's a terminal emulator inside a terminal emulator.
 
-## Requirements
+## What Agents Commander Adds
 
-- **Node.js** >= 18.0.0
-- **Python 3** (used by the PTY bridge)
-- **macOS** or **Linux** (PTY support required)
-- At least one AI agent CLI installed:
-  - `npm i -g @anthropic-ai/claude-code`
-  - `npm i -g @openai/codex`
-  - `npm i -g @google/gemini-cli`
+Agents Commander combines several local workflows in one TUI:
 
-## Why Not Just Use tmux?
-
-| | tmux | Agents Commander |
-|---|---|---|
-| Side-by-side agents | Yes | Yes |
-| File manager | No | Yes |
-| Agents talk to each other | No | **Yes** |
-| Auto-launch & route tasks | No | **Yes** |
-| Protocol injection | No | **Yes** |
-| One-key agent switching | No | **Yes** |
-| Built-in orchestration | No | **Yes** |
+- two to four PTY-backed panels for the supported agent adapters
+- dual-panel file browsing and file operations
+- text-marker scanning and routed SEND, REPLY, BROADCAST, STATUS, and QUERY messages
+- one-key protocol instruction delivery, manual orchestration, and routed-message Activity
+- a built-in library of 121 prompts
 
 ## Roadmap
 
-- [x] Claude, Codex, Gemini full support
+- [x] Supported Claude Code, Codex CLI, Gemini CLI, and Shell adapters
 - [x] Prompt template library (`Ctrl+B`)
 - [ ] Aider, Cline, OpenCode, Goose, Kiro, Amp support
 - [ ] Task queue -- chain agent tasks in sequence
@@ -449,7 +467,7 @@ This is not a dumb pipe. It's a terminal emulator inside a terminal emulator.
 
 ## License
 
-CC-BY-NC-4.0 — Creative Commons Attribution-NonCommercial 4.0 International
+Source-available under CC-BY-NC-4.0 — Creative Commons Attribution-NonCommercial 4.0 International. Commercial use is not licensed by this project.
 
 ---
 

@@ -23,6 +23,7 @@ import type { DoctorReport, DoctorRow } from './types.js';
 const RECOMMENDED_COLUMNS = 100;
 const RECOMMENDED_ROWS = 24;
 const EXPECTED_TEMPLATE_FLOOR = 100;
+const MINIMUM_NODE_MAJOR = 22;
 
 export interface DoctorEnvironment {
   nodeVersion: string;
@@ -94,9 +95,15 @@ export async function runDoctor(options: RunDoctorOptions): Promise<DoctorReport
   const workingDirectory = path.resolve(options.workingDirectory);
 
   const nodeMajor = Number.parseInt(environment.nodeVersion.split('.')[0] ?? '', 10);
-  rows.push(Number.isFinite(nodeMajor) && nodeMajor >= 20
+  rows.push(Number.isFinite(nodeMajor) && nodeMajor >= MINIMUM_NODE_MAJOR
     ? row('node', 'Node.js', 'pass', `v${environment.nodeVersion}`)
-    : row('node', 'Node.js', 'fail', 'Node.js 20 or newer is required', `Found v${environment.nodeVersion}`));
+    : row(
+      'node',
+      'Node.js',
+      'fail',
+      `Node.js ${MINIMUM_NODE_MAJOR} or newer is required`,
+      `Found v${environment.nodeVersion}`,
+    ));
 
   rows.push(environment.platform === 'darwin' || environment.platform === 'linux'
     ? row('platform', 'Platform', 'pass', environment.platform)
@@ -188,7 +195,14 @@ export async function runDoctor(options: RunDoctorOptions): Promise<DoctorReport
     const ptyProbe = await probe(
       pythonPath,
       [helperPath, '--', process.execPath, '-e', 'process.stdout.write("pty-ok")'],
-      { timeoutMs: 2000, maxOutputBytes: 4096, keepStdinOpen: true },
+      {
+        timeoutMs: 2000,
+        maxOutputBytes: 4096,
+        keepStdinOpen: true,
+        // The helper maps SIGUSR1 to a hard kill of the PTY child's process
+        // group, preventing a timed-out diagnostic descendant from surviving.
+        timeoutSignal: 'SIGUSR1',
+      },
     );
     rows.push(ptyProbe.ok && ptyProbe.stdout.includes('pty-ok')
       ? row('pty-runtime', 'PTY runtime', 'pass', 'Pseudo-terminal launch succeeded')
@@ -229,9 +243,27 @@ export async function runDoctor(options: RunDoctorOptions): Promise<DoctorReport
     const configured = config.agents[knownAgent.type];
     const command = configured?.command ?? knownAgent.command;
     const executable = resolveExecutable(command);
+    const label = knownAgent.supported
+      ? knownAgent.name
+      : `${knownAgent.name} (catalogued)`;
     rows.push(executable
-      ? row(`agent-${knownAgent.type}`, knownAgent.name, 'pass', executable)
-      : row(`agent-${knownAgent.type}`, knownAgent.name, 'warn', `Not found (${command})`));
+      ? knownAgent.supported
+        ? row(`agent-${knownAgent.type}`, label, 'pass', executable)
+        : row(
+          `agent-${knownAgent.type}`,
+          label,
+          'pass',
+          'Found; not launchable yet',
+          executable,
+        )
+      : row(
+        `agent-${knownAgent.type}`,
+        label,
+        'warn',
+        knownAgent.supported
+          ? `Not found (${command})`
+          : `Not found; not launchable yet (${command})`,
+      ));
   }
 
   return buildReport(rows);

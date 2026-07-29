@@ -23,7 +23,7 @@ Step 4: REPLY
 When you receive a reply from the other agent, use REPLY to send them a thank-you message confirming the reply chain works.
 
 Step 5: BROADCAST
-Use BROADCAST to send a message to all connected agents. The broadcast should say: Protocol demo complete - all features verified.
+Use BROADCAST to send a message to all other connected agents. The broadcast should say: Protocol demo complete - all features verified.
 
 After all steps are done, use STATUS one final time to report: Protocol demo finished successfully.
 

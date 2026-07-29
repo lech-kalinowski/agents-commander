@@ -105,4 +105,26 @@ describe('Activity and protocol shortcuts', () => {
     expect(GUIDE_TEXT).toContain('F12{/cyan-fg}         Routed-message activity');
     expect(GUIDE_TEXT).toContain('Shift+F12{/cyan-fg}   This guide');
   });
+
+  it('keeps Help explicit about supported adapters and future presets', () => {
+    expect(HELP_TEXT).toContain('Browse 121 prompt templates');
+    expect(HELP_TEXT).toContain('Send protocol instructions to active agent');
+    expect(HELP_TEXT).toContain('SUPPORTED ADAPTERS');
+    expect(HELP_TEXT).toContain('Claude Code');
+    expect(HELP_TEXT).toContain('Codex CLI');
+    expect(HELP_TEXT).toContain('Gemini CLI');
+    expect(HELP_TEXT).toContain('Shell');
+    expect(HELP_TEXT).toContain('CATALOGUED FUTURE PRESETS');
+    expect(HELP_TEXT).toContain('Aider · Cline · OpenCode · Goose · Kiro · Amp');
+    expect(HELP_TEXT).toContain('not launchable yet');
+    expect(HELP_TEXT).not.toContain('TESTED ADAPTERS');
+  });
+
+  it('keeps the protocol guide limited to launchable SEND targets', () => {
+    expect(GUIDE_TEXT).toContain('SUPPORTED SEND TARGETS');
+    expect(GUIDE_TEXT).toContain('{cyan-fg}generic{/cyan-fg}');
+    expect(GUIDE_TEXT).toContain('not valid SEND targets yet');
+    expect(GUIDE_TEXT).not.toContain('{cyan-fg}aider{/cyan-fg}');
+    expect(GUIDE_TEXT).toContain('Reset to 2-panel view (from a file panel)');
+  });
 });

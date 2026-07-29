@@ -934,7 +934,7 @@ describe('file operations', () => {
         const after = await realFs.lstat(destination);
         expect(after.dev).toBe(before.dev);
         expect(after.ino).toBe(before.ino);
-        expect(after.mode & 0o777).toBe(0o640);
+        expect(after.mode & 0o777).toBe(before.mode & 0o777);
         expect(after.mtimeMs).toBe(before.mtimeMs);
         if (hasXattr) {
           await expect(readTestXattr(destination)).resolves.toBe('file-metadata');

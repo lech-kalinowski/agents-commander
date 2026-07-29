@@ -34,6 +34,7 @@ export interface AgentLifecycleEvent {
 
 export class AgentManager {
   private static MAX_RESTARTS = 3;
+  private static MIN_RESTART_UPTIME_MS = 5000;
   private agents: Map<number, ManagedAgent> = new Map(); // keyed by panelIndex
   private sessionSeq = 1;
   private lifecycleListeners = new Set<(event: AgentLifecycleEvent) => void>();
@@ -130,9 +131,15 @@ export class AgentManager {
     if (!managed) return;
     if (managed.restartTimer) return;
 
-    // Only restart if it crashed (non-zero exit code) and not killed by a signal
+    const uptimeMs = Date.now() - managed.launchedAt.getTime();
+
+    // A process that rejects its startup arguments exits immediately. Retrying
+    // the identical command only creates a noisy restart storm, so only
+    // restart sessions that were healthy long enough to be considered started.
     if (code !== 0 && code !== null && signal === null) {
-      if (managed.restartCount < AgentManager.MAX_RESTARTS) {
+      if (uptimeMs < AgentManager.MIN_RESTART_UPTIME_MS) {
+        logger.error(`Agent manager: ${managed.info.name} on panel ${panelIndex} failed during startup (code=${code}). Not restarting.`);
+      } else if (managed.restartCount < AgentManager.MAX_RESTARTS) {
         managed.restartCount++;
         logger.warn(`Agent manager: ${managed.info.name} on panel ${panelIndex} crashed (code=${code}). Restarting (${managed.restartCount}/${AgentManager.MAX_RESTARTS})...`);
         

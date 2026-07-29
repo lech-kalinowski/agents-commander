@@ -34,7 +34,7 @@ export class PreviewPanel {
         border: theme.panel.border,
       },
       tags: true,
-      label: ' View (F3) ',
+      label: ' View (F4) ',
     });
 
     this.content = blessed.box({
@@ -55,7 +55,7 @@ export class PreviewPanel {
       },
     });
 
-    this.content.key(['escape', 'q', 'f3'], () => {
+    this.content.key(['escape', 'q', 'f4'], () => {
       this.close();
     });
   }

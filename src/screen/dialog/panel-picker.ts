@@ -51,3 +51,7 @@ export function renderPanelBoxes(
 
   return lines.join('\n');
 }
+
+export function isValidPanelNumber(panelNumber: number, panelCount: number): boolean {
+  return Number.isInteger(panelNumber) && panelNumber >= 1 && panelNumber <= panelCount;
+}

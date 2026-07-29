@@ -580,6 +580,7 @@ export class App {
         this.theme,
         this.layout.panelCount,
         this.layout.allPanels.indexOf(this.layout.activePanel),
+        this.config.agents,
       );
 
       if (choice) {

@@ -1,6 +1,7 @@
 import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import { bindOverlayResize, screenGeometry, truncateOverlayText } from './geometry.js';
 
 export function showInputDialog(
   screen: blessed.Widgets.Screen,
@@ -11,12 +12,14 @@ export function showInputDialog(
 ): Promise<string | null> {
   return new Promise((resolve) => {
     enterDialog();
+    const safePrompt = truncateOverlayText(prompt, 300);
+    const geometry = screenGeometry(screen, 50, 8);
     const dialog = blessed.box({
       parent: screen,
       top: 'center',
       left: 'center',
-      width: 50,
-      height: 8,
+      width: geometry.width,
+      height: geometry.height,
       border: { type: 'line' },
       style: {
         bg: theme.dialog.bg,
@@ -32,7 +35,9 @@ export function showInputDialog(
       parent: dialog,
       top: 1,
       left: 2,
-      content: prompt,
+      width: '100%-6',
+      tags: false,
+      content: safePrompt,
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
@@ -40,7 +45,7 @@ export function showInputDialog(
       parent: dialog,
       top: 3,
       left: 2,
-      width: 44,
+      width: '100%-6',
       height: 1,
       style: {
         bg: 'black',
@@ -59,8 +64,11 @@ export function showInputDialog(
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
+    const unbindResize = bindOverlayResize(screen, dialog, 50, 8);
+
     const cleanup = () => {
       leaveDialog();
+      unbindResize();
       dialog.destroy();
       screen.render();
     };

@@ -1,4 +1,16 @@
 import type { AppConfig } from './types.js';
+import { KNOWN_AGENTS } from '../agents/types.js';
+
+const defaultAgents = Object.fromEntries(
+  KNOWN_AGENTS.map((agent) => [
+    agent.type,
+    {
+      command: agent.command,
+      args: [...agent.args],
+      env: { ...agent.env },
+    },
+  ]),
+);
 
 export const defaultConfig: AppConfig = {
   theme: 'classic-blue',
@@ -11,18 +23,7 @@ export const defaultConfig: AppConfig = {
     tabSize: 2,
     wordWrap: true,
   },
-  agents: {
-    claude: { command: 'claude', args: ['--dangerously-skip-permissions'], env: {} },
-    codex: { command: 'codex', args: ['--full-auto', '--no-alt-screen'], env: {} },
-    gemini: { command: 'gemini', args: ['--yolo'], env: {} },
-    aider: { command: 'aider', args: [], env: {} },
-    cline: { command: 'cline', args: [], env: {} },
-    goose: { command: 'goose', args: [], env: {} },
-    opencode: { command: 'opencode', args: [], env: {} },
-    kiro: { command: 'kiro', args: [], env: {} },
-    amp: { command: 'amp', args: [], env: {} },
-    generic: { command: 'bash', args: [], env: {} },
-  },
+  agents: defaultAgents,
   orchestration: {
     gridScanDelay: 200,
     injectionGrace: 2500,

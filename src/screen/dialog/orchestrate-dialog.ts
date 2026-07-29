@@ -1,9 +1,11 @@
 import blessed from 'blessed';
-import type { Theme } from '../../config/types.js';
+import type { AgentCommandConfig, Theme } from '../../config/types.js';
 import type { AgentType } from '../../agents/types.js';
 import { discoverAgents } from '../../agents/agent-registry.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
-import { renderPanelBoxes } from './panel-picker.js';
+import { isValidPanelNumber, renderPanelBoxes } from './panel-picker.js';
+import { showErrorToast } from '../toast.js';
+import { bindOverlayResize, screenGeometry } from './geometry.js';
 
 export interface OrchestrateChoice {
   agentType: AgentType;
@@ -13,32 +15,41 @@ export interface OrchestrateChoice {
 
 let dialogOpen = false;
 
+export function getAvailableOrchestrationAgents(
+  agentOverrides?: Record<string, AgentCommandConfig>,
+) {
+  return discoverAgents(agentOverrides).filter((agent) => agent.installed && agent.supported);
+}
+
 export function showOrchestrateDialog(
   screen: blessed.Widgets.Screen,
   theme: Theme,
   panelCount: number,
   activePanelIndex: number,
+  agentOverrides?: Record<string, AgentCommandConfig>,
 ): Promise<OrchestrateChoice | null> {
   if (dialogOpen) return Promise.resolve(null);
   dialogOpen = true;
   enterDialog();
 
   return new Promise((resolve) => {
-    const agents = discoverAgents().filter((a) => a.installed && a.supported);
+    const agents = getAvailableOrchestrationAgents(agentOverrides);
 
     if (agents.length === 0) {
       dialogOpen = false;
       leaveDialog();
+      showErrorToast(screen, 'No supported agent CLI is installed');
       resolve(null);
       return;
     }
 
+    const geometry = screenGeometry(screen, 70, 22);
     const dialog = blessed.box({
       parent: screen,
       top: 'center',
       left: 'center',
-      width: 70,
-      height: 22,
+      width: geometry.width,
+      height: geometry.height,
       border: { type: 'line' },
       style: {
         bg: theme.dialog.bg,
@@ -66,7 +77,7 @@ export function showOrchestrateDialog(
       parent: dialog,
       top: 3,
       left: 2,
-      width: 64,
+      width: '100%-6',
       height: agents.length + 1,
       tags: true,
       keys: false,
@@ -88,7 +99,7 @@ export function showOrchestrateDialog(
       parent: dialog,
       top: 3,
       left: 2,
-      width: 64,
+      width: '100%-6',
       height: 8,
       tags: true,
       hidden: true,
@@ -110,7 +121,7 @@ export function showOrchestrateDialog(
       parent: dialog,
       top: 5,
       left: 2,
-      width: 64,
+      width: '100%-6',
       height: 3,
       border: { type: 'line' },
       style: {
@@ -145,13 +156,16 @@ export function showOrchestrateDialog(
     // ── State ──
     let selectedAgent: (typeof agents)[0] | null = null;
     let selectedPanel = activePanelIndex;
+    let currentStep: 1 | 2 | 3 = 1;
 
     let resolved = false;
+    const unbindResize = bindOverlayResize(screen, dialog, 70, 22);
     const cleanup = () => {
       if (resolved) return;
       resolved = true;
       dialogOpen = false;
       leaveDialog();
+      unbindResize();
       dialog.destroy();
       screen.render();
     };
@@ -179,46 +193,50 @@ export function showOrchestrateDialog(
     // ── STEP 2: Panel selection ──
     function renderPanelContent(): void {
       const header = '  Select target panel:\n\n';
-      panelBox.setContent(header + renderPanelBoxes(selectedPanel, panelCount));
+      panelBox.setContent(header + renderPanelBoxes(selectedPanel, panelCount, panelCount));
     }
 
     function showStep2() {
+      currentStep = 2;
       agentList.hide();
       stepBox.setContent(`{bold}Step 2/3:{/bold} Select target panel for {cyan-fg}${selectedAgent!.name}{/cyan-fg}`);
 
       renderPanelContent();
       panelBox.show();
-      footer.setContent(' 1-4=Panel  Enter=Confirm  Esc=Back ');
+      footer.setContent(` 1-${panelCount}=Panel  Enter=Confirm  Esc=Back `);
       panelBox.focus();
       screen.render();
-
-      panelBox.on('keypress', (ch: string | undefined, _key: any) => {
-        if (!ch) return;
-        const n = parseInt(ch, 10);
-        if (n >= 1 && n <= 4) {
-          selectedPanel = n - 1;
-          renderPanelContent();
-          screen.render();
-        }
-      });
-
-      panelBox.key(['enter'], () => {
-        showStep3();
-      });
-
-      panelBox.key(['escape'], () => {
-        // Go back to step 1
-        panelBox.hide();
-        agentList.show();
-        stepBox.setContent('{bold}Step 1/3:{/bold} Select target agent');
-        footer.setContent(' Enter=Select  Esc=Cancel ');
-        agentList.focus();
-        screen.render();
-      });
     }
+
+    panelBox.on('keypress', (ch: string | undefined, _key: any) => {
+      if (currentStep !== 2 || !ch) return;
+      const n = parseInt(ch, 10);
+      if (isValidPanelNumber(n, panelCount)) {
+        selectedPanel = n - 1;
+        renderPanelContent();
+        screen.render();
+      }
+    });
+
+    panelBox.key(['enter'], () => {
+      if (currentStep === 2) showStep3();
+    });
+
+    panelBox.key(['escape'], () => {
+      if (currentStep !== 2) return;
+      currentStep = 1;
+      panelBox.hide();
+      agentList.show();
+      stepBox.setContent('{bold}Step 1/3:{/bold} Select target agent');
+      footer.setContent(' Enter=Select  Esc=Cancel ');
+      agentList.focus();
+      screen.render();
+    });
 
     // ── STEP 3: Task input ──
     function showStep3() {
+      if (currentStep !== 2) return;
+      currentStep = 3;
       panelBox.hide();
       stepBox.setContent(
         `{bold}Step 3/3:{/bold} Type task for {cyan-fg}${selectedAgent!.name}{/cyan-fg} in Panel ${selectedPanel + 1}`,

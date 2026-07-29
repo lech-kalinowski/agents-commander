@@ -179,7 +179,7 @@ export class TerminalPanel {
       top: 0, left: 0, width: '100%-2', height: 1,
       tags: true,
       style: { bg: 'cyan', fg: 'black' },
-      content: ' No agent running  |  F9=Launch',
+      content: ' No agent running  |  F2=Launch',
     });
 
     this.outputBox = blessed.box({

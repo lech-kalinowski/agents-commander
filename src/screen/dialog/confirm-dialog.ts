@@ -1,6 +1,7 @@
 import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import { bindOverlayResize, screenGeometry, truncateOverlayText } from './geometry.js';
 
 export function showConfirmDialog(
   screen: blessed.Widgets.Screen,
@@ -11,13 +12,19 @@ export function showConfirmDialog(
   return new Promise((resolve) => {
     enterDialog();
 
-    const dialogWidth = Math.max(44, message.length + 6);
+    const safeMessage = truncateOverlayText(message, 500);
+    const preferredWidth = Math.max(44, Math.min(72, safeMessage.length + 6));
+    const preferredHeight = Math.min(
+      11,
+      7 + Math.floor(safeMessage.length / Math.max(1, preferredWidth - 6)),
+    );
+    const geometry = screenGeometry(screen, preferredWidth, preferredHeight);
     const dialog = blessed.box({
       parent: screen,
       top: 'center',
       left: 'center',
-      width: dialogWidth,
-      height: 7,
+      width: geometry.width,
+      height: geometry.height,
       border: { type: 'line' },
       style: {
         bg: theme.dialog.bg,
@@ -30,11 +37,16 @@ export function showConfirmDialog(
       keys: true,
     });
 
-    blessed.text({
+    const messageBox = blessed.text({
       parent: dialog,
       top: 1,
-      left: 'center',
-      content: message,
+      left: 2,
+      width: '100%-6',
+      height: '100%-5',
+      align: 'center',
+      wrap: true,
+      tags: false,
+      content: safeMessage,
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
@@ -44,8 +56,8 @@ export function showConfirmDialog(
     const btnWidth = 12;
     const yesBtn = blessed.box({
       parent: dialog,
-      top: 3,
-      left: Math.floor(dialogWidth / 2) - btnWidth - 2,
+      bottom: 1,
+      left: Math.max(1, Math.floor(geometry.width / 2) - btnWidth - 2),
       width: btnWidth,
       height: 1,
       tags: true,
@@ -55,14 +67,27 @@ export function showConfirmDialog(
 
     const noBtn = blessed.box({
       parent: dialog,
-      top: 3,
-      left: Math.floor(dialogWidth / 2) + 2,
+      bottom: 1,
+      left: Math.max(15, Math.floor(geometry.width / 2) + 2),
       width: btnWidth,
       height: 1,
       tags: true,
       content: '',
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
+
+    const unbindResize = bindOverlayResize(
+      screen,
+      dialog,
+      preferredWidth,
+      preferredHeight,
+      (nextGeometry) => {
+        messageBox.width = '100%-6';
+        messageBox.height = '100%-5';
+        yesBtn.left = Math.max(1, Math.floor(nextGeometry.width / 2) - btnWidth - 2);
+        noBtn.left = Math.max(15, Math.floor(nextGeometry.width / 2) + 2);
+      },
+    );
 
     function renderButtons(): void {
       if (selected) {
@@ -82,6 +107,7 @@ export function showConfirmDialog(
       if (resolved) return;
       resolved = true;
       leaveDialog();
+      unbindResize();
       dialog.destroy();
       screen.render();
       resolve(result);

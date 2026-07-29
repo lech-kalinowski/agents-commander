@@ -48,6 +48,24 @@ describe('bounded diagnostic subprocesses', () => {
     expect(result.timedOut).toBe(true);
   });
 
+  it('uses a configured timeout signal before hard-kill escalation', async () => {
+    const result = await runBoundedProcess(
+      process.execPath,
+      [
+        '-e',
+        [
+          "process.on('SIGUSR1', () => process.exit(0));",
+          'setInterval(() => {}, 1000);',
+        ].join(' '),
+      ],
+      { timeoutMs: 50, timeoutSignal: 'SIGUSR1' },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.timedOut).toBe(true);
+    expect(result.exitCode).toBe(0);
+  });
+
   it('reports a missing absolute executable without rejecting', async () => {
     const result = await runBoundedProcess(
       path.join(path.parse(process.execPath).root, 'definitely-not-an-executable'),

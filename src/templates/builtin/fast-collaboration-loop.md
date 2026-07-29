@@ -20,7 +20,7 @@ Operating rules:
    - Scope: exact files, modules, or question
    - Output: exact response format
    - Done when: concrete completion condition
-5. Prefer SEND over BROADCAST unless the same message truly belongs to every agent.
+5. Prefer SEND over BROADCAST unless the same message truly belongs to every other agent.
 6. Use REPLY only to answer the last sender. Do not send duplicate confirmations.
 7. Use STATUS only for meaningful progress or a real blocker.
 8. If blocked, REPLY with:

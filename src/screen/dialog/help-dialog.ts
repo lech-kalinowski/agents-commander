@@ -28,10 +28,10 @@ Multi-panel AI Agent Manager & File Browser
 
   F2          Launch agent in panel
   Ctrl+O      Orchestrate — send task to agent
-  Ctrl+P      Inject protocol (teach agent comms)
+  Ctrl+P      Send protocol instructions to active agent
   F12         Routed-message activity
   Shift+F12   Inter-agent protocol guide
-  Ctrl+B      Browse 120 prompt templates
+  Ctrl+B      Browse 121 prompt templates
               (select → pick panel → sent to agent)
   Ctrl+T      Toggle panel: file <-> terminal
   Ctrl+K      Kill running session on active terminal
@@ -49,7 +49,7 @@ Multi-panel AI Agent Manager & File Browser
 
   {cyan-fg}SEND:agent:panel{/cyan-fg}  Direct message
   {cyan-fg}REPLY{/cyan-fg}             Reply to last sender
-  {cyan-fg}BROADCAST{/cyan-fg}         Message all agents
+  {cyan-fg}BROADCAST{/cyan-fg}         Message all other agents
   {cyan-fg}STATUS{/cyan-fg}            Progress toast + local ACK
   {cyan-fg}QUERY{/cyan-fg}             Ask who's running
 
@@ -69,13 +69,15 @@ Multi-panel AI Agent Manager & File Browser
   Ctrl+R      Refresh panels
   Ctrl+L      View application logs
 
-{bold}{yellow-fg}SUPPORTED AGENTS{/yellow-fg}{/bold}
+{bold}{yellow-fg}SUPPORTED ADAPTERS{/yellow-fg}{/bold}
 
-  {green-fg}Claude Code{/green-fg}   Anthropic      {green-fg}Aider{/green-fg}     Paul Gauthier
-  {green-fg}Codex CLI{/green-fg}     OpenAI         {green-fg}Cline{/green-fg}     VS Code agent
-  {green-fg}Gemini CLI{/green-fg}    Google         {green-fg}OpenCode{/green-fg}  Open source
-  {green-fg}Goose{/green-fg}         Block          {green-fg}Kiro{/green-fg}      AWS
-  {green-fg}Amp{/green-fg}           Sourcegraph    {green-fg}Generic{/green-fg}   Any CLI tool
+  {green-fg}Claude Code{/green-fg}   Anthropic      {green-fg}Codex CLI{/green-fg}  OpenAI
+  {green-fg}Gemini CLI{/green-fg}    Google         {green-fg}Shell{/green-fg}      Local/configured
+
+{bold}{yellow-fg}CATALOGUED FUTURE PRESETS{/yellow-fg}{/bold}
+
+  Aider · Cline · OpenCode · Goose · Kiro · Amp
+  Listed in the selector, but not launchable yet.
 `.trim();
 
 let helpOpen = false;

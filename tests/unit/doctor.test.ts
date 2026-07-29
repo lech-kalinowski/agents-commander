@@ -77,7 +77,7 @@ describe('Agents Commander Doctor', () => {
     const report = await runDoctor({
       workingDirectory: root,
       environment: {
-        nodeVersion: '20.19.0',
+        nodeVersion: '22.19.0',
         platform: 'linux',
         stdinIsTTY: true,
         stdoutIsTTY: true,
@@ -99,6 +99,12 @@ describe('Agents Commander Doctor', () => {
     expect(report.rows.find((entry) => entry.id === 'pty-helper')).toMatchObject({
       status: 'pass',
       summary: layout.helperPath,
+    });
+    expect(report.rows.find((entry) => entry.id === 'agent-opencode')).toMatchObject({
+      label: 'OpenCode (catalogued)',
+      status: 'pass',
+      summary: 'Found; not launchable yet',
+      detail: process.execPath,
     });
     expect(probe).toHaveBeenCalledTimes(2);
     expect(probe.mock.calls[0]?.[1]).toEqual(['--version']);
@@ -147,7 +153,7 @@ describe('Agents Commander Doctor', () => {
     const report = await runDoctor({
       workingDirectory: root,
       environment: {
-        nodeVersion: '18.20.0',
+        nodeVersion: '20.20.0',
         platform: 'win32',
         stdinIsTTY: false,
         stdoutIsTTY: false,
@@ -163,6 +169,9 @@ describe('Agents Commander Doctor', () => {
     });
 
     expect(report.rows.find((entry) => entry.id === 'node')?.status).toBe('fail');
+    expect(report.rows.find((entry) => entry.id === 'node')?.summary).toBe(
+      'Node.js 22 or newer is required',
+    );
     expect(report.rows.find((entry) => entry.id === 'platform')?.status).toBe('fail');
     expect(report.rows.find((entry) => entry.id === 'python')?.status).toBe('fail');
     expect(report.rows.find((entry) => entry.id === 'pty-helper')?.status).toBe('fail');

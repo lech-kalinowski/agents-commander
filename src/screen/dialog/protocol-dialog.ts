@@ -55,7 +55,7 @@ with another agent running in a different panel.
     No need to know the sender's panel number.
     Commander routes it back automatically.
 
-  {bold}3. BROADCAST{/bold} — send to all connected agents:
+  {bold}3. BROADCAST{/bold} — send to all other connected agents:
 
     {cyan-fg}===COMMANDER:BROADCAST==={/cyan-fg}
     {white-fg}message for everyone{/white-fg}
@@ -95,20 +95,17 @@ with another agent running in a different panel.
   Agents should wait for the ACK before sending again.
 
 
-{bold}{yellow-fg}AGENT TYPES{/yellow-fg}{/bold}
+{bold}{yellow-fg}SUPPORTED SEND TARGETS{/yellow-fg}{/bold}
 
   Use these names in the SEND marker:
 
   {cyan-fg}claude{/cyan-fg}      Claude Code  (Anthropic)
   {cyan-fg}codex{/cyan-fg}       Codex CLI    (OpenAI)
   {cyan-fg}gemini{/cyan-fg}      Gemini CLI   (Google)
-  {cyan-fg}aider{/cyan-fg}       Aider        (Paul Gauthier)
-  {cyan-fg}cline{/cyan-fg}       Cline        (VS Code agent)
-  {cyan-fg}opencode{/cyan-fg}    OpenCode     (Open source)
-  {cyan-fg}goose{/cyan-fg}       Goose        (Block)
-  {cyan-fg}kiro{/cyan-fg}        Kiro         (AWS)
-  {cyan-fg}amp{/cyan-fg}         Amp          (Sourcegraph)
   {cyan-fg}generic{/cyan-fg}     Generic      (any CLI tool)
+
+  Aider, Cline, OpenCode, Goose, Kiro, and Amp are
+  catalogued future presets, not valid SEND targets yet.
 
   Panels are numbered {cyan-fg}1{/cyan-fg} to {cyan-fg}4{/cyan-fg}.
 
@@ -142,7 +139,7 @@ with another agent running in a different panel.
   {cyan-fg}Shift+F12{/cyan-fg}   This guide
   {cyan-fg}Ctrl+K{/cyan-fg}      Kill running session on active panel
   {cyan-fg}Ctrl+T{/cyan-fg}      Toggle panel: file <-> terminal
-  {cyan-fg}Ctrl+E{/cyan-fg}      Reset to default 2-panel view
+  {cyan-fg}Ctrl+E{/cyan-fg}      Reset to 2-panel view (from a file panel)
   {cyan-fg}Tab{/cyan-fg}         Switch between panels
 
 

@@ -143,3 +143,60 @@ describe('TerminalPanel reply transport', () => {
     expect(panel.decodePtyChunk(decoder, bytes.subarray(1))).toBe('⠋');
   });
 });
+
+describe('TerminalPanel PTY sizing', () => {
+  function createResizeHarness(width = 31, height = 12) {
+    const control = {
+      writable: true,
+      destroyed: false,
+      write: vi.fn(),
+      end: vi.fn(),
+    };
+    const panel: any = {
+      agentName: 'Resize Test',
+      box: {},
+      outputBox: { width, height },
+      vterm: { resize: vi.fn() },
+      resizeControl: control,
+      lastPtySize: null,
+      scheduleRender: vi.fn(),
+    };
+    panel.getTerminalDimensions = TerminalPanel.prototype['getTerminalDimensions'];
+    panel.sendPtyResize = TerminalPanel.prototype['sendPtyResize'];
+    panel.closeResizeControl = TerminalPanel.prototype['closeResizeControl'];
+    panel.resize = TerminalPanel.prototype.resize;
+    return { panel, control };
+  }
+
+  it('uses the actual drawable panel size without fake minimum dimensions', () => {
+    const { panel } = createResizeHarness(31, 12);
+    expect(panel.getTerminalDimensions()).toEqual({ cols: 30, rows: 11 });
+
+    panel.outputBox.width = 1;
+    panel.outputBox.height = 0;
+    expect(panel.getTerminalDimensions()).toEqual({ cols: 1, rows: 1 });
+  });
+
+  it('frames and deduplicates resize messages on the dedicated pipe', () => {
+    const { panel, control } = createResizeHarness();
+
+    panel.sendPtyResize(30, 11);
+    panel.sendPtyResize(30, 11);
+    panel.sendPtyResize(45, 20);
+
+    expect(control.write.mock.calls).toEqual([
+      ['resize 30 11\n'],
+      ['resize 45 20\n'],
+    ]);
+  });
+
+  it('resizes both the emulator and live PTY before refreshing content', () => {
+    const { panel, control } = createResizeHarness(21, 9);
+
+    panel.resize({ top: 1, left: 2, width: 40, height: 20 });
+
+    expect(panel.vterm.resize).toHaveBeenCalledWith(20, 8);
+    expect(control.write).toHaveBeenCalledWith('resize 20 8\n');
+    expect(panel.scheduleRender).toHaveBeenCalledOnce();
+  });
+});

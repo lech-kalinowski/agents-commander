@@ -12,6 +12,12 @@ import pty
 import select
 import signal
 import errno
+import fcntl
+import struct
+import termios
+
+CONTROL_FD = 3
+MAX_TERMINAL_DIMENSION = 10000
 
 def parse_args(argv):
     cwd = None
@@ -33,18 +39,71 @@ def parse_args(argv):
 
     return cwd, args
 
+def available_control_fd():
+    try:
+        os.fstat(CONTROL_FD)
+        return CONTROL_FD
+    except OSError:
+        return None
+
+def apply_resize(master_fd, cols, rows):
+    winsize = struct.pack('HHHH', rows, cols, 0, 0)
+    # On Darwin and Linux, TIOCSWINSZ delivers SIGWINCH to the foreground
+    # process group. Sending another signal here would trigger duplicate redraws.
+    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+
+def process_control_data(buffer, data, master_fd):
+    buffer += data
+    while b'\n' in buffer:
+        raw_line, buffer = buffer.split(b'\n', 1)
+        parts = raw_line.decode('ascii', errors='replace').strip().split()
+        try:
+            if len(parts) != 3 or parts[0] != 'resize':
+                raise ValueError
+            cols = int(parts[1])
+            rows = int(parts[2])
+            if not (1 <= cols <= MAX_TERMINAL_DIMENSION):
+                raise ValueError
+            if not (1 <= rows <= MAX_TERMINAL_DIMENSION):
+                raise ValueError
+            apply_resize(master_fd, cols, rows)
+        except (ValueError, OSError) as exc:
+            detail = f": {exc}" if str(exc) else ""
+            print(
+                f"pty-helper: ignoring invalid control command{detail}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    # Bound an unterminated or otherwise malformed frame.
+    if len(buffer) > 8192:
+        print(
+            "pty-helper: ignoring oversized control command",
+            file=sys.stderr,
+            flush=True,
+        )
+        return b''
+    return buffer
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: pty-helper.py [--cwd PATH] -- <command> [args...]", file=sys.stderr)
         sys.exit(1)
 
     cwd, cmd = parse_args(sys.argv[1:])
+    control_fd = available_control_fd()
 
     # Fork with a PTY
     pid, master_fd = pty.fork()
 
     if pid == 0:
         # Child: exec the command
+        if control_fd is not None:
+            try:
+                os.close(control_fd)
+            except OSError:
+                pass
+
         if cwd:
             try:
                 os.chdir(cwd)
@@ -55,9 +114,6 @@ def main():
 
         # Set terminal size from env if available
         try:
-            import fcntl
-            import struct
-            import termios
             cols = int(os.environ.get('COLUMNS', '80'))
             rows = int(os.environ.get('LINES', '24'))
             winsize = struct.pack('HHHH', rows, cols, 0, 0)
@@ -80,13 +136,15 @@ def main():
     signal.signal(signal.SIGTERM, forward_signal)
 
     # Make stdin non-blocking
+    stdin_fd = None
     try:
-        import fcntl
-        flags = fcntl.fcntl(sys.stdin.fileno(), fcntl.F_GETFL)
-        fcntl.fcntl(sys.stdin.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        stdin_fd = sys.stdin.fileno()
+        flags = fcntl.fcntl(stdin_fd, fcntl.F_GETFL)
+        fcntl.fcntl(stdin_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
     except Exception:
         pass
 
+    control_buffer = b''
     try:
         while True:
             # Check if parent is still alive. If parent dies, ppid becomes 1 (init/systemd)
@@ -95,12 +153,10 @@ def main():
 
             try:
                 fds = [master_fd]
-                try:
-                    # Check if stdin is still readable/connected
-                    if not sys.stdin.closed:
-                        fds.append(sys.stdin.fileno())
-                except Exception:
-                    pass
+                if stdin_fd is not None and not sys.stdin.closed:
+                    fds.append(stdin_fd)
+                if control_fd is not None:
+                    fds.append(control_fd)
 
                 rlist, _, _ = select.select(fds, [], [], 0.1)
             except select.error:
@@ -118,9 +174,9 @@ def main():
                         break
                     raise
 
-            if sys.stdin.fileno() in rlist:
+            if stdin_fd is not None and stdin_fd in rlist:
                 try:
-                    data = os.read(sys.stdin.fileno(), 4096)
+                    data = os.read(stdin_fd, 4096)
                     if not data:
                         # EOF on stdin — close PTY input
                         os.close(master_fd)
@@ -130,6 +186,27 @@ def main():
                     if e.errno in (errno.EIO, errno.EBADF):
                         break
                     raise
+
+            if control_fd is not None and control_fd in rlist:
+                try:
+                    data = os.read(control_fd, 4096)
+                    if not data:
+                        os.close(control_fd)
+                        control_fd = None
+                    else:
+                        control_buffer = process_control_data(
+                            control_buffer,
+                            data,
+                            master_fd,
+                        )
+                except OSError as exc:
+                    if exc.errno not in (errno.EIO, errno.EBADF):
+                        print(
+                            f"pty-helper: resize control error: {exc}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    control_fd = None
 
             # Check if child is still alive
             try:
@@ -154,6 +231,11 @@ def main():
     except Exception:
         pass
     finally:
+        if control_fd is not None:
+            try:
+                os.close(control_fd)
+            except Exception:
+                pass
         try:
             os.close(master_fd)
         except Exception:

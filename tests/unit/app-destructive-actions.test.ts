@@ -48,7 +48,10 @@ function createHarness(options: {
     status: string;
   }>;
 } = {}) {
-  const livePanels = options.livePanels ?? [];
+  const livePanels = (options.livePanels ?? []).map((panel) => ({
+    killAgent: vi.fn(async () => undefined),
+    ...panel,
+  }));
   const managedSessions = (options.managedSessions ?? []).map((session) => ({
     ...session,
     sessionId: `${session.type}-${session.panelIndex}`,
@@ -72,6 +75,8 @@ function createHarness(options: {
     killAll: vi.fn(),
     hasAgent: vi.fn(() => options.managed ?? false),
     killAgent: vi.fn(),
+    launchAgent: vi.fn(() => true),
+    prepareForShutdown: vi.fn(() => []),
     reindexAfterPanelRemoval: vi.fn(),
     getRunningAgents: vi.fn(() => managedSessions),
     getAgentType: vi.fn((panelIndex: number) => (
@@ -92,11 +97,20 @@ function createHarness(options: {
     layout,
     agentManager,
     orchestrator,
-    screen: {},
+    screen: { destroy: vi.fn(), render: vi.fn() },
     theme: {},
     config: { agents: {} },
     destructiveTransitionInProgress: false,
     fullScreenOverlayActive: false,
+    disposalStarted: false,
+    disposePromise: null,
+    demoStarted: false,
+    demoPanelRoles: new Map(),
+    demoRollbackPromise: null,
+    activityDialog: null,
+    unsubscribeAgentLifecycle: null,
+    processHandlersInstalled: false,
+    watcherStarted: false,
     updateStatus: vi.fn(),
   });
   return { app, layout, agentManager, orchestrator, activePanel };
@@ -119,6 +133,26 @@ describe('App destructive layout actions', () => {
     expect(agentManager.killAll).not.toHaveBeenCalled();
     expect(orchestrator.resetState).not.toHaveBeenCalled();
     expect(layout.setMode).not.toHaveBeenCalled();
+  });
+
+  it('does not launch from an in-flight agent dialog after disposal begins', async () => {
+    let resolveDialog!: (value: {
+      agentType: 'codex';
+      panelIndex: number;
+    }) => void;
+    vi.mocked(showAgentDialog).mockReturnValue(new Promise((resolve) => {
+      resolveDialog = resolve;
+    }));
+    const { app, agentManager } = createHarness();
+
+    const action = app.actionLaunchAgent();
+    await Promise.resolve();
+    const disposal = app.dispose();
+    expect(app.disposalStarted).toBe(true);
+    resolveDialog({ agentType: 'codex', panelIndex: 0 });
+
+    await Promise.all([action, disposal]);
+    expect(agentManager.launchAgent).not.toHaveBeenCalled();
   });
 
   it('preserves all state when a live-session layout change is canceled', async () => {
@@ -145,6 +179,31 @@ describe('App destructive layout actions', () => {
     expect(agentManager.killAll).toHaveBeenCalledOnce();
     expect(orchestrator.resetState).toHaveBeenCalledOnce();
     expect(layout.setMode).toHaveBeenCalledOnce();
+    expect(layout.setMode).toHaveBeenCalledWith(4);
+  });
+
+  it('waits for an unmanaged terminal to close before replacing the layout', async () => {
+    vi.mocked(showConfirmDialog).mockResolvedValue(true);
+    let releaseTermination!: () => void;
+    const termination = new Promise<void>((resolve) => {
+      releaseTermination = resolve;
+    });
+    const terminal = {
+      panelIndex: 0,
+      sessionName: 'Vim',
+      isRunning: true,
+      killAgent: vi.fn(() => termination),
+    };
+    const { app, layout } = createHarness({ livePanels: [terminal] });
+
+    const change = app.actionChangeLayout(4);
+    await vi.waitFor(() => {
+      expect(terminal.killAgent).toHaveBeenCalledWith(true);
+    });
+    expect(layout.setMode).not.toHaveBeenCalled();
+
+    releaseTermination();
+    await change;
     expect(layout.setMode).toHaveBeenCalledWith(4);
   });
 

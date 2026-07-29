@@ -21,11 +21,15 @@ describe('status bar output safety', () => {
     expect(boxMock).toHaveBeenCalledWith(expect.objectContaining({ tags: false }));
 
     updateStatusBar(bar, {
+      modeLabel: 'CONFERENCE\u0000',
+      warning: 'Resize\u001b[2J now',
       fileName: '{red-fg}notes{/red-fg}\u001b[2J.md',
       fileDate: 'today\u0007',
     });
 
     const rendered = (bar.setContent as any).mock.calls.at(-1)?.[0] as string;
+    expect(rendered).toContain('[CONFERENCE]');
+    expect(rendered).toContain('! Resize [2J now');
     expect(rendered).toContain('{red-fg}notes{/red-fg}');
     expect(rendered).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
   });

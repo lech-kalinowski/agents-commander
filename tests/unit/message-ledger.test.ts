@@ -111,4 +111,35 @@ describe('MessageLedger', () => {
     expect(ledger.getMessage(oldest.messageId)).toBeNull();
     expect(ledger.getRecentMessages()).toEqual([queued, middle]);
   });
+
+  it('returns deep defensive snapshots of recent messages', () => {
+    const ledger = new MessageLedger();
+    ledger.createMessage({
+      kind: 'send',
+      source: {
+        sessionId: 'source-session',
+        panelIndex: 0,
+        agentName: 'Claude Code',
+        agentType: 'claude',
+      },
+      target: {
+        sessionId: 'target-session',
+        panelIndex: 1,
+        agentName: 'Codex CLI',
+        agentType: 'codex',
+      },
+      content: 'Review this change',
+    });
+
+    const firstSnapshot = ledger.getRecentMessages()[0];
+    firstSnapshot.content = 'mutated content';
+    firstSnapshot.source.agentName = 'mutated source';
+    firstSnapshot.target.agentName = 'mutated target';
+
+    expect(ledger.getRecentMessages()[0]).toMatchObject({
+      content: 'Review this change',
+      source: { agentName: 'Claude Code' },
+      target: { agentName: 'Codex CLI' },
+    });
+  });
 });

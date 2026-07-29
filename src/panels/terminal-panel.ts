@@ -1,11 +1,7 @@
 import blessed from 'blessed';
 import { spawn, type ChildProcess } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import type { Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { fileURLToPath } from 'node:url';
 import type { Theme, AppConfig, OrchestrationConfig } from '../config/types.js';
 import type { AgentType } from '../agents/types.js';
 import { VTerm } from './vterm.js';
@@ -25,6 +21,10 @@ import {
 } from '../orchestration/protocol.js';
 import { resolveExecutablePath } from '../utils/command-resolution.js';
 import { logger } from '../utils/logger.js';
+import {
+  resolvePtyHelperPath,
+  runtimeAssetLookupForModule,
+} from '../utils/runtime-assets.js';
 
 /**
  * Keys reserved for the UI — never forwarded to the agent process.
@@ -44,6 +44,7 @@ const RESERVED_KEYS = new Set([
   'pageup',     // scroll output
   'pagedown',   // scroll output
   'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
+  'S-f12',
 ]);
 
 interface BlessedKeyEvent {
@@ -73,9 +74,78 @@ interface ProtocolReservation {
   expiresAt: number;
 }
 
+interface ChildCloseObserver {
+  closed: boolean;
+  onClose: () => void;
+}
+
 const COMMANDER_ACTIVITY_MS = 10000;
+const TERMINAL_SIGINT_GRACE_MS = 500;
+const TERMINAL_SIGTERM_GRACE_MS = 1000;
+const TERMINAL_SIGKILL_GRACE_MS = 500;
+
+type TerminalEnvironmentPolicy = 'inherit' | 'internal';
+
+export interface TerminalShutdownOptions {
+  sigintGraceMs?: number;
+  sigtermGraceMs?: number;
+  sigkillGraceMs?: number;
+}
+
+export type TerminalProcessExitReason = 'process-exit' | 'spawn-error';
+
+const INTERNAL_ENVIRONMENT_KEYS = new Set([
+  'PATH',
+  'HOME',
+  'LANG',
+  'TERM',
+  'COLORTERM',
+  'DISPLAY',
+  'WAYLAND_DISPLAY',
+  'XDG_RUNTIME_DIR',
+]);
+const SENSITIVE_ENVIRONMENT_KEY = /(?:^|_)(?:API(?:_?KEY)?|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|ACCESS_KEY|AUTH)(?:_|$)/iu;
+
+function isAllowedInternalEnvironmentKey(key: string): boolean {
+  return !SENSITIVE_ENVIRONMENT_KEY.test(key)
+    && (INTERNAL_ENVIRONMENT_KEYS.has(key) || key.startsWith('LC_'));
+}
+
+export function buildTerminalSpawnEnvironment(
+  inherited: NodeJS.ProcessEnv,
+  overrides: Readonly<Record<string, string>>,
+  options: {
+    policy: TerminalEnvironmentPolicy;
+    cwd: string;
+    cols: number;
+    rows: number;
+  },
+): Record<string, string> {
+  const spawnEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(inherited)) {
+    if (value === undefined) continue;
+    if (options.policy === 'internal' && !isAllowedInternalEnvironmentKey(key)) {
+      continue;
+    }
+    spawnEnv[key] = value;
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    if (options.policy === 'internal' && !isAllowedInternalEnvironmentKey(key)) {
+      continue;
+    }
+    spawnEnv[key] = value;
+  }
+  spawnEnv.TERM = 'xterm-256color';
+  spawnEnv.FORCE_COLOR = '1';
+  spawnEnv.COLUMNS = String(options.cols);
+  spawnEnv.LINES = String(options.rows);
+  spawnEnv.PWD = options.cwd;
+  return spawnEnv;
+}
 
 export class TerminalPanel {
+  private static pendingChildTerminations = new Set<Promise<void>>();
+
   public box: blessed.Widgets.BoxElement;
   private headerBox: blessed.Widgets.BoxElement;
   private outputBox: blessed.Widgets.BoxElement;
@@ -100,6 +170,9 @@ export class TerminalPanel {
   // renderTimer/renderPending removed — rendering is now coalesced globally via static scheduleScreenRender
   private scanner: ProtocolScanner | null = null;
   private exitHandler: (() => void) | null = null;
+  private pendingTerminations = new Set<Promise<void>>();
+  private shutdownPromise: Promise<void> | null = null;
+  private launchSealed = false;
 
   // ── VTerm-based protocol scanning ────────────────────────────
   private scannerEnabled = false;
@@ -125,7 +198,11 @@ export class TerminalPanel {
   public onCommanderMessage: CommandCallback | null = null;
 
   /** Called when the process exits. Useful for AgentManager to track lifecycle. */
-  public onExit: ((code: number | null, signal: string | null) => void) | null = null;
+  public onExit: ((
+    code: number | null,
+    signal: string | null,
+    reason: TerminalProcessExitReason,
+  ) => void) | null = null;
 
   /** Called when the user clicks anywhere on this panel (for focus switching). */
   public onMouseClick: (() => void) | null = null;
@@ -365,6 +442,12 @@ export class TerminalPanel {
     return null;
   }
 
+  private canLaunchSession(label: string): boolean {
+    if (!this.launchSealed) return true;
+    logger.warn(`Terminal: refusing to launch ${label}; panel shutdown has begun`);
+    return false;
+  }
+
   launchAgent(
     agentType: AgentType,
     agentName: string,
@@ -372,6 +455,7 @@ export class TerminalPanel {
     args: string[] = [],
     env: Record<string, string> = {},
   ): boolean {
+    if (!this.canLaunchSession(agentName)) return false;
     if (this.proc) this.killAgent();
 
     this.agentType = agentType;
@@ -381,7 +465,26 @@ export class TerminalPanel {
     this.exitHandler = null;
     this.userScrolled = false;
 
-    return this.launchSession(command, args, env, true);
+    return this.launchSession(command, args, env, true, 'inherit');
+  }
+
+  launchInternalAgent(
+    agentName: string,
+    command: string,
+    args: string[] = [],
+    env: Record<string, string> = {},
+  ): boolean {
+    if (!this.canLaunchSession(agentName)) return false;
+    if (this.proc) this.killAgent();
+
+    this.agentType = 'generic';
+    this.agentName = agentName;
+    this._status = 'running';
+    this.initVTerm();
+    this.exitHandler = null;
+    this.userScrolled = false;
+
+    return this.launchSession(command, args, env, true, 'internal');
   }
 
   launchCommand(
@@ -391,6 +494,7 @@ export class TerminalPanel {
     env: Record<string, string> = {},
     options?: { onExit?: () => void },
   ): boolean {
+    if (!this.canLaunchSession(label)) return false;
     if (this.proc) this.killAgent(true);
 
     this.agentType = null;
@@ -400,7 +504,7 @@ export class TerminalPanel {
     this.exitHandler = options?.onExit ?? null;
     this.userScrolled = false;
 
-    return this.launchSession(command, args, env, false);
+    return this.launchSession(command, args, env, false, 'inherit');
   }
 
   private launchSession(
@@ -408,7 +512,9 @@ export class TerminalPanel {
     args: string[],
     env: Record<string, string>,
     enableProtocolScanner: boolean,
+    environmentPolicy: TerminalEnvironmentPolicy,
   ): boolean {
+    if (this.launchSealed) return false;
     const { cols, rows } = this.getTerminalDimensions();
 
     const resolvedPath = this.resolveFullPath(command);
@@ -426,19 +532,15 @@ export class TerminalPanel {
     this.vterm.write(`  CWD:     ${this.cwd}\r\n---\r\n\r\n`);
     this.scheduleRender();
 
-    const spawnEnv: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (v !== undefined) spawnEnv[k] = v;
-    }
-    Object.assign(spawnEnv, env);
-    spawnEnv['TERM'] = 'xterm-256color';
-    spawnEnv['FORCE_COLOR'] = '1';
-    spawnEnv['COLUMNS'] = String(cols);
-    spawnEnv['LINES'] = String(rows);
-    spawnEnv['PWD'] = this.cwd;
+    const spawnEnv = buildTerminalSpawnEnvironment(process.env, env, {
+      policy: environmentPolicy,
+      cwd: this.cwd,
+      cols,
+      rows,
+    });
 
     try {
-      const helperPath = this.findPtyHelper();
+      const helperPath = resolvePtyHelperPath(runtimeAssetLookupForModule(import.meta.url));
       const pythonPath = this.resolveFullPath('python3');
       if (!helperPath) {
         throw new Error('pty-helper.py not found in the installed package');
@@ -523,7 +625,7 @@ export class TerminalPanel {
           this.stderrDecoder = null;
           this.scanner = null;
           this.scannerEnabled = false;
-          this.onExit?.(null, null);
+          this.onExit?.(null, null, 'spawn-error');
           this.runExitHandler();
           this.scheduleRender();
         }
@@ -556,7 +658,7 @@ export class TerminalPanel {
           this.scheduleRender();
 
           // Call unified exit handlers
-          if (this.onExit) this.onExit(code, signal);
+          if (this.onExit) this.onExit(code, signal, 'process-exit');
           this.runExitHandler();
         }
         logger.info(`Terminal session exited: ${this.agentName} code=${code} signal=${signal}`);
@@ -636,8 +738,8 @@ export class TerminalPanel {
     // 1. Feed new scrollback lines (non-TUI / normal scroll)
     const sbLen = this.vterm.scrollbackLength;
     while (this.lastScrollbackIndex < sbLen) {
-      const plain = this.vterm.getScrollbackPlain(this.lastScrollbackIndex);
-      this.scanner.feedLine(plain);
+      const row = this.vterm.getScrollbackPlainRow(this.lastScrollbackIndex);
+      this.scanner.feed(`${row.text}${row.wrapsToNext ? '' : '\n'}`);
       this.lastScrollbackIndex++;
     }
 
@@ -669,7 +771,7 @@ export class TerminalPanel {
     if (!this.onCommanderMessage) return;
     if (this.scanner?.isMuted) return;
 
-    const lines = this.vterm.getGridPlainLines();
+    const lines = this.vterm.getGridLogicalLines();
     const visibleKeys = new Set<string>();
     let startIdx = -1;
     let msgType: MessageType = 'send';
@@ -804,29 +906,6 @@ export class TerminalPanel {
     }, 50); // ~20fps, single repaint for all panels
   }
 
-  private findPtyHelper(): string | null {
-    const candidates: string[] = [];
-    try {
-      const thisDir = path.dirname(fileURLToPath(import.meta.url));
-      // npm install: dist/src/index.js -> dist/agents/pty-helper.py
-      candidates.push(path.join(thisDir, '..', 'agents', 'pty-helper.py'));
-      // Local dev variants
-      candidates.push(path.join(thisDir, '..', 'src', 'agents', 'pty-helper.py'));
-      candidates.push(path.join(thisDir, '..', '..', 'src', 'agents', 'pty-helper.py'));
-    } catch { /* ignore */ }
-    // Fallback: CWD-relative (works when running from repo root)
-    candidates.push(path.join(process.cwd(), 'src', 'agents', 'pty-helper.py'));
-    candidates.push(path.join(process.cwd(), 'dist', 'agents', 'pty-helper.py'));
-
-    for (const p of candidates) {
-      if (fs.existsSync(p)) return p;
-    }
-    const fallback = path.join(os.homedir(), '.agents-commander', 'pty-helper.py');
-    if (fs.existsSync(fallback)) return fallback;
-    logger.error('pty-helper.py not found');
-    return null;
-  }
-
   private resolveFullPath(command: string): string | null {
     return resolveExecutablePath(command);
   }
@@ -846,37 +925,240 @@ export class TerminalPanel {
     this.headerBox.setContent(` ${icon} ${this.agentName}  [${this._status}]${pid}${activity}`);
   }
 
-  killAgent(suppressExitHandler = false): void {
+  private static boundedGracePeriod(value: number | undefined, fallback: number): number {
+    if (value === undefined || !Number.isFinite(value)) return fallback;
+    return Math.max(0, Math.min(30_000, Math.trunc(value)));
+  }
+
+  private static childHasExited(child: ChildProcess): boolean {
+    return child.exitCode !== null || child.signalCode !== null;
+  }
+
+  private static waitForChildClose(
+    child: ChildProcess,
+    observer: ChildCloseObserver,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    if (observer.closed) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (closed: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.removeListener('close', onClose);
+        resolve(closed);
+      };
+      const onClose = () => { finish(true); };
+      const timer = setTimeout(() => { finish(observer.closed); }, timeoutMs);
+      child.once('close', onClose);
+
+      // Cover a close that raced with listener registration.
+      if (observer.closed) {
+        queueMicrotask(() => { finish(true); });
+      }
+    });
+  }
+
+  private async terminateChildProcess(
+    child: ChildProcess,
+    control: Writable | null,
+    closeObserver: ChildCloseObserver,
+    sessionName: string,
+    options: TerminalShutdownOptions,
+  ): Promise<void> {
+    const stages: ReadonlyArray<{
+      signal: NodeJS.Signals;
+      graceMs: number;
+      escalationLabel?: string;
+    }> = [
+      {
+        signal: 'SIGINT',
+        graceMs: TerminalPanel.boundedGracePeriod(
+          options.sigintGraceMs,
+          TERMINAL_SIGINT_GRACE_MS,
+        ),
+      },
+      {
+        signal: 'SIGTERM',
+        graceMs: TerminalPanel.boundedGracePeriod(
+          options.sigtermGraceMs,
+          TERMINAL_SIGTERM_GRACE_MS,
+        ),
+        escalationLabel: 'SIGTERM',
+      },
+      {
+        signal: 'SIGKILL',
+        graceMs: TerminalPanel.boundedGracePeriod(
+          options.sigkillGraceMs,
+          TERMINAL_SIGKILL_GRACE_MS,
+        ),
+        escalationLabel: 'SIGKILL',
+      },
+    ];
+
+    for (const stage of stages) {
+      if (closeObserver.closed) return;
+      if (TerminalPanel.childHasExited(child)) {
+        if (await TerminalPanel.waitForChildClose(child, closeObserver, stage.graceMs)) return;
+        continue;
+      }
+      if (stage.escalationLabel) {
+        logger.info(`Terminal: escalating to ${stage.escalationLabel} for ${sessionName}`);
+      }
+      this.signalAgentProcessGroup(
+        child,
+        control,
+        stage.signal,
+        sessionName,
+      );
+      if (await TerminalPanel.waitForChildClose(
+        child,
+        closeObserver,
+        stage.graceMs,
+      )) return;
+    }
+
+    // The control command targets the PTY child's process group. If the helper
+    // itself failed to observe the child's death, terminate that wrapper too
+    // after the group has had its full SIGKILL grace period.
+    if (!closeObserver.closed) {
+      logger.info(`Terminal: force-closing PTY helper for ${sessionName}`);
+      try {
+        child.kill('SIGKILL');
+      } catch (error) {
+        logger.error(`Terminal: unable to force-close PTY helper for ${sessionName}`, error);
+      }
+      await TerminalPanel.waitForChildClose(
+        child,
+        closeObserver,
+        TerminalPanel.boundedGracePeriod(
+          options.sigkillGraceMs,
+          TERMINAL_SIGKILL_GRACE_MS,
+        ),
+      );
+    }
+
+    if (!closeObserver.closed) {
+      logger.error(`Terminal: process for ${sessionName} did not close after SIGKILL`);
+    }
+  }
+
+  private signalAgentProcessGroup(
+    child: ChildProcess,
+    control: Writable | null,
+    signal: NodeJS.Signals,
+    sessionName: string,
+  ): boolean {
+    let controlRequested = false;
+    if (control?.writable && !control.destroyed && !control.writableEnded) {
+      try {
+        control.write(`signal ${signal.slice(3)}\n`);
+        controlRequested = true;
+      } catch (error) {
+        logger.error(`Terminal: unable to request ${signal} for ${sessionName}`, error);
+      }
+    }
+
+    if (signal === 'SIGKILL') {
+      try {
+        // Redundant with fd 3 by design: stream write failures may surface
+        // asynchronously, while SIGUSR1 is a dedicated helper command that
+        // force-kills the PTY child's entire process group.
+        const helperNotified = child.kill('SIGUSR1');
+        return controlRequested || helperNotified;
+      } catch (error) {
+        logger.error(`Terminal: unable to request SIGKILL for ${sessionName}`, error);
+        return controlRequested;
+      }
+    }
+
+    if (controlRequested) return true;
+    try {
+      // SIGINT/SIGTERM are forwarded by the helper to the PTY process group.
+      child.kill(signal);
+      return false;
+    } catch (error) {
+      logger.error(`Terminal: unable to send ${signal} to ${sessionName}`, error);
+      return false;
+    }
+  }
+
+  private static closeDetachedControl(control: Writable | null): void {
+    if (!control || control.destroyed || control.writableEnded) return;
+    try {
+      control.end();
+    } catch {
+      // The helper may have closed fd 3 while processing the final signal.
+    }
+  }
+
+  private trackTermination(
+    child: ChildProcess,
+    control: Writable | null,
+    sessionName: string,
+    options: TerminalShutdownOptions,
+  ): Promise<void> {
+    let closeObserver!: ChildCloseObserver;
+    closeObserver = {
+      closed: false,
+      onClose: () => {
+        closeObserver.closed = true;
+      },
+    };
+    child.once('close', closeObserver.onClose);
+
+    let tracked!: Promise<void>;
+    tracked = this.terminateChildProcess(
+      child,
+      control,
+      closeObserver,
+      sessionName,
+      options,
+    )
+      .catch((error) => {
+        logger.error(`Terminal: bounded shutdown failed for ${sessionName}`, error);
+      })
+      .finally(() => {
+        child.removeListener('close', closeObserver.onClose);
+        TerminalPanel.closeDetachedControl(control);
+        this.pendingTerminations.delete(tracked);
+        TerminalPanel.pendingChildTerminations.delete(tracked);
+      });
+    this.pendingTerminations.add(tracked);
+    TerminalPanel.pendingChildTerminations.add(tracked);
+    return tracked;
+  }
+
+  /**
+   * Wait for terminations owned by panels that may already have been removed
+   * from their layout or AgentManager. App disposal drains this global set
+   * before restoring the terminal and exiting the process.
+   */
+  static async waitForPendingTerminations(): Promise<void> {
+    while (TerminalPanel.pendingChildTerminations.size > 0) {
+      await Promise.allSettled([...TerminalPanel.pendingChildTerminations]);
+    }
+  }
+
+  private beginAgentTermination(
+    suppressExitHandler: boolean,
+    options: TerminalShutdownOptions,
+  ): Promise<void> {
     if (suppressExitHandler) {
       this.exitHandler = null;
     }
+    let termination = Promise.resolve();
     if (this.proc) {
-      const p = this.proc;
-      this.closeResizeControl();
-      try {
-        // 1. Try SIGINT (Ctrl+C) first for graceful exit
-        p.kill('SIGINT');
-
-        // 2. Escalation sequence
-        setTimeout(() => {
-          if (p.exitCode === null && p.signalCode === null) {
-            logger.info(`Terminal: escalating to SIGTERM for ${this.agentName}`);
-            try { p.kill('SIGTERM'); } catch {}
-
-            setTimeout(() => {
-              if (p.exitCode === null && p.signalCode === null) {
-                logger.info(`Terminal: escalating to SIGKILL for ${this.agentName}`);
-                try { p.kill('SIGKILL'); } catch {}
-              }
-            }, 1000);
-          }
-        }, 500);
-      } catch (err) {
-        logger.error(`Terminal: error killing agent ${this.agentName}`, err);
-      }
+      const child = this.proc;
+      const control = this.detachResizeControl();
+      const sessionName = this.agentName;
       this.proc = null;
+      termination = this.trackTermination(child, control, sessionName, options);
+    } else {
+      this.closeResizeControl();
     }
-    this.closeResizeControl();
     this.stdoutDecoder = null;
     this.stderrDecoder = null;
     this.scannerEnabled = false;
@@ -889,6 +1171,27 @@ export class TerminalPanel {
     if (this.gridScanTimer) { clearTimeout(this.gridScanTimer); this.gridScanTimer = null; }
     this._status = 'exited';
     this.updateHeader();
+    return termination;
+  }
+
+  killAgent(suppressExitHandler = false): Promise<void> {
+    this.beginAgentTermination(suppressExitHandler, {});
+    return Promise.allSettled([...this.pendingTerminations]).then(() => undefined);
+  }
+
+  /**
+   * Stop the active process and wait for every in-flight panel termination.
+   * The returned promise is stable across repeated calls and always settles
+   * within the configured SIGINT → SIGTERM → SIGKILL grace periods.
+   */
+  shutdownAgent(options: TerminalShutdownOptions = {}): Promise<void> {
+    this.launchSealed = true;
+    if (this.shutdownPromise) return this.shutdownPromise;
+
+    this.beginAgentTermination(true, options);
+    const pending = [...this.pendingTerminations];
+    this.shutdownPromise = Promise.allSettled(pending).then(() => undefined);
+    return this.shutdownPromise;
   }
 
   private runExitHandler(): void {
@@ -964,7 +1267,7 @@ export class TerminalPanel {
   private snapshotGridAsProcessed(): void {
     if (!this.scannerEnabled) return;
 
-    const lines = this.vterm.getGridPlainLines();
+    const lines = this.vterm.getGridLogicalLines();
 
     // Fast path: skip regex matching if no potential markers on grid
     if (!lines.some((l) => l.includes('COMMANDER'))) {
@@ -974,7 +1277,10 @@ export class TerminalPanel {
     }
 
     this.activeGridProtocolKeys = this.markProtocolLinesAsProcessed(lines, this.orchConfig.dedupWindow);
-    this.activeTailReplyKeys = this.markTailRepliesAsProcessed(this.vterm.getTail(120), this.orchConfig.dedupWindow);
+    this.activeTailReplyKeys = this.markTailRepliesAsProcessed(
+      this.vterm.getTailLogicalLines(120),
+      this.orchConfig.dedupWindow,
+    );
   }
 
   private markProtocolLinesAsProcessed(lines: string[], ttlMs: number): Set<string> {
@@ -1073,7 +1379,7 @@ export class TerminalPanel {
     if (!this.onCommanderMessage) return;
     if (this.scanner?.isMuted) return;
 
-    const tailLines = this.vterm.getTail(120);
+    const tailLines = this.vterm.getTailLogicalLines(120);
     const visibleKeys = new Set<string>();
     let startIdx = -1;
 
@@ -1231,8 +1537,16 @@ export class TerminalPanel {
     this.pendingReplyEmissions.clear();
   }
 
-  sendInput(text: string): void {
-    if (this.proc?.stdin?.writable) this.proc.stdin.write(text);
+  sendInput(text: string): boolean {
+    const stdin = this.proc?.stdin;
+    if (!stdin?.writable || stdin.destroyed || stdin.writableEnded) return false;
+    try {
+      stdin.write(text);
+      return true;
+    } catch (error) {
+      logger.error(`Unable to send input to terminal session ${this.agentName}`, error);
+      return false;
+    }
   }
 
   private sendPtyResize(cols: number, rows: number): void {
@@ -1252,15 +1566,14 @@ export class TerminalPanel {
   }
 
   private closeResizeControl(): void {
+    TerminalPanel.closeDetachedControl(this.detachResizeControl());
+  }
+
+  private detachResizeControl(): Writable | null {
     const control = this.resizeControl;
     this.resizeControl = null;
     this.lastPtySize = null;
-    if (!control || control.destroyed) return;
-    try {
-      control.end();
-    } catch {
-      // The process may already have closed fd 3.
-    }
+    return control;
   }
 
   showCommanderActivity(label = 'Commander task received', durationMs = COMMANDER_ACTIVITY_MS): void {
@@ -1320,7 +1633,7 @@ export class TerminalPanel {
   }
 
   destroy(): void {
-    this.killAgent(true);
+    void this.shutdownAgent();
     this.clearCommanderActivity();
     this.box.destroy();
   }

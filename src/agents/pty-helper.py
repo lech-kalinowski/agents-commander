@@ -18,6 +18,11 @@ import termios
 
 CONTROL_FD = 3
 MAX_TERMINAL_DIMENSION = 10000
+CONTROL_SIGNALS = {
+    'INT': signal.SIGINT,
+    'TERM': signal.SIGTERM,
+    'KILL': signal.SIGKILL,
+}
 
 def parse_args(argv):
     cwd = None
@@ -52,21 +57,43 @@ def apply_resize(master_fd, cols, rows):
     # process group. Sending another signal here would trigger duplicate redraws.
     fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
 
-def process_control_data(buffer, data, master_fd):
+def signal_child_process_group(child_pid, signum):
+    """Signal the PTY child's whole process group, including descendants."""
+    try:
+        # forkpty(3) makes the child a session/process-group leader, so its PID
+        # is also the stable process-group id until it has been reaped.
+        os.killpg(child_pid, signum)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        # Retain a narrow fallback for platforms where killpg is unavailable
+        # or the child has not completed session setup yet.
+        try:
+            os.kill(child_pid, signum)
+        except OSError:
+            pass
+
+def process_control_data(buffer, data, master_fd, child_pid):
     buffer += data
     while b'\n' in buffer:
         raw_line, buffer = buffer.split(b'\n', 1)
         parts = raw_line.decode('ascii', errors='replace').strip().split()
         try:
-            if len(parts) != 3 or parts[0] != 'resize':
+            if len(parts) == 3 and parts[0] == 'resize':
+                cols = int(parts[1])
+                rows = int(parts[2])
+                if not (1 <= cols <= MAX_TERMINAL_DIMENSION):
+                    raise ValueError
+                if not (1 <= rows <= MAX_TERMINAL_DIMENSION):
+                    raise ValueError
+                apply_resize(master_fd, cols, rows)
+            elif len(parts) == 2 and parts[0] == 'signal':
+                signum = CONTROL_SIGNALS.get(parts[1])
+                if signum is None:
+                    raise ValueError
+                signal_child_process_group(child_pid, signum)
+            else:
                 raise ValueError
-            cols = int(parts[1])
-            rows = int(parts[2])
-            if not (1 <= cols <= MAX_TERMINAL_DIMENSION):
-                raise ValueError
-            if not (1 <= rows <= MAX_TERMINAL_DIMENSION):
-                raise ValueError
-            apply_resize(master_fd, cols, rows)
         except (ValueError, OSError) as exc:
             detail = f": {exc}" if str(exc) else ""
             print(
@@ -127,13 +154,14 @@ def main():
 
     # Parent: proxy I/O between stdin/stdout and the PTY master
     def forward_signal(signum, frame):
-        try:
-            os.kill(pid, signum)
-        except OSError:
-            pass
+        signal_child_process_group(pid, signum)
+
+    def force_kill_child_group(signum, frame):
+        signal_child_process_group(pid, signal.SIGKILL)
 
     signal.signal(signal.SIGINT, forward_signal)
     signal.signal(signal.SIGTERM, forward_signal)
+    signal.signal(signal.SIGUSR1, force_kill_child_group)
 
     # Make stdin non-blocking
     stdin_fd = None
@@ -198,6 +226,7 @@ def main():
                             control_buffer,
                             data,
                             master_fd,
+                            pid,
                         )
                 except OSError as exc:
                     if exc.errno not in (errno.EIO, errno.EBADF):

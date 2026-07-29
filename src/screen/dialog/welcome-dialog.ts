@@ -6,7 +6,7 @@ import { getPackageVersion } from '../../utils/package-info.js';
 import { bindOverlayResize, type OverlayGeometry } from './geometry.js';
 
 // Generated with: toilet -f future
-const LOGO = `
+export const WELCOME_TEXT = `
 {bold}{cyan-fg}                   ┏━┓┏━╸┏━╸┏┓╻╺┳╸┏━┓
                    ┣━┫┃╺┓┣╸ ┃┗┫ ┃ ┗━┓
                    ╹ ╹┗━┛┗━╸╹ ╹ ╹ ┗━┛
@@ -29,7 +29,8 @@ const LOGO = `
     {cyan-fg}Ctrl+O{/cyan-fg}   Send a task to any agent
     {cyan-fg}Ctrl+B{/cyan-fg}   Browse ${loadTemplates().length} prompt templates
     {cyan-fg}Ctrl+P{/cyan-fg}   Teach agents to collaborate
-    {cyan-fg}F12{/cyan-fg}      Inter-agent communication guide
+    {cyan-fg}F12{/cyan-fg}      Routed-message activity
+    {cyan-fg}Shift+F12{/cyan-fg} Protocol guide
 
   {bold}{yellow-fg}File Manager{/yellow-fg}{/bold}
 
@@ -49,7 +50,7 @@ const LOGO = `
                 Press any key to start...
 `.trim();
 
-const COMPACT_WELCOME = `
+export const COMPACT_WELCOME_TEXT = `
 {bold}{cyan-fg}AGENTS COMMANDER{/cyan-fg}{/bold}
 {bold}v${getPackageVersion()}{/bold} — Multi-Agent Terminal Manager
 
@@ -60,7 +61,8 @@ Agents coordinate through the visible Commander protocol.
 {cyan-fg}Ctrl+O{/cyan-fg}   Send a task
 {cyan-fg}Ctrl+B{/cyan-fg}   Browse ${loadTemplates().length} templates
 {cyan-fg}Ctrl+P{/cyan-fg}   Inject protocol instructions
-{cyan-fg}F12{/cyan-fg}      Protocol guide
+{cyan-fg}F12{/cyan-fg}      Routed-message activity
+{cyan-fg}Shift+F12{/cyan-fg} Protocol guide
 
 Use a disposable project when enabling automatic approvals.
 
@@ -88,11 +90,11 @@ export function showWelcomeDialog(screen: blessed.Widgets.Screen, theme: Theme):
       scrollable: true,
       alwaysScroll: true,
       mouse: true,
-      content: LOGO,
+      content: WELCOME_TEXT,
     });
 
     const updateContent = (geometry: OverlayGeometry) => {
-      dialog.setContent(geometry.compact ? COMPACT_WELCOME : LOGO);
+      dialog.setContent(geometry.compact ? COMPACT_WELCOME_TEXT : WELCOME_TEXT);
       dialog.setScrollPerc(0);
     };
     const unbindResize = bindOverlayResize(screen, dialog, 60, 42, updateContent);

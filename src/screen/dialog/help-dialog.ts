@@ -2,7 +2,7 @@ import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
 
-const HELP_TEXT = `
+export const HELP_TEXT = `
 {bold}{cyan-fg}AGENTS COMMANDER{/cyan-fg}{/bold}
 Multi-panel AI Agent Manager & File Browser
 
@@ -29,7 +29,8 @@ Multi-panel AI Agent Manager & File Browser
   F2          Launch agent in panel
   Ctrl+O      Orchestrate — send task to agent
   Ctrl+P      Inject protocol (teach agent comms)
-  F12         Inter-agent communication guide
+  F12         Routed-message activity
+  Shift+F12   Inter-agent protocol guide
   Ctrl+B      Browse 120 prompt templates
               (select → pick panel → sent to agent)
   Ctrl+T      Toggle panel: file <-> terminal
@@ -53,7 +54,8 @@ Multi-panel AI Agent Manager & File Browser
   {cyan-fg}QUERY{/cyan-fg}             Ask who's running
 
   Sender gets an ACK after delivery.
-  Press {cyan-fg}F12{/cyan-fg} for the full guide.
+  F12 shows routed SEND/REPLY/BROADCAST history.
+  Press {cyan-fg}Shift+F12{/cyan-fg} for the full guide.
 
 {bold}{yellow-fg}LAYOUT & SYSTEM{/yellow-fg}{/bold}
 
@@ -62,7 +64,7 @@ Multi-panel AI Agent Manager & File Browser
 
   {bold}File panel only{/bold} (pass through to agents):
   Ctrl+E      Reset to default 2-panel view
-  Ctrl+G      Edit selected file in Vim
+  Ctrl+G      Edit selected file in Vim; otherwise guide
   Ctrl+H      Toggle hidden files
   Ctrl+R      Refresh panels
   Ctrl+L      View application logs

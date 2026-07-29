@@ -23,13 +23,15 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup && mkdir -p dist/agents dist/templates && cp src/agents/pty-helper.py dist/agents/ && cp src/templates/builtin/*.md dist/templates/",
-    "dev": "tsup --watch",
+    "copy:runtime-assets": "mkdir -p dist/agents dist/templates dist/demo && cp src/agents/pty-helper.py dist/agents/ && cp src/templates/builtin/*.md dist/templates/ && cp src/demo/demo-agent.js dist/demo/",
+    "build": "tsup && npm run copy:runtime-assets",
+    "dev": "tsup --watch --onSuccess \"npm run copy:runtime-assets\"",
     "start": "node dist/bin/agents-commander.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:built": "node tests/built/cli-isolation.mjs",
     "test:watch": "vitest",
-    "verify": "npm run typecheck && npm test && npm run build",
+    "verify": "npm run typecheck && npm test && npm run build && npm run test:built",
     "prepack": "npm run verify",
     "prepublishOnly": "npm run verify"
   },

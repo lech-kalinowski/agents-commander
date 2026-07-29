@@ -10,7 +10,9 @@ export default defineConfig({
   dts: {
     entry: 'src/index.ts',
   },
-  splitting: false,
+  // Keep the interactive UI behind the CLI's dynamic import so lightweight
+  // commands can run even when optional terminal UI modules cannot load.
+  splitting: true,
   shims: true,
   noExternal: [],
   external: [

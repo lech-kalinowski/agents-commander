@@ -2,7 +2,7 @@ import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
 
-const GUIDE_TEXT = `
+export const GUIDE_TEXT = `
 {bold}{cyan-fg}INTER-AGENT COMMUNICATION GUIDE{/cyan-fg}{/bold}
 
 Agents Commander lets your AI agents talk to each other.
@@ -138,10 +138,11 @@ with another agent running in a different panel.
   {cyan-fg}F2{/cyan-fg}          Launch agent in a panel
   {cyan-fg}Ctrl+O{/cyan-fg}      Orchestrate (send task to agent)
   {cyan-fg}Ctrl+P{/cyan-fg}      Inject protocol into active agent
-  {cyan-fg}F12{/cyan-fg}         This guide
+  {cyan-fg}F12{/cyan-fg}         Routed-message activity
+  {cyan-fg}Shift+F12{/cyan-fg}   This guide
   {cyan-fg}Ctrl+K{/cyan-fg}      Kill running session on active panel
   {cyan-fg}Ctrl+T{/cyan-fg}      Toggle panel: file <-> terminal
-  {cyan-fg}Ctrl+0{/cyan-fg}      Reset to default 2-panel view
+  {cyan-fg}Ctrl+E{/cyan-fg}      Reset to default 2-panel view
   {cyan-fg}Tab{/cyan-fg}         Switch between panels
 
 
@@ -179,7 +180,7 @@ export function showProtocolGuide(screen: blessed.Widgets.Screen, theme: Theme):
       border: { fg: 'cyan' },
     },
     tags: true,
-    label: ' Inter-Agent Communication Guide (F12) ',
+    label: ' Inter-Agent Communication Guide (Shift+F12) ',
     shadow: true,
     scrollable: true,
     alwaysScroll: true,
@@ -194,7 +195,7 @@ export function showProtocolGuide(screen: blessed.Widgets.Screen, theme: Theme):
     parent: dialog,
     bottom: 0,
     left: 'center',
-    content: ' Esc/Enter/q/F12 = Close    PgUp/PgDn = Scroll ',
+    content: ' Esc/Enter/q/Shift+F12/Ctrl+G = Close    PgUp/PgDn = Scroll ',
     style: { bg: theme.dialog.bg, fg: 'cyan' },
   });
 
@@ -215,15 +216,21 @@ export function showProtocolGuide(screen: blessed.Widgets.Screen, theme: Theme):
   };
 
   // Close on dialog-level keys
-  dialog.key(['escape', 'enter', 'q', 'f12', 'C-g'], close);
+  dialog.key(['escape', 'enter', 'q', 'S-f12', 'C-g'], close);
 
   // Also listen on screen level as fallback (some blessed scrollable
   // boxes don't reliably route key events to dialog.key handlers)
   const onScreenKey = (_ch: any, key: any) => {
     if (!key) return;
     const name = key.full || key.name;
-    if (name === 'escape' || name === 'enter' || name === 'q' || name === 'f12' || name === 'C-g') {
+    if (name === 'escape' || name === 'enter' || name === 'q') {
       close();
+    } else if (
+      name === 'C-g' ||
+      name === 'S-f12' ||
+      (key.name === 'f12' && key.shift)
+    ) {
+      queueMicrotask(close);
     }
   };
   screen.on('keypress', onScreenKey);

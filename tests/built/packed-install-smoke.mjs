@@ -114,7 +114,7 @@ try {
   const tarballPath = path.join(packDirectory, packReport[0].filename);
   run(npmCommand, [
     'install',
-    '--offline',
+    '--prefer-offline',
     '--ignore-scripts',
     '--no-audit',
     '--no-fund',
@@ -122,7 +122,7 @@ try {
     tarballPath,
   ], {
     cwd: consumerDirectory,
-    label: 'offline tarball install',
+    label: 'tarball install',
   });
 
   const installedRoot = path.join(

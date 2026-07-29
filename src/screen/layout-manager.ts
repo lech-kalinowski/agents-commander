@@ -1,5 +1,6 @@
 import blessed from 'blessed';
 import type { Theme, AppConfig } from '../config/types.js';
+import type { FileEntry } from '../file-manager/types.js';
 import { FilePanel } from '../panels/file-panel.js';
 import { TerminalPanel } from '../panels/terminal-panel.js';
 
@@ -64,6 +65,8 @@ export class LayoutManager {
 
   /** Callback fired when active panel changes (e.g. for status bar updates). */
   public onPanelFocused: (() => void) | null = null;
+  /** Callback fired when Enter opens a regular file from any file panel. */
+  public onOpenFile: ((entry: FileEntry) => void) | null = null;
 
   constructor(screen: blessed.Widgets.Screen, theme: Theme, config: AppConfig) {
     this.screen = screen;
@@ -82,6 +85,9 @@ export class LayoutManager {
     if (panel instanceof FilePanel) {
       panel.onSelectionChange = () => {
         this.onPanelFocused?.();
+      };
+      panel.onOpenFile = (entry) => {
+        this.onOpenFile?.(entry);
       };
     }
   }

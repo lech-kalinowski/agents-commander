@@ -31,6 +31,7 @@ describe('overlay geometry', () => {
   it('normalizes and bounds long overlay text', () => {
     expect(truncateOverlayText(' a   b  c ', 5)).toBe('a b c');
     expect(truncateOverlayText('abcdefgh', 5)).toBe('abcd…');
+    expect(truncateOverlayText('safe\x1b[31m\ntext', 40)).toBe('safe [31m text');
   });
 
   it('updates active overlays and removes the resize listener on cleanup', () => {

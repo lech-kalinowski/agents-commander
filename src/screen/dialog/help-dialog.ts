@@ -18,7 +18,7 @@ Multi-panel AI Agent Manager & File Browser
 
   Tab         Switch active panel
   Up/Down     Move cursor
-  Enter       Open directory / file
+  Enter       Open directory / view file
   Backspace   Go to parent directory
   Home/End    Jump to first/last file
   PgUp/PgDn   Scroll page
@@ -58,7 +58,7 @@ Multi-panel AI Agent Manager & File Browser
 {bold}{yellow-fg}LAYOUT & SYSTEM{/yellow-fg}{/bold}
 
   Ctrl+2/3/4  Switch to 2/3/4 panels
-  Ctrl+W      Remove active panel (min 2)
+  Ctrl+W      Remove active panel (confirms live session)
 
   {bold}File panel only{/bold} (pass through to agents):
   Ctrl+E      Reset to default 2-panel view

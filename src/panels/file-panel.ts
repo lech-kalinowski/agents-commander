@@ -4,6 +4,7 @@ import type { Theme } from '../config/types.js';
 import type { FileEntry, SortOptions } from '../file-manager/types.js';
 import { readDirectory } from '../file-manager/file-system.js';
 import { sortFiles } from '../file-manager/file-sorter.js';
+import { showErrorToast } from '../screen/toast.js';
 import { formatFileSize, formatDate, truncate } from '../utils/format.js';
 import { logger } from '../utils/logger.js';
 
@@ -29,6 +30,8 @@ export class FilePanel {
     directoriesFirst: true,
   };
   private showHidden = false;
+  private loadGeneration = 0;
+  private destroyed = false;
   public panelIndex: number;
   private _focused = false;
 
@@ -36,6 +39,8 @@ export class FilePanel {
   public onMouseClick: (() => void) | null = null;
   /** Called when keyboard or mouse navigation changes the current entry. */
   public onSelectionChange: (() => void) | null = null;
+  /** Called when Enter is pressed on a non-directory entry. */
+  public onOpenFile: ((entry: FileEntry) => void) | null = null;
 
   get currentPath(): string {
     return this._currentPath;
@@ -96,7 +101,7 @@ export class FilePanel {
         border: theme.panel.border,
       },
       tags: true,
-      label: ` ${this.shortPath(initialPath)} `,
+      label: ` ${this.escapeTaggedText(this.shortPath(initialPath))} `,
     });
 
     // Column header
@@ -156,6 +161,15 @@ export class FilePanel {
     return p;
   }
 
+  private sanitizeDisplayText(value: string): string {
+    return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '\uFFFD');
+  }
+
+  private escapeTaggedText(value: string): string {
+    const escape = (blessed as unknown as { escape(text: string): string }).escape;
+    return escape(this.sanitizeDisplayText(value));
+  }
+
   private updateHeader(): void {
     const w = (this.box.width as number) - 4;
     if (w <= 0) return;
@@ -166,15 +180,16 @@ export class FilePanel {
 
   private formatRow(entry: FileEntry): string {
     const w = (this.box.width as number) - 4;
-    if (w <= 0) return entry.name;
+    if (w <= 0) return this.escapeTaggedText(entry.name);
     const nameW = Math.max(10, w - 22);
 
     const isSelected = this.selectedFiles.has(entry.fullPath);
-    let name = entry.name;
+    let name = this.sanitizeDisplayText(entry.name);
     if (entry.isDirectory) {
       name = '/' + name;
     }
     name = truncate(name, nameW).padEnd(nameW);
+    const safeName = this.escapeTaggedText(name);
 
     const size = entry.isDirectory ? '  <DIR>' : formatFileSize(entry.size);
     const date = formatDate(entry.modified);
@@ -190,28 +205,41 @@ export class FilePanel {
       suffix = `{/bold}{/white-fg}`;
     }
 
-    return `${prefix}${name}${size}  ${date}${suffix}`;
+    return `${prefix}${safeName}${size}  ${date}${suffix}`;
   }
 
-  async loadDirectory(dirPath?: string): Promise<void> {
-    if (dirPath) {
-      this._currentPath = dirPath;
-    }
-
+  async loadDirectory(dirPath = this._currentPath): Promise<boolean> {
+    if (this.destroyed) return false;
+    const generation = ++this.loadGeneration;
+    let nextEntries: FileEntry[];
     try {
-      const raw = await readDirectory(this._currentPath, this.showHidden);
-      this.entries = sortFiles(raw, this.sortOptions);
-      this.selectedFiles.clear();
-      this.refreshList();
-      this.box.setLabel(` ${this.shortPath(this._currentPath)} `);
-
-      if (this.cursorIndex >= this.entries.length + 1) {
-        this.cursorIndex = 0;
-      }
-      this.list.select(this.cursorIndex);
+      const raw = await readDirectory(dirPath, this.showHidden);
+      if (generation !== this.loadGeneration) return false;
+      nextEntries = sortFiles(raw, this.sortOptions);
     } catch (err) {
-      logger.error(`Failed to read directory: ${this._currentPath}`, err);
+      if (generation !== this.loadGeneration) return false;
+      logger.error(`Failed to read directory: ${dirPath}`, err);
+      const detail = err instanceof Error && err.message
+        ? `: ${this.sanitizeDisplayText(err.message)}`
+        : '';
+      const displayPath = this.sanitizeDisplayText(this.shortPath(dirPath));
+      showErrorToast(this.screen, `Unable to open ${displayPath}${detail}`);
+      return false;
     }
+
+    const pathChanged = dirPath !== this._currentPath;
+    const nextCursor = pathChanged || this.cursorIndex >= nextEntries.length + 1
+      ? 0
+      : this.cursorIndex;
+
+    this._currentPath = dirPath;
+    this.entries = nextEntries;
+    this.selectedFiles.clear();
+    this.cursorIndex = nextCursor;
+    this.box.setLabel(` ${this.escapeTaggedText(this.shortPath(dirPath))} `);
+    this.refreshList();
+    this.list.select(nextCursor);
+    return true;
   }
 
   private refreshList(): void {
@@ -267,26 +295,26 @@ export class FilePanel {
         // Go up
         const parent = path.dirname(this._currentPath);
         if (parent !== this._currentPath) {
-          this.cursorIndex = 0;
-          this.loadDirectory(parent);
+          void this.loadDirectory(parent);
         }
         return;
       }
 
       const entry = this.entries[this.cursorIndex - 1];
       if (entry?.isDirectory) {
-        this.cursorIndex = 0;
-        this.loadDirectory(entry.fullPath);
+        void this.loadDirectory(entry.fullPath);
+        return;
       }
-      // File open will be handled by the app
+      if (entry) {
+        this.onOpenFile?.(entry);
+      }
     });
 
     // Backspace - go to parent
     this.list.key(['backspace'], () => {
       const parent = path.dirname(this._currentPath);
       if (parent !== this._currentPath) {
-        this.cursorIndex = 0;
-        this.loadDirectory(parent);
+        void this.loadDirectory(parent);
       }
     });
 
@@ -329,6 +357,12 @@ export class FilePanel {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.loadGeneration++;
+    this.onMouseClick = null;
+    this.onSelectionChange = null;
+    this.onOpenFile = null;
     this.box.destroy();
   }
 }

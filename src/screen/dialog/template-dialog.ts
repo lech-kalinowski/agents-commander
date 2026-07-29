@@ -3,7 +3,9 @@ import type { Theme } from '../../config/types.js';
 import type { PromptTemplate } from '../../templates/types.js';
 import { getTemplatesByCategory, refreshTemplates } from '../../templates/loader.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
-import { renderPanelBoxes } from './panel-picker.js';
+import { isValidPanelNumber, renderPanelBoxes } from './panel-picker.js';
+import { showErrorToast } from '../toast.js';
+import { bindOverlayResize, screenGeometry } from './geometry.js';
 
 export interface TemplateChoice {
   content: string;
@@ -58,17 +60,20 @@ export function showTemplateDialog(
     if (listMapping.length === 0) {
       dialogOpen = false;
       leaveDialog();
+      showErrorToast(screen, 'Prompt templates could not be loaded');
       resolve(null);
       return;
     }
+
+    const geometry = screenGeometry(screen, 80, 28);
 
     // ── Main dialog container ──
     const dialog = blessed.box({
       parent: screen,
       top: 'center',
       left: 'center',
-      width: 80,
-      height: 28,
+      width: geometry.width,
+      height: geometry.height,
       border: { type: 'line' },
       style: {
         bg: theme.dialog.bg,
@@ -126,7 +131,7 @@ export function showTemplateDialog(
       top: 3,
       left: 2,
       width: '100%-6',
-      height: 10,
+      height: Math.max(6, Math.min(10, geometry.height - 6)),
       tags: true,
       hidden: true,
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
@@ -148,7 +153,9 @@ export function showTemplateDialog(
       parent: dialog,
       bottom: 0,
       left: 'center',
-      content: ' Up/Down=Browse  PgUp/PgDn=Scroll Preview  Enter=Select  Esc=Close ',
+      content: geometry.compact
+        ? ' ↑↓ Browse  Enter Select  Esc Close '
+        : ' Up/Down=Browse  PgUp/PgDn=Scroll Preview  Enter=Select  Esc=Close ',
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
@@ -161,11 +168,18 @@ export function showTemplateDialog(
     let onScreenKey: (ch: any, key: any) => void;
 
     let resolved = false;
+    const unbindResize = bindOverlayResize(screen, dialog, 80, 28, (nextGeometry) => {
+      panelBox.height = Math.max(6, Math.min(10, nextGeometry.height - 6));
+      footer.setContent(nextGeometry.compact
+        ? ' ↑↓ Browse  Enter Select  Esc Close '
+        : ' Up/Down=Browse  PgUp/PgDn=Scroll Preview  Enter=Select  Esc=Close ');
+    });
     const cleanup = () => {
       if (resolved) return;
       resolved = true;
       dialogOpen = false;
       leaveDialog();
+      unbindResize();
       if (onScreenKey) screen.removeListener('keypress', onScreenKey);
       dialog.destroy();
       screen.render();
@@ -293,13 +307,13 @@ export function showTemplateDialog(
     // Register panelBox handlers ONCE (not inside showStep2) to avoid stacking
     function renderPanelPicker(): void {
       const header = '  Select target panel:\n\n';
-      panelBox.setContent(header + renderPanelBoxes(selectedPanel, panelCount));
+      panelBox.setContent(header + renderPanelBoxes(selectedPanel, panelCount, panelCount));
     }
 
     panelBox.on('keypress', (ch: string | undefined, _key: any) => {
       if (!inStep2 || !ch) return;
       const n = parseInt(ch, 10);
-      if (n >= 1 && n <= 4) {
+      if (isValidPanelNumber(n, panelCount)) {
         selectedPanel = n - 1;
         renderPanelPicker();
         screen.render();

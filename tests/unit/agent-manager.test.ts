@@ -14,7 +14,7 @@ describe('AgentManager', () => {
       type: 'codex',
       info: { name: 'Codex CLI' },
       panel: { isRunning: true, status: 'running' },
-      launchedAt: now,
+      launchedAt: new Date(now.getTime() - 6000),
       restartCount: 0,
       sessionId: 'codex-session-0',
     });
@@ -55,7 +55,7 @@ describe('AgentManager', () => {
       type: 'codex',
       info: { name: 'Codex CLI', args: [] },
       panel: mockPanel,
-      launchedAt: new Date(),
+      launchedAt: new Date(Date.now() - 6000),
       restartCount: 0,
       sessionId: 'codex-session-0',
     });
@@ -88,7 +88,7 @@ describe('AgentManager', () => {
       type: 'codex',
       info: { name: 'Codex CLI', args: [] },
       panel: mockPanel,
-      launchedAt: new Date(),
+      launchedAt: new Date(Date.now() - 6000),
       restartCount: 0,
       sessionId: 'codex-session-0',
       restartTimer: null,
@@ -146,7 +146,7 @@ describe('AgentManager', () => {
       type: 'codex',
       info: { name: 'Codex CLI', args: [] },
       panel: mockPanel,
-      launchedAt: new Date(),
+      launchedAt: new Date(Date.now() - 6000),
       restartCount: 3, // Max limit
       sessionId: 'codex-session-0',
     });
@@ -157,6 +157,35 @@ describe('AgentManager', () => {
     // Should have removed the agent from the map
     expect(manager.agents.has(0)).toBe(false);
     expect(mockPanel.launchAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not restart a process that fails during startup', async () => {
+    vi.useFakeTimers();
+    const manager = new AgentManager() as any;
+    const mockPanel = {
+      panelIndex: 0,
+      isRunning: false,
+      status: 'error',
+      workingDir: '/tmp',
+      launchAgent: vi.fn().mockReturnValue(true),
+      killAgent: vi.fn(),
+    };
+
+    manager.agents.set(0, {
+      type: 'codex',
+      info: { name: 'Codex CLI', args: ['--invalid'] },
+      panel: mockPanel,
+      launchedAt: new Date(),
+      restartCount: 0,
+      sessionId: 'codex-session-0',
+      restartTimer: null,
+    });
+
+    manager.handleAgentExit(0, 2, null);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(mockPanel.launchAgent).not.toHaveBeenCalled();
+    expect(manager.hasAgent(0)).toBe(false);
   });
 
   it('reindexes agents after a panel is removed', () => {

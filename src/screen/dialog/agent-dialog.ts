@@ -5,6 +5,7 @@ import { discoverAgents } from '../../agents/agent-registry.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
 import { renderPanelBoxes } from './panel-picker.js';
 import type { AgentCommandConfig } from '../../config/types.js';
+import { bindOverlayResize, screenGeometry } from './geometry.js';
 
 export interface AgentLaunchChoice {
   agentType: AgentType;
@@ -26,13 +27,16 @@ export function showAgentDialog(
 
   return new Promise((resolve) => {
     const agents = discoverAgents(agentOverrides);
+    const preferredHeight = agents.length + 14;
+    const geometry = screenGeometry(screen, 64, preferredHeight);
+    const listHeight = Math.max(3, Math.min(agents.length, geometry.height - 13));
 
     const dialog = blessed.box({
       parent: screen,
       top: 'center',
       left: 'center',
-      width: 64,
-      height: agents.length + 14,
+      width: geometry.width,
+      height: geometry.height,
       border: { type: 'line' },
       style: {
         bg: theme.dialog.bg,
@@ -65,8 +69,8 @@ export function showAgentDialog(
       parent: dialog,
       top: 3,
       left: 2,
-      width: 58,
-      height: agents.length,
+      width: '100%-6',
+      height: listHeight,
       tags: true,
       keys: false,
       mouse: true,
@@ -83,12 +87,12 @@ export function showAgentDialog(
     list.key(['down'], () => { list.down(1); screen.render(); });
 
     // Panel picker
-    const panelLine = agents.length + 4;
+    const panelLine = listHeight + 4;
     const panelLabel = blessed.box({
       parent: dialog,
       top: panelLine,
       left: 1,
-      width: 60,
+      width: '100%-4',
       height: 6,
       tags: true,
       content: '',
@@ -112,11 +116,23 @@ export function showAgentDialog(
     });
 
     let resolved = false;
+    const unbindResize = bindOverlayResize(
+      screen,
+      dialog,
+      64,
+      preferredHeight,
+      (nextGeometry) => {
+        const nextListHeight = Math.max(3, Math.min(agents.length, nextGeometry.height - 13));
+        list.height = nextListHeight;
+        panelLabel.top = nextListHeight + 4;
+      },
+    );
     const cleanup = () => {
       if (resolved) return;
       resolved = true;
       agentDialogOpen = false;
       leaveDialog();
+      unbindResize();
       dialog.destroy();
       screen.render();
     };
@@ -136,12 +152,13 @@ export function showAgentDialog(
       if (agent && agent.installed && agent.supported) {
         resolve({ agentType: agent.type, panelIndex: selectedPanel });
       } else if (agent && !agent.installed) {
+        const messageGeometry = screenGeometry(screen, 50, 5, { minWidth: 20, minHeight: 5 });
         const msg = blessed.message({
           parent: screen,
           top: 'center',
           left: 'center',
-          width: 50,
-          height: 5,
+          width: messageGeometry.width,
+          height: messageGeometry.height,
           border: { type: 'line' },
           style: { bg: theme.dialog.bg, fg: theme.dialog.fg, border: theme.dialog.border },
           tags: true,

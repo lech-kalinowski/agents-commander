@@ -2,37 +2,16 @@
 
 import { Command } from 'commander';
 import path from 'node:path';
-import { readFileSync, statSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { statSync } from 'node:fs';
 import { App } from '../src/app.js';
-
-// Read version from package.json so it stays in sync automatically
-let version = '0.1.0';
-try {
-  const binDir = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    path.resolve(binDir, '..', 'package.json'),
-    path.resolve(binDir, '..', '..', 'package.json'),
-  ];
-  for (const packagePath of candidates) {
-    try {
-      const pkg = JSON.parse(readFileSync(packagePath, 'utf-8'));
-      if (typeof pkg.version === 'string') {
-        version = pkg.version;
-        break;
-      }
-    } catch {
-      // Try the next source/build layout.
-    }
-  }
-} catch { /* fallback to hardcoded */ }
+import { getPackageVersion } from '../src/utils/package-info.js';
 
 const program = new Command();
 
 program
   .name('agents-commander')
   .description('Terminal UI for managing multiple AI agent CLIs')
-  .version(version)
+  .version(getPackageVersion())
   .argument('[directory]', 'Working directory', process.cwd())
   .option('-t, --theme <name>', 'Color theme (classic-blue, midnight)')
   .option('-p, --panels <count>', 'Number of panels (2, 3, or 4)')

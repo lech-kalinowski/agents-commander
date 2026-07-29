@@ -20,7 +20,16 @@ import { FilePanel } from './panels/file-panel.js';
 import { TerminalPanel } from './panels/terminal-panel.js';
 import { MarkdownEditor } from './editor/markdown-editor.js';
 import { AgentManager } from './agents/agent-manager.js';
-import { copyFiles, moveFiles, deleteFiles, createDirectory } from './file-manager/file-operations.js';
+import type { AgentType } from './agents/types.js';
+import {
+  copyFiles,
+  moveFile,
+  moveFiles,
+  deleteFiles,
+  createDirectory,
+  validateEntryName,
+} from './file-manager/file-operations.js';
+import type { FileEntry } from './file-manager/types.js';
 import { startWatching, stopWatching } from './file-manager/file-watcher.js';
 import { appEvents } from './utils/events.js';
 import { formatDate } from './utils/format.js';
@@ -29,6 +38,7 @@ import { isDialogActive } from './utils/dialog-state.js';
 import { showToast, showErrorToast } from './screen/toast.js';
 import { showWelcomeDialog } from './screen/dialog/welcome-dialog.js';
 import { buildVimLaunchSpec, resolveCtrlGAction } from './utils/shortcut-routing.js';
+import { formatUserError, sanitizeUserText } from './utils/user-facing-errors.js';
 
 export class App {
   private screen!: blessed.Widgets.Screen;
@@ -40,6 +50,8 @@ export class App {
   private statusBar!: blessed.Widgets.BoxElement;
   private functionBar!: blessed.Widgets.BoxElement;
   private workingDir: string;
+  private destructiveTransitionInProgress = false;
+  private fullScreenOverlayActive = false;
 
   constructor(workingDir?: string, overrides?: { theme?: string; panels?: number; showHidden?: boolean }) {
     this.config = loadConfig();
@@ -90,6 +102,12 @@ export class App {
 
     this.layout = new LayoutManager(this.screen, this.theme, this.config);
     await this.layout.initialize(this.workingDir, this.config.panelCount);
+    this.layout.onOpenFile = (entry) => {
+      void this.openPreview(entry).catch((err) => {
+        logger.error(`Failed to preview file: ${entry.fullPath}`, err);
+        showErrorToast(this.screen, formatUserError('Preview', err));
+      });
+    };
     this.orchestrator = new Orchestrator(this.layout, this.agentManager, this.screen, this.config);
 
     // Update status bar when panel is focused via mouse click
@@ -138,6 +156,170 @@ export class App {
     if (added) this.updateStatus();
   }
 
+  private getLiveTerminalSessions(): TerminalPanel[] {
+    const managedPanels = new Set(
+      this.agentManager.getRunningAgents().map((agent) => agent.panelIndex),
+    );
+    return this.layout.terminalPanels.filter(
+      (panel) => panel.isRunning || managedPanels.has(panel.panelIndex),
+    );
+  }
+
+  private getManagedSession(panelIndex: number) {
+    return this.agentManager
+      .getRunningAgents()
+      .find((agent) => agent.panelIndex === panelIndex);
+  }
+
+  private hasLiveTerminalSession(panelIndex: number): boolean {
+    return Boolean(
+      this.layout.getTerminalPanel(panelIndex)?.isRunning ||
+      this.getManagedSession(panelIndex),
+    );
+  }
+
+  private async runDestructiveTransition(action: () => Promise<void>): Promise<void> {
+    if (this.destructiveTransitionInProgress) return;
+    this.destructiveTransitionInProgress = true;
+    try {
+      await action();
+    } finally {
+      this.destructiveTransitionInProgress = false;
+    }
+  }
+
+  private async actionChangeLayout(mode: 2 | 3 | 4): Promise<void> {
+    if (mode === this.layout.mode) return;
+
+    await this.runDestructiveTransition(async () => {
+      const liveSessions = this.getLiveTerminalSessions();
+      if (liveSessions.length > 0) {
+        const confirmed = await showConfirmDialog(
+          this.screen,
+          this.theme,
+          'Change Layout',
+          `Changing to ${mode} panels closes ${liveSessions.length} live terminal session(s). Continue?`,
+        );
+        if (!confirmed) return;
+      }
+
+      try {
+        this.agentManager.killAll();
+        this.orchestrator.resetState();
+        await this.layout.setMode(mode);
+        this.updateStatus();
+      } catch (err) {
+        logger.error(`Failed to change layout to ${mode} panels`, err);
+        showErrorToast(this.screen, 'Layout change failed — current view was preserved where possible');
+      }
+    });
+  }
+
+  private async actionRemovePanel(): Promise<void> {
+    if (this.layout.panelCount <= 2) return;
+
+    await this.runDestructiveTransition(async () => {
+      const idx = this.layout.allPanels.indexOf(this.layout.activePanel);
+      const tp = this.layout.getTerminalPanel(idx);
+      if (this.hasLiveTerminalSession(idx)) {
+        const label = tp?.sessionName ? ` “${sanitizeUserText(tp.sessionName, 60)}”` : '';
+        const confirmed = await showConfirmDialog(
+          this.screen,
+          this.theme,
+          'Remove Panel',
+          `Panel ${idx + 1}${label} has a live session. Close it and remove the panel?`,
+        );
+        if (!confirmed) return;
+      }
+
+      try {
+        if (this.agentManager.hasAgent(idx)) {
+          this.agentManager.killAgent(idx);
+        } else if (tp?.isRunning) {
+          tp.killAgent(true);
+        }
+        if (tp) this.orchestrator.disconnectPanel(idx);
+
+        const removed = this.layout.removePanel();
+        if (removed) {
+          this.agentManager.reindexAfterPanelRemoval(idx);
+          this.orchestrator.reindexAfterPanelRemoval(idx);
+          this.updateStatus();
+        }
+      } catch (err) {
+        logger.error(`Failed to remove panel ${idx + 1}`, err);
+        showErrorToast(this.screen, `Unable to remove Panel ${idx + 1}`);
+      }
+    });
+  }
+
+  private async actionResetView(): Promise<void> {
+    await this.runDestructiveTransition(async () => {
+      const liveSessions = this.getLiveTerminalSessions();
+      if (liveSessions.length > 0) {
+        const confirmed = await showConfirmDialog(
+          this.screen,
+          this.theme,
+          'Reset View',
+          `${liveSessions.length} live terminal session(s) will be closed. Reset to two file panels?`,
+        );
+        if (!confirmed) return;
+      }
+
+      try {
+        this.agentManager.killAll();
+        this.orchestrator.resetState();
+        await this.layout.resetToDefault();
+        this.updateStatus();
+        showToast(this.screen, 'Panels reset to default');
+      } catch (err) {
+        logger.error('Failed to reset panel view', err);
+        showErrorToast(this.screen, 'Unable to reset the panel view');
+      }
+    });
+  }
+
+  private async confirmSessionReplacement(panelIndex: number, nextAction: string): Promise<boolean> {
+    const terminal = this.layout.getTerminalPanel(panelIndex);
+    const managed = this.getManagedSession(panelIndex);
+    if (!terminal?.isRunning && !managed) return true;
+    const sessionName = terminal?.sessionName || managed?.name;
+    const label = sessionName
+      ? ` “${sanitizeUserText(sessionName, 60)}”`
+      : '';
+    return showConfirmDialog(
+      this.screen,
+      this.theme,
+      'Replace Session',
+      `Panel ${panelIndex + 1}${label} is running. Close it and ${nextAction}?`,
+    );
+  }
+
+  private async confirmTaskTarget(
+    agentType: AgentType,
+    panelIndex: number,
+    nextAction: string,
+  ): Promise<boolean> {
+    const terminal = this.layout.getTerminalPanel(panelIndex);
+    const managed = this.getManagedSession(panelIndex);
+    const reusesRunningAgent = Boolean(
+      terminal?.isRunning && managed?.type === agentType,
+    );
+
+    if (reusesRunningAgent || (!terminal?.isRunning && !managed)) return true;
+    return this.confirmSessionReplacement(panelIndex, nextAction);
+  }
+
+  private stopTerminalSession(panelIndex: number): void {
+    const terminal = this.layout.getTerminalPanel(panelIndex);
+    if (this.agentManager.hasAgent(panelIndex)) {
+      this.agentManager.killAgent(panelIndex);
+    } else if (terminal?.isRunning) {
+      terminal.killAgent(true);
+    }
+    if (terminal) this.orchestrator.disconnectPanel(panelIndex);
+  }
+
   private async actionViewFile(): Promise<void> {
     const fp = this.layout.activeFilePanel;
     if (!fp) {
@@ -149,16 +331,38 @@ export class App {
       showErrorToast(this.screen, 'Select a file to view');
       return;
     }
-    const preview = new PreviewPanel(
-      this.screen,
-      this.theme,
-      { top: 0, left: 0, width: '100%', height: '100%' },
-      () => {
+    await this.openPreview(entry);
+  }
+
+  private async openPreview(entry: FileEntry): Promise<void> {
+    if (this.fullScreenOverlayActive) return;
+    this.fullScreenOverlayActive = true;
+    let released = false;
+    const releaseOverlay = () => {
+      if (released) return;
+      released = true;
+      // Keep the guard active until every listener for the closing key has run.
+      queueMicrotask(() => {
+        this.fullScreenOverlayActive = false;
         this.layout.activePanel.setFocus(true);
-      },
-    );
-    await preview.loadFile(entry.fullPath);
-    preview.focus();
+      });
+    };
+
+    let preview: PreviewPanel | null = null;
+    try {
+      preview = new PreviewPanel(
+        this.screen,
+        this.theme,
+        { top: 0, left: 0, width: '100%', height: '100%' },
+        releaseOverlay,
+      );
+      preview.focus();
+      await preview.loadFile(entry.fullPath);
+    } catch (err) {
+      releaseOverlay();
+      preview?.close();
+      throw err;
+    }
   }
 
   private async actionEditFile(): Promise<void> {
@@ -244,8 +448,10 @@ export class App {
       try {
         await copyFiles(entries.map((e) => e.fullPath), target.currentPath);
         await this.layout.refreshAll();
+        showToast(this.screen, `Copied ${entries.length} item(s)`);
       } catch (err) {
         logger.error('Copy failed', err);
+        showErrorToast(this.screen, formatUserError('Copy', err));
       }
     }
   }
@@ -267,14 +473,22 @@ export class App {
         this.screen, this.theme, 'Rename/Move', 'New name:', entries[0].name,
       );
       if (newName) {
+        try {
+          validateEntryName(newName);
+        } catch (err) {
+          logger.error('Invalid move destination name', err);
+          showErrorToast(this.screen, formatUserError('Move', err));
+          return;
+        }
         const target = this.layout.inactiveFilePanel;
         const destDir = target ? target.currentPath : fp.currentPath;
         try {
-          const { moveFile } = await import('./file-manager/file-operations.js');
           await moveFile(entries[0].fullPath, path.join(destDir, newName));
           await this.layout.refreshAll();
+          showToast(this.screen, `Moved “${sanitizeUserText(entries[0].name, 80)}”`);
         } catch (err) {
           logger.error('Move failed', err);
+          showErrorToast(this.screen, formatUserError('Move', err));
         }
       }
     } else {
@@ -291,8 +505,10 @@ export class App {
         try {
           await moveFiles(entries.map((e) => e.fullPath), target.currentPath);
           await this.layout.refreshAll();
+          showToast(this.screen, `Moved ${entries.length} item(s)`);
         } catch (err) {
           logger.error('Move failed', err);
+          showErrorToast(this.screen, formatUserError('Move', err));
         }
       }
     }
@@ -307,10 +523,13 @@ export class App {
     const name = await showInputDialog(this.screen, this.theme, 'Create Directory', 'Directory name:');
     if (name) {
       try {
+        validateEntryName(name);
         await createDirectory(path.join(fp.currentPath, name));
         await fp.loadDirectory();
+        showToast(this.screen, `Created directory “${sanitizeUserText(name, 80)}”`);
       } catch (err) {
         logger.error('Mkdir failed', err);
+        showErrorToast(this.screen, formatUserError('Create directory', err));
       }
     }
   }
@@ -336,8 +555,10 @@ export class App {
       try {
         await deleteFiles(entries.map((e) => e.fullPath));
         await fp.loadDirectory();
+        showToast(this.screen, `Deleted ${entries.length} item(s)`);
       } catch (err) {
         logger.error('Delete failed', err);
+        showErrorToast(this.screen, formatUserError('Delete', err));
       }
     }
   }
@@ -355,6 +576,11 @@ export class App {
     if (choice) {
       const { agentType, panelIndex } = choice;
       let tp = this.layout.getTerminalPanel(panelIndex);
+      if (this.hasLiveTerminalSession(panelIndex)) {
+        const confirmed = await this.confirmSessionReplacement(panelIndex, `launch ${agentType}`);
+        if (!confirmed) return;
+        this.stopTerminalSession(panelIndex);
+      }
       if (!tp) {
         tp = this.layout.convertToTerminal(panelIndex);
       }
@@ -382,10 +608,16 @@ export class App {
     const { content, panelIndex, templateName } = choice;
 
     // Check if a managed agent is running on the target panel
-    const managedAgent = this.agentManager.getAgentType(panelIndex);
+    const managedAgent = this.getManagedSession(panelIndex)?.type ?? null;
 
     if (managedAgent) {
       // Managed agent already running — send content directly via orchestrator
+      const confirmed = await this.confirmTaskTarget(
+        managedAgent,
+        panelIndex,
+        `send template “${sanitizeUserText(templateName, 60)}”`,
+      );
+      if (!confirmed) return;
       const result = await this.orchestrator.sendTask(managedAgent, panelIndex, content);
       if (!result.success) {
         logger.error(`Template send failed: ${result.error}`);
@@ -404,12 +636,12 @@ export class App {
       );
       if (agentChoice) {
         const targetPanel = agentChoice.panelIndex;
-        // Kill any non-agent session (vim, shell) before launching the agent
-        const existingTp = this.layout.getTerminalPanel(targetPanel);
-        if (existingTp?.isRunning && !this.agentManager.isAgentRunning(targetPanel)) {
-          existingTp.killAgent(true);
-          this.orchestrator.disconnectPanel(targetPanel);
-        }
+        const confirmed = await this.confirmTaskTarget(
+          agentChoice.agentType,
+          targetPanel,
+          `launch ${agentChoice.agentType} and send the template`,
+        );
+        if (!confirmed) return;
         const result = await this.orchestrator.sendTask(
           agentChoice.agentType,
           targetPanel,
@@ -428,10 +660,44 @@ export class App {
     screen.render();
   }
 
+  private async actionOrchestrate(): Promise<void> {
+    const choice = await showOrchestrateDialog(
+      this.screen,
+      this.theme,
+      this.layout.panelCount,
+      this.layout.allPanels.indexOf(this.layout.activePanel),
+      this.config.agents,
+    );
+
+    if (!choice) return;
+
+    const confirmed = await this.confirmTaskTarget(
+      choice.agentType,
+      choice.panelIndex,
+      `launch ${choice.agentType} and send the task`,
+    );
+    if (!confirmed) return;
+
+    const result = await this.orchestrator.sendTask(
+      choice.agentType,
+      choice.panelIndex,
+      choice.task,
+    );
+    if (!result.success) {
+      logger.error(`Orchestrate failed: ${result.error}`);
+      showErrorToast(
+        this.screen,
+        `Task delivery failed: ${result.error ?? 'unknown error'}`,
+      );
+    }
+    this.updateStatus();
+    this.screen.render();
+  }
+
   private async actionQuit(): Promise<void> {
-    const running = this.agentManager.getRunningAgents();
+    const running = this.getLiveTerminalSessions();
     const msg = running.length > 0
-      ? `${running.length} agent(s) running. Exit anyway?`
+      ? `${running.length} live terminal session(s) will be closed. Exit anyway?`
       : 'Exit Agents Commander?';
     const confirmed = await showConfirmDialog(this.screen, this.theme, 'Quit', msg);
     if (confirmed) {
@@ -449,7 +715,7 @@ export class App {
     // rejections from crashing the process.
     const guard = (action: () => void | Promise<void>) => {
       return () => {
-        if (isDialogActive()) return;
+        if (isDialogActive() || this.fullScreenOverlayActive) return;
         try {
           const result = action();
           if (result && typeof (result as Promise<void>).catch === 'function') {
@@ -469,7 +735,7 @@ export class App {
     // User can Tab to a file panel to access these shortcuts.
     const termGuard = (action: () => void | Promise<void>) => {
       return () => {
-        if (isDialogActive()) return;
+        if (isDialogActive() || this.fullScreenOverlayActive) return;
         if (this.layout.activeTerminalPanel?.isRunning) return;
         try {
           const result = action();
@@ -505,36 +771,19 @@ export class App {
     screen.key(['f10'], guard(() => this.actionQuit()));
 
     // Ctrl+W - Remove active panel
-    screen.key(['C-w'], guard(() => {
-      if (this.layout.panelCount <= 2) return;
-      const idx = this.layout.allPanels.indexOf(this.layout.activePanel);
-      const tp = this.layout.getTerminalPanel(idx);
-      if (this.agentManager.hasAgent(idx)) {
-        this.agentManager.killAgent(idx);
-      } else if (tp?.isRunning) {
-        tp.killAgent(true);
-      }
-      if (tp) {
-        this.orchestrator.disconnectPanel(idx);
-      }
-      const removed = this.layout.removePanel();
-      if (removed) {
-        this.agentManager.reindexAfterPanelRemoval(idx);
-        this.orchestrator.reindexAfterPanelRemoval(idx);
-      }
-      this.updateStatus();
-    }));
+    screen.key(['C-w'], guard(() => this.actionRemovePanel()));
 
     // Ctrl+K - Kill agent on active terminal panel
     screen.key(['C-k'], guard(async () => {
       const tp = this.layout.activeTerminalPanel;
-      if (tp && tp.isRunning) {
+      const hasManagedAgent = tp ? this.agentManager.hasAgent(tp.panelIndex) : false;
+      if (tp && (tp.isRunning || hasManagedAgent)) {
         const confirmed = await showConfirmDialog(
           screen, this.theme, 'Kill Session',
           'Terminate the running session?',
         );
         if (confirmed) {
-          if (this.agentManager.isAgentRunning(tp.panelIndex)) {
+          if (hasManagedAgent) {
             this.agentManager.killAgent(tp.panelIndex);
           } else {
             tp.killAgent();
@@ -574,28 +823,7 @@ export class App {
     }));
 
     // Ctrl+O - Orchestrate: send task to another agent
-    screen.key(['C-o'], guard(async () => {
-      const choice = await showOrchestrateDialog(
-        screen,
-        this.theme,
-        this.layout.panelCount,
-        this.layout.allPanels.indexOf(this.layout.activePanel),
-        this.config.agents,
-      );
-
-      if (choice) {
-        const result = await this.orchestrator.sendTask(
-          choice.agentType,
-          choice.panelIndex,
-          choice.task,
-        );
-        if (!result.success) {
-          logger.error(`Orchestrate failed: ${result.error}`);
-        }
-        this.updateStatus();
-        screen.render();
-      }
-    }));
+    screen.key(['C-o'], guard(() => this.actionOrchestrate()));
 
     // Ctrl+P - Inject protocol instructions into active agent
     let injecting = false;
@@ -629,7 +857,7 @@ export class App {
     }));
 
     // Ctrl+T - Convert active panel to terminal (or back to file)
-    screen.key(['C-t'], guard(async () => {
+    screen.key(['C-t'], guard(() => this.runDestructiveTransition(async () => {
       const idx = this.layout.allPanels.indexOf(this.layout.activePanel);
       if (this.layout.isTerminalPanel(idx)) {
         const tp = this.layout.getTerminalPanel(idx);
@@ -653,7 +881,7 @@ export class App {
       }
       this.updateStatus();
       screen.render();
-    }));
+    })));
 
     // Ctrl+H - Toggle hidden files (termGuard: terminal backspace)
     screen.key(['C-h'], termGuard(() => {
@@ -672,33 +900,13 @@ export class App {
     }));
 
     // Ctrl+2/3/4 - Change layout
-    const changeLayout = async (mode: 2 | 3 | 4) => {
-      this.agentManager.killAll();
-      this.orchestrator.resetState();
-      await this.layout.setMode(mode);
-      this.updateStatus();
-    };
-    screen.key(['C-2'], guard(() => changeLayout(2)));
-    screen.key(['C-3'], guard(() => changeLayout(3)));
-    screen.key(['C-4'], guard(() => changeLayout(4)));
+    screen.key(['C-2'], guard(() => this.actionChangeLayout(2)));
+    screen.key(['C-3'], guard(() => this.actionChangeLayout(3)));
+    screen.key(['C-4'], guard(() => this.actionChangeLayout(4)));
 
     // Ctrl+E - Reset to default 2-panel file view (kills all agents)
     // termGuard: vim scroll-down uses C-e
-    screen.key(['C-e'], termGuard(async () => {
-      const running = this.agentManager.getRunningAgents();
-      if (running.length > 0) {
-        const confirmed = await showConfirmDialog(
-          screen, this.theme, 'Reset View',
-          `${running.length} agent(s) running. Kill all and reset?`,
-        );
-        if (!confirmed) return;
-      }
-      this.agentManager.killAll();
-      this.orchestrator.resetState();
-      await this.layout.resetToDefault();
-      this.updateStatus();
-      showToast(screen, 'Panels reset to default');
-    }));
+    screen.key(['C-e'], termGuard(() => this.actionResetView()));
 
   }
 
@@ -727,17 +935,32 @@ export class App {
   }
 
   private async openEditor(filePath: string): Promise<void> {
-    const editor = new MarkdownEditor(
-      this.screen,
-      this.theme,
-      filePath,
-      () => {
-        this.layout.refreshAll();
+    if (this.fullScreenOverlayActive) return;
+    this.fullScreenOverlayActive = true;
+    let released = false;
+    const releaseOverlay = () => {
+      if (released) return;
+      released = true;
+      queueMicrotask(() => {
+        this.fullScreenOverlayActive = false;
+        void this.layout.refreshAll();
         this.layout.activePanel.setFocus(true);
-      },
-      this.config.editor,
-    );
-    await editor.open();
+      });
+    };
+
+    try {
+      const editor = new MarkdownEditor(
+        this.screen,
+        this.theme,
+        filePath,
+        releaseOverlay,
+        this.config.editor,
+      );
+      await editor.open();
+    } catch (err) {
+      releaseOverlay();
+      throw err;
+    }
   }
 
   private shutdown(): void {

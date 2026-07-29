@@ -86,7 +86,10 @@ export function bindOverlayResize(
 }
 
 export function truncateOverlayText(value: string, maxLength: number): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
 }

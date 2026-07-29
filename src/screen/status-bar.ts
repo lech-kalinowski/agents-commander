@@ -1,6 +1,7 @@
 import blessed from 'blessed';
 import type { Theme } from '../config/types.js';
 import { formatFileSize } from '../utils/format.js';
+import { sanitizeUserText } from '../utils/user-facing-errors.js';
 
 export function createStatusBar(parent: blessed.Widgets.Screen, theme: Theme): blessed.Widgets.BoxElement {
   return blessed.box({
@@ -9,7 +10,7 @@ export function createStatusBar(parent: blessed.Widgets.Screen, theme: Theme): b
     left: 0,
     width: '100%',
     height: 1,
-    tags: true,
+    tags: false,
     style: {
       bg: theme.statusBar.bg,
       fg: theme.statusBar.fg,
@@ -33,13 +34,13 @@ export function updateStatusBar(
   const parts: string[] = [];
 
   if (info.fileName) {
-    parts.push(info.fileName);
+    parts.push(sanitizeUserText(info.fileName, 160));
   }
   if (info.fileSize !== undefined) {
     parts.push(formatFileSize(info.fileSize));
   }
   if (info.fileDate) {
-    parts.push(info.fileDate);
+    parts.push(sanitizeUserText(info.fileDate, 80));
   }
 
   const left = parts.join('  ');

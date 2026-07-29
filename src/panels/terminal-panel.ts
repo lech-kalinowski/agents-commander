@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import type { Theme, AppConfig, OrchestrationConfig } from '../config/types.js';
@@ -86,6 +87,9 @@ export class TerminalPanel {
   private _focused = false;
 
   private proc: ChildProcess | null = null;
+  /** Dedicated fd 3 pipe used only for framed PTY control messages. */
+  private resizeControl: Writable | null = null;
+  private lastPtySize: string | null = null;
   private stdoutDecoder: StringDecoder | null = null;
   private stderrDecoder: StringDecoder | null = null;
   private vterm!: VTerm;
@@ -199,9 +203,18 @@ export class TerminalPanel {
     this.setupMouse();
   }
 
+  private getTerminalDimensions(): { cols: number; rows: number } {
+    const width = typeof this.outputBox.width === 'number' ? this.outputBox.width : 1;
+    const height = typeof this.outputBox.height === 'number' ? this.outputBox.height : 1;
+    // Reserve one column for the scrollbar and one row for Blessed's edge.
+    return {
+      cols: Math.max(1, Math.floor(width) - 1),
+      rows: Math.max(1, Math.floor(height) - 1),
+    };
+  }
+
   private initVTerm(): void {
-    const cols = Math.max(40, (this.outputBox.width as number) - 1);
-    const rows = Math.max(10, (this.outputBox.height as number) - 1);
+    const { cols, rows } = this.getTerminalDimensions();
     this.vterm = new VTerm(cols, rows);
   }
 
@@ -396,8 +409,7 @@ export class TerminalPanel {
     env: Record<string, string>,
     enableProtocolScanner: boolean,
   ): boolean {
-    const cols = Math.max(40, (this.outputBox.width as number) - 1);
-    const rows = Math.max(10, (this.outputBox.height as number) - 1);
+    const { cols, rows } = this.getTerminalDimensions();
 
     const resolvedPath = this.resolveFullPath(command);
     if (!resolvedPath) {
@@ -436,9 +448,12 @@ export class TerminalPanel {
       }
 
       this.proc = spawn(pythonPath, [helperPath, '--cwd', this.cwd, '--', resolvedPath, ...args], {
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
         env: spawnEnv,
       });
+      const resizeControl = this.proc.stdio[3] as Writable | null;
+      this.resizeControl = resizeControl;
+      this.lastPtySize = resizeControl ? `${cols}x${rows}` : null;
       this.stdoutDecoder = new StringDecoder('utf8');
       this.stderrDecoder = new StringDecoder('utf8');
 
@@ -446,6 +461,13 @@ export class TerminalPanel {
 
       this.proc.stdin?.on('error', (err: Error) => {
         logger.error(`stdin pipe error for ${this.agentName}: ${err.message}`);
+      });
+      resizeControl?.on('error', (err: Error) => {
+        if (this.resizeControl === resizeControl) {
+          this.resizeControl = null;
+          this.lastPtySize = null;
+        }
+        logger.error(`resize control pipe error for ${this.agentName}: ${err.message}`);
       });
 
       // Protocol scanning now reads from VTerm (clean grid/scrollback)
@@ -496,6 +518,7 @@ export class TerminalPanel {
           this.vterm.write(`\r\nProcess error: ${err.message}\r\n`);
           this.updateHeader();
           this.proc = null;
+          this.closeResizeControl();
           this.stdoutDecoder = null;
           this.stderrDecoder = null;
           this.scanner = null;
@@ -518,6 +541,7 @@ export class TerminalPanel {
           this.vterm.write(`\r\n--- ${this.agentName} exited (code=${code}, signal=${signal ?? 'none'}) ---\r\n`);
           this.updateHeader();
           this.proc = null;
+          this.closeResizeControl();
           this.stdoutDecoder = null;
           this.stderrDecoder = null;
           this.scanner = null;
@@ -541,6 +565,7 @@ export class TerminalPanel {
       this.updateHeader();
       return true;
     } catch (err) {
+      this.closeResizeControl();
       this._status = 'error';
       this.vterm.write(`\r\nFAILED: ${(err as Error).message}\r\n`);
       this.updateHeader();
@@ -827,6 +852,7 @@ export class TerminalPanel {
     }
     if (this.proc) {
       const p = this.proc;
+      this.closeResizeControl();
       try {
         // 1. Try SIGINT (Ctrl+C) first for graceful exit
         p.kill('SIGINT');
@@ -850,6 +876,7 @@ export class TerminalPanel {
       }
       this.proc = null;
     }
+    this.closeResizeControl();
     this.stdoutDecoder = null;
     this.stderrDecoder = null;
     this.scannerEnabled = false;
@@ -1208,6 +1235,34 @@ export class TerminalPanel {
     if (this.proc?.stdin?.writable) this.proc.stdin.write(text);
   }
 
+  private sendPtyResize(cols: number, rows: number): void {
+    const safeCols = Math.max(1, Math.floor(cols));
+    const safeRows = Math.max(1, Math.floor(rows));
+    const sizeKey = `${safeCols}x${safeRows}`;
+    const control = this.resizeControl;
+    if (!control?.writable || control.destroyed || this.lastPtySize === sizeKey) return;
+
+    try {
+      control.write(`resize ${safeCols} ${safeRows}\n`);
+      this.lastPtySize = sizeKey;
+    } catch (err) {
+      logger.error(`Unable to resize terminal session ${this.agentName}`, err);
+      this.closeResizeControl();
+    }
+  }
+
+  private closeResizeControl(): void {
+    const control = this.resizeControl;
+    this.resizeControl = null;
+    this.lastPtySize = null;
+    if (!control || control.destroyed) return;
+    try {
+      control.end();
+    } catch {
+      // The process may already have closed fd 3.
+    }
+  }
+
   showCommanderActivity(label = 'Commander task received', durationMs = COMMANDER_ACTIVITY_MS): void {
     this.commanderActivityLabel = label;
     if (this.commanderActivityTimer) {
@@ -1258,10 +1313,10 @@ export class TerminalPanel {
     this.box.left = position.left;
     this.box.width = position.width;
     this.box.height = position.height;
-    const cols = Math.max(40, (this.outputBox.width as number) - 1);
-    const rows = Math.max(10, (this.outputBox.height as number) - 1);
+    const { cols, rows } = this.getTerminalDimensions();
     this.vterm.resize(cols, rows);
-    this.screen.render();
+    this.sendPtyResize(cols, rows);
+    this.scheduleRender();
   }
 
   destroy(): void {

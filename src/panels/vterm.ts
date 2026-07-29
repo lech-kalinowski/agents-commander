@@ -149,9 +149,17 @@ interface SavedScreen {
   scrollback: string[];
   cursorRow: number;
   cursorCol: number;
+  wrapPending: boolean;
   style: CellStyle;
   scrollTop: number;
   scrollBottom: number;
+}
+
+interface SavedCursor {
+  row: number;
+  col: number;
+  wrapPending: boolean;
+  style: CellStyle;
 }
 
 // ── VTerm ────────────────────────────────────────────────────────
@@ -166,7 +174,9 @@ export class VTerm {
   private maxScrollback: number;
   private buf = '';
   private style: CellStyle = { ...DEFAULT_STYLE };
-  private savedCursor: { row: number; col: number; style: CellStyle } | null = null;
+  private savedCursor: SavedCursor | null = null;
+  /** Delayed autowrap flag: the next printable character starts a new line. */
+  private wrapPending = false;
 
   // ── Scroll region ─────────────────────────────────────────────
   private scrollTop = 0;
@@ -201,37 +211,106 @@ export class VTerm {
   get curCol(): number { return this.cursorCol; }
 
   constructor(cols = DEFAULT_COLS, rows = DEFAULT_ROWS, maxScrollback = 2000) {
-    this.cols = cols;
-    this.rows = rows;
-    this.scrollBottom = rows - 1;
+    this.cols = this.normalizeDimension(cols, DEFAULT_COLS);
+    this.rows = this.normalizeDimension(rows, DEFAULT_ROWS);
+    this.scrollBottom = this.rows - 1;
     this.maxScrollback = maxScrollback;
     this.grid = this.makeGrid();
   }
 
-  private makeGrid(): Cell[][] {
-    return Array.from({ length: this.rows }, () => this.makeRow());
+  private normalizeDimension(value: number, fallback = 1): number {
+    return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : fallback;
   }
 
-  private makeRow(): Cell[] {
-    return Array.from({ length: this.cols }, (): Cell => ({
-      char: ' ', style: cloneStyle(DEFAULT_STYLE),
-    }));
+  private makeGrid(rows = this.rows, cols = this.cols): Cell[][] {
+    return Array.from({ length: rows }, () => this.makeRow(cols));
+  }
+
+  private makeRow(cols = this.cols): Cell[] {
+    return Array.from({ length: cols }, () => this.blankCell());
+  }
+
+  private blankCell(): Cell {
+    return { char: ' ', style: cloneStyle(DEFAULT_STYLE) };
+  }
+
+  private resizeGrid(grid: Cell[][], cols: number, rows: number): Cell[][] {
+    const resized = this.makeGrid(rows, cols);
+    for (let r = 0; r < Math.min(grid.length, rows); r++) {
+      for (let c = 0; c < Math.min(grid[r].length, cols); c++) {
+        resized[r][c] = grid[r][c];
+      }
+
+      // Cropping must not retain half of a wide character. Normalize any
+      // malformed continuation cells as well so rendered width never exceeds
+      // the declared terminal width.
+      for (let c = 0; c < cols; c++) {
+        const cell = resized[r][c];
+        if (cell.char === '') {
+          if (c === 0 || charWidth(resized[r][c - 1].char) !== 2) {
+            resized[r][c] = this.blankCell();
+          }
+          continue;
+        }
+        if (charWidth(cell.char) === 2) {
+          if (c + 1 >= cols) {
+            resized[r][c] = this.blankCell();
+          } else if (resized[r][c + 1].char !== '') {
+            resized[r][c + 1] = {
+              char: '',
+              style: cloneStyle(cell.style),
+            };
+          }
+        }
+      }
+    }
+    return resized;
+  }
+
+  private clampCursor(row: number, col: number): { row: number; col: number } {
+    return {
+      row: Math.max(0, Math.min(row, this.rows - 1)),
+      col: Math.max(0, Math.min(col, this.cols - 1)),
+    };
   }
 
   resize(cols: number, rows: number): void {
-    const oldGrid = this.grid;
-    this.cols = cols;
-    this.rows = rows;
-    this.grid = this.makeGrid();
-    for (let r = 0; r < Math.min(oldGrid.length, rows); r++) {
-      for (let c = 0; c < Math.min(oldGrid[r].length, cols); c++) {
-        this.grid[r][c] = oldGrid[r][c];
-      }
+    const nextCols = this.normalizeDimension(cols);
+    const nextRows = this.normalizeDimension(rows);
+    this.cols = nextCols;
+    this.rows = nextRows;
+    this.grid = this.resizeGrid(this.grid, nextCols, nextRows);
+
+    const cursor = this.clampCursor(this.cursorRow, this.cursorCol);
+    this.cursorRow = cursor.row;
+    this.cursorCol = cursor.col;
+
+    if (this.altScreenSaved) {
+      this.altScreenSaved.grid = this.resizeGrid(this.altScreenSaved.grid, nextCols, nextRows);
+      const saved = this.clampCursor(
+        this.altScreenSaved.cursorRow,
+        this.altScreenSaved.cursorCol,
+      );
+      this.altScreenSaved.cursorRow = saved.row;
+      this.altScreenSaved.cursorCol = saved.col;
+      this.altScreenSaved.scrollTop = Math.max(
+        0,
+        Math.min(this.altScreenSaved.scrollTop, nextRows - 1),
+      );
+      this.altScreenSaved.scrollBottom = Math.max(
+        this.altScreenSaved.scrollTop,
+        Math.min(this.altScreenSaved.scrollBottom, nextRows - 1),
+      );
     }
-    this.cursorRow = Math.min(this.cursorRow, rows - 1);
-    this.cursorCol = Math.min(this.cursorCol, cols - 1);
+
+    if (this.savedCursor) {
+      const saved = this.clampCursor(this.savedCursor.row, this.savedCursor.col);
+      this.savedCursor.row = saved.row;
+      this.savedCursor.col = saved.col;
+    }
+
     this.scrollTop = 0;
-    this.scrollBottom = rows - 1;
+    this.scrollBottom = nextRows - 1;
   }
 
   /** Feed raw data from the PTY. */
@@ -373,6 +452,91 @@ export class VTerm {
     return parts.join('');
   }
 
+  private saveCursor(): void {
+    this.savedCursor = {
+      row: this.cursorRow,
+      col: this.cursorCol,
+      wrapPending: this.wrapPending,
+      style: cloneStyle(this.style),
+    };
+  }
+
+  private restoreCursor(): void {
+    if (!this.savedCursor) return;
+    const cursor = this.clampCursor(this.savedCursor.row, this.savedCursor.col);
+    this.cursorRow = cursor.row;
+    this.cursorCol = cursor.col;
+    this.wrapPending = this.savedCursor.wrapPending;
+    this.style = cloneStyle(this.savedCursor.style);
+  }
+
+  /** Return the prior printable cell, skipping a wide-character continuation. */
+  private getPreviousGraphicCell(): Cell | null {
+    let col = this.wrapPending ? this.cursorCol : this.cursorCol - 1;
+    while (col >= 0 && this.grid[this.cursorRow][col].char === '') col--;
+    if (col < 0) return null;
+    const cell = this.grid[this.cursorRow][col];
+    return cell.char === ' ' ? null : cell;
+  }
+
+  private appendZeroWidth(char: string): void {
+    const cell = this.getPreviousGraphicCell();
+    if (cell) cell.char += char;
+  }
+
+  private clearCellForWrite(row: Cell[], col: number): void {
+    const cell = row[col];
+    if (!cell) return;
+
+    if (cell.char === '') {
+      if (col > 0 && charWidth(row[col - 1].char) === 2) {
+        row[col - 1] = this.blankCell();
+      }
+    } else if (charWidth(cell.char) === 2 && row[col + 1]?.char === '') {
+      row[col + 1] = this.blankCell();
+    }
+    row[col] = this.blankCell();
+  }
+
+  /** Write through the same delayed-autowrap path used by text and CSI REP. */
+  private writePrintable(char: string): void {
+    // A two-column glyph cannot be represented in a one-column grid without
+    // bleeding into adjacent Blessed UI, so use a single-cell replacement.
+    const printable = charWidth(char) > this.cols ? '\uFFFD' : char;
+    const width = charWidth(printable);
+    if (this.wrapPending || this.cursorCol + width > this.cols) {
+      this.cursorCol = 0;
+      this.lineFeed();
+      this.wrapPending = false;
+    }
+
+    const row = this.grid[this.cursorRow];
+    for (let col = this.cursorCol; col < Math.min(this.cols, this.cursorCol + width); col++) {
+      this.clearCellForWrite(row, col);
+    }
+
+    row[this.cursorCol] = {
+      char: printable,
+      style: cloneStyle(this.style),
+    };
+
+    if (width === 2 && this.cursorCol + 1 < this.cols) {
+      row[this.cursorCol + 1] = {
+        char: '',
+        style: cloneStyle(this.style),
+      };
+    }
+
+    const nextCol = this.cursorCol + width;
+    if (nextCol >= this.cols) {
+      this.cursorCol = this.cols - 1;
+      this.wrapPending = true;
+    } else {
+      this.cursorCol = nextCol;
+      this.wrapPending = false;
+    }
+  }
+
   // ── Processing ─────────────────────────────────────────────────
 
   private process(): void {
@@ -421,24 +585,21 @@ export class VTerm {
 
         // ESC 7 — save cursor
         if (remaining.length >= 2 && remaining[1] === '7') {
-          this.savedCursor = { row: this.cursorRow, col: this.cursorCol, style: cloneStyle(this.style) };
+          this.saveCursor();
           i += 2;
           continue;
         }
 
         // ESC 8 — restore cursor
         if (remaining.length >= 2 && remaining[1] === '8') {
-          if (this.savedCursor) {
-            this.cursorRow = this.savedCursor.row;
-            this.cursorCol = this.savedCursor.col;
-            this.style = cloneStyle(this.savedCursor.style);
-          }
+          this.restoreCursor();
           i += 2;
           continue;
         }
 
         // ESC M — reverse index (move cursor up, scroll if at top of region)
         if (remaining.length >= 2 && remaining[1] === 'M') {
+          this.wrapPending = false;
           if (this.cursorRow === this.scrollTop) {
             this.scrollDown();
           } else if (this.cursorRow > 0) {
@@ -453,6 +614,7 @@ export class VTerm {
           this.grid = this.makeGrid();
           this.cursorRow = 0;
           this.cursorCol = 0;
+          this.wrapPending = false;
           this.style = { ...DEFAULT_STYLE };
           this.scrollTop = 0;
           this.scrollBottom = this.rows - 1;
@@ -509,23 +671,27 @@ export class VTerm {
       // ── Control characters ─────────────────────────────────
       if (ch === '\r') {
         this.cursorCol = 0;
+        this.wrapPending = false;
         i++;
         continue;
       }
 
       if (ch === '\n') {
+        this.wrapPending = false;
         this.lineFeed();
         i++;
         continue;
       }
 
       if (ch === '\b') {
+        this.wrapPending = false;
         if (this.cursorCol > 0) this.cursorCol--;
         i++;
         continue;
       }
 
       if (ch === '\t') {
+        this.wrapPending = false;
         this.cursorCol = Math.min(this.cols - 1, (this.cursorCol + 8) & ~7);
         i++;
         continue;
@@ -548,33 +714,13 @@ export class VTerm {
         if (cp < 32) { j++; continue; }
 
         if (isZeroWidth(cp)) {
-          if (this.cursorCol > 0) {
-            const char = String.fromCodePoint(cp);
-            this.grid[this.cursorRow][this.cursorCol - 1].char += char;
-          }
+          this.appendZeroWidth(String.fromCodePoint(cp));
           j += cp > 0xFFFF ? 2 : 1;
           continue;
         }
 
         const printChar = cp > 0xFFFF ? String.fromCodePoint(cp) : chunk[j];
-        const w = charWidth(printChar);
-
-        if (this.cursorCol + w > this.cols) {
-          this.cursorCol = 0;
-          this.lineFeed();
-        }
-
-        this.grid[this.cursorRow][this.cursorCol] = {
-          char: printChar,
-          style: cloneStyle(this.style),
-        };
-
-        if (w === 2 && this.cursorCol + 1 < this.cols) {
-          this.grid[this.cursorRow][this.cursorCol + 1] = { char: '', style: cloneStyle(this.style) };
-        }
-
-        this.cursorCol += w;
-        if (this.cursorCol >= this.cols) this.cursorCol = this.cols - 1;
+        this.writePrintable(printChar);
         j += cp > 0xFFFF ? 2 : 1;
       }
 
@@ -630,6 +776,7 @@ export class VTerm {
       scrollback: this.scrollback,
       cursorRow: this.cursorRow,
       cursorCol: this.cursorCol,
+      wrapPending: this.wrapPending,
       style: cloneStyle(this.style),
       scrollTop: this.scrollTop,
       scrollBottom: this.scrollBottom,
@@ -638,6 +785,7 @@ export class VTerm {
     this.scrollback = [];
     this.cursorRow = 0;
     this.cursorCol = 0;
+    this.wrapPending = false;
     this.scrollTop = 0;
     this.scrollBottom = this.rows - 1;
     this._inAltScreen = true;
@@ -645,13 +793,24 @@ export class VTerm {
 
   private leaveAltScreen(): void {
     if (!this._inAltScreen || !this.altScreenSaved) return;
-    this.grid = this.altScreenSaved.grid;
+    this.grid = this.resizeGrid(this.altScreenSaved.grid, this.cols, this.rows);
     this.scrollback = this.altScreenSaved.scrollback;
-    this.cursorRow = this.altScreenSaved.cursorRow;
-    this.cursorCol = this.altScreenSaved.cursorCol;
-    this.style = this.altScreenSaved.style;
-    this.scrollTop = this.altScreenSaved.scrollTop;
-    this.scrollBottom = this.altScreenSaved.scrollBottom;
+    const cursor = this.clampCursor(
+      this.altScreenSaved.cursorRow,
+      this.altScreenSaved.cursorCol,
+    );
+    this.cursorRow = cursor.row;
+    this.cursorCol = cursor.col;
+    this.wrapPending = this.altScreenSaved.wrapPending;
+    this.style = cloneStyle(this.altScreenSaved.style);
+    this.scrollTop = Math.max(
+      0,
+      Math.min(this.altScreenSaved.scrollTop, this.rows - 1),
+    );
+    this.scrollBottom = Math.max(
+      this.scrollTop,
+      Math.min(this.altScreenSaved.scrollBottom, this.rows - 1),
+    );
     this.altScreenSaved = null;
     this._inAltScreen = false;
   }
@@ -662,6 +821,12 @@ export class VTerm {
     const cmd = suffix.charAt(suffix.length - 1);
     const nums = params ? params.split(';').map((n) => parseInt(n, 10) || 0) : [];
     const n = nums[0] || 1;
+
+    // Cursor movement and editing operations cancel delayed autowrap. Style,
+    // save/restore, mode, and query operations preserve or manage it themselves.
+    if (!['m', 'b', 's', 'u', 'h', 'l', 'n', 'c', 'q', 't'].includes(cmd)) {
+      this.wrapPending = false;
+    }
 
     switch (cmd) {
       case 'A': // Cursor up
@@ -751,18 +916,11 @@ export class VTerm {
         for (let j = 0; j < n; j++) this.scrollDown();
         break;
       case 'b': // REP — Repeat the preceding graphic character n times
-        if (this.cursorCol > 0) {
-          const prevChar = this.grid[this.cursorRow][this.cursorCol - 1].char;
-          if (prevChar && prevChar !== ' ') {
-            for (let j = 0; j < n; j++) {
-              if (this.cursorCol >= this.cols) break;
-              this.grid[this.cursorRow][this.cursorCol] = {
-                char: prevChar,
-                style: cloneStyle(this.style),
-              };
-              this.cursorCol++;
-            }
-            if (this.cursorCol >= this.cols) this.cursorCol = this.cols - 1;
+        {
+          const previous = this.getPreviousGraphicCell();
+          if (previous) {
+            const previousChar = previous.char;
+            for (let j = 0; j < n; j++) this.writePrintable(previousChar);
           }
         }
         break;
@@ -770,14 +928,10 @@ export class VTerm {
         if (!prefix) this.handleSGR(nums);
         break;
       case 's': // Save cursor position (ANSI.SYS)
-        this.savedCursor = { row: this.cursorRow, col: this.cursorCol, style: cloneStyle(this.style) };
+        this.saveCursor();
         break;
       case 'u': // Restore cursor position (ANSI.SYS) — only unprefixed, not Kitty keyboard >u/<u
-        if (!prefix && this.savedCursor) {
-          this.cursorRow = this.savedCursor.row;
-          this.cursorCol = this.savedCursor.col;
-          this.style = cloneStyle(this.savedCursor.style);
-        }
+        if (!prefix) this.restoreCursor();
         break;
       case 'r': // DECSTBM — Set scroll region
         if (nums.length >= 2 && nums[0] > 0 && nums[1] > 0) {

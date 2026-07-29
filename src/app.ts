@@ -3,6 +3,11 @@ import path from 'node:path';
 import type { AppConfig, Theme } from './config/types.js';
 import { getTheme } from './config/themes.js';
 import { loadConfig } from './config/loader.js';
+import {
+  resolveLaunchOptions,
+  type ExplicitLaunchOptions,
+  type ResolvedLaunchOptions,
+} from './config/launch-options.js';
 import { LayoutManager } from './screen/layout-manager.js';
 import { createFunctionBar } from './screen/function-bar.js';
 import { createStatusBar, updateStatusBar } from './screen/status-bar.js';
@@ -14,13 +19,26 @@ import { showLogDialog } from './screen/dialog/log-dialog.js';
 import { showOrchestrateDialog } from './screen/dialog/orchestrate-dialog.js';
 import { showTemplateDialog } from './screen/dialog/template-dialog.js';
 import { showProtocolGuide } from './screen/dialog/protocol-dialog.js';
+import {
+  showActivityDialog,
+  type ActivityDialogHandle,
+} from './screen/dialog/activity-dialog.js';
 import { Orchestrator } from './orchestration/orchestrator.js';
 import { PreviewPanel } from './panels/preview-panel.js';
 import { FilePanel } from './panels/file-panel.js';
 import { TerminalPanel } from './panels/terminal-panel.js';
 import { MarkdownEditor } from './editor/markdown-editor.js';
-import { AgentManager } from './agents/agent-manager.js';
+import {
+  AgentManager,
+  type AgentLifecycleEvent,
+} from './agents/agent-manager.js';
 import type { AgentType } from './agents/types.js';
+import {
+  createDemoAgentLaunchSpec,
+  DEMO_AGENT_ROLES,
+  DEMO_AGENT_ROLE_ORDER,
+  type DemoAgentRole,
+} from './demo/demo-agents.js';
 import {
   copyFiles,
   moveFile,
@@ -40,6 +58,14 @@ import { showWelcomeDialog } from './screen/dialog/welcome-dialog.js';
 import { buildVimLaunchSpec, resolveCtrlGAction } from './utils/shortcut-routing.js';
 import { formatUserError, sanitizeUserText } from './utils/user-facing-errors.js';
 
+const RECOMMENDED_CONFERENCE_COLUMNS = 100;
+const RECOMMENDED_CONFERENCE_ROWS = 24;
+
+export interface AppLaunchOptions extends ExplicitLaunchOptions {
+  onShutdown?: () => void | Promise<void>;
+  onSignalOwnership?: () => void;
+}
+
 export class App {
   private screen!: blessed.Widgets.Screen;
   private config: AppConfig;
@@ -50,45 +76,103 @@ export class App {
   private statusBar!: blessed.Widgets.BoxElement;
   private functionBar!: blessed.Widgets.BoxElement;
   private workingDir: string;
+  private launch: ResolvedLaunchOptions;
+  private onShutdown?: () => void | Promise<void>;
+  private onSignalOwnership?: () => void;
   private destructiveTransitionInProgress = false;
   private fullScreenOverlayActive = false;
+  private shutdownPromise: Promise<void> | null = null;
+  private disposePromise: Promise<void> | null = null;
+  private disposalStarted = false;
+  private demoStarted = false;
+  private demoPanelRoles = new Map<number, DemoAgentRole>();
+  private demoRollbackPromise: Promise<void> | null = null;
+  private activityDialog: ActivityDialogHandle | null = null;
+  private unsubscribeAgentLifecycle: (() => void) | null = null;
+  private watcherStarted = false;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private fileChangedHandler: (() => void) | null = null;
+  private processHandlersInstalled = false;
 
-  constructor(workingDir?: string, overrides?: { theme?: string; panels?: number; showHidden?: boolean }) {
-    this.config = loadConfig();
-    if (overrides?.theme) this.config.theme = overrides.theme;
-    if (overrides?.panels && [2, 3, 4].includes(overrides.panels)) {
-      this.config.panelCount = overrides.panels as 2 | 3 | 4;
+  private readonly handleUncaughtException = (err: Error): void => {
+    if (err instanceof TypeError && err.stack?.includes('blessed')) {
+      logger.error('blessed render error (suppressed)', err);
+      return;
     }
-    if (overrides?.showHidden !== undefined) this.config.showHidden = overrides.showHidden;
+    logger.error('Uncaught exception', err);
+    void this.shutdown(1);
+  };
+
+  private readonly handleUnhandledRejection = (reason: unknown): void => {
+    logger.error('Unhandled promise rejection (suppressed)', reason);
+  };
+
+  private readonly handleSigint = (): void => { void this.shutdown(130); };
+  private readonly handleSighup = (): void => { void this.shutdown(129); };
+  private readonly handleSigterm = (): void => { void this.shutdown(143); };
+
+  constructor(workingDir?: string, options: AppLaunchOptions = {}) {
+    const panels = options.panels !== undefined && [2, 3, 4].includes(options.panels)
+      ? options.panels
+      : undefined;
+    this.launch = resolveLaunchOptions(loadConfig(), {
+      ...options,
+      panels,
+    });
+    this.config = this.launch.config;
     this.theme = getTheme(this.config.theme);
     this.workingDir = workingDir || process.cwd();
+    this.onShutdown = options.onShutdown;
+    this.onSignalOwnership = options.onSignalOwnership;
     this.agentManager = new AgentManager(this.config.agents);
   }
 
   async run(): Promise<void> {
-    // Catch blessed rendering errors (orphaned children, null parent, etc.)
-    // These are non-fatal — the screen recovers on next render cycle.
-    process.on('uncaughtException', (err) => {
-      if (err instanceof TypeError && err.stack?.includes('blessed')) {
-        logger.error('blessed render error (suppressed)', err);
-        return;
+    try {
+      await this.runApplication();
+    } catch (error) {
+      try {
+        await this.dispose();
+      } catch (rollbackError) {
+        logger.error('Application startup rollback failed', rollbackError);
       }
-      // Re-throw non-blessed errors
-      logger.error('Uncaught exception', err);
-      process.exit(1);
-    });
+      logger.close();
+      throw error;
+    }
+  }
 
-    // Prevent unhandled promise rejections from crashing the process.
-    // These can happen when async key handlers fail (e.g. agent stdin closes
-    // during protocol injection).
-    process.on('unhandledRejection', (reason) => {
-      logger.error('Unhandled promise rejection (suppressed)', reason);
-    });
+  private installProcessHandlers(): void {
+    if (this.processHandlersInstalled) return;
+    this.processHandlersInstalled = true;
+    process.on('uncaughtException', this.handleUncaughtException);
+    process.on('unhandledRejection', this.handleUnhandledRejection);
+    process.on('SIGINT', this.handleSigint);
+    process.on('SIGHUP', this.handleSighup);
+    process.on('SIGTERM', this.handleSigterm);
+    const onSignalOwnership = this.onSignalOwnership;
+    this.onSignalOwnership = undefined;
+    onSignalOwnership?.();
+  }
+
+  private removeProcessHandlers(): void {
+    if (!this.processHandlersInstalled) return;
+    this.processHandlersInstalled = false;
+    process.removeListener('uncaughtException', this.handleUncaughtException);
+    process.removeListener('unhandledRejection', this.handleUnhandledRejection);
+    process.removeListener('SIGINT', this.handleSigint);
+    process.removeListener('SIGHUP', this.handleSighup);
+    process.removeListener('SIGTERM', this.handleSigterm);
+  }
+
+  private async runApplication(): Promise<void> {
+    this.installProcessHandlers();
 
     this.screen = blessed.screen({
       smartCSR: true,
       fullUnicode: true,
-      title: 'Agents Commander',
+      title: this.launch.conference
+        ? 'Agents Commander — Conference Mode'
+        : 'Agents Commander',
       cursor: {
         artificial: true,
         shape: 'block',
@@ -109,6 +193,10 @@ export class App {
       });
     };
     this.orchestrator = new Orchestrator(this.layout, this.agentManager, this.screen, this.config);
+    this.unsubscribeAgentLifecycle = this.agentManager.onLifecycle((event) => {
+      this.handleAgentLifecycle(event);
+      this.updateStatus();
+    });
 
     // Update status bar when panel is focused via mouse click
     this.layout.onPanelFocused = () => {
@@ -116,39 +204,244 @@ export class App {
       this.screen.render();
     };
 
+    this.watcherStarted = true;
     startWatching(this.workingDir, this.config.watchDebounce);
 
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    appEvents.on('file:changed', () => {
-      if (refreshTimer) return;
-      refreshTimer = setTimeout(() => {
-        refreshTimer = null;
+    this.fileChangedHandler = () => {
+      if (this.refreshTimer) return;
+      this.refreshTimer = setTimeout(() => {
+        this.refreshTimer = null;
         try {
           this.layout.refreshAll();
         } catch (err) {
           logger.error('Failed to refresh layout after file change', err);
         }
       }, 250); // Throttle refreshes to max 4 per second
-    });
+    };
+    appEvents.on('file:changed', this.fileChangedHandler);
 
     this.setupGlobalKeys();
     this.updateStatus();
 
     this.screen.on('resize', () => {
       this.layout.handleResize();
+      this.updateStatus();
     });
 
     this.screen.render();
     logger.info('Agents Commander started', { cwd: this.workingDir });
 
-    // Show welcome splash on startup
-    await showWelcomeDialog(this.screen, this.theme);
+    if (!this.launch.skipWelcome) {
+      await showWelcomeDialog(this.screen, this.theme);
+    }
+    if (!this.disposalStarted && this.launch.demo) {
+      await this.offerOfflineDemo();
+    }
   }
 
   // ── Menu actions ──────────────────────────────────────────────
 
   private actionHelp(): void {
     showHelpDialog(this.screen, this.theme);
+  }
+
+  private actionActivity(): void {
+    const dialog = showActivityDialog(
+      this.screen,
+      this.theme,
+      (limit) => this.orchestrator.getRecentActivity(limit),
+    );
+    if (dialog) this.activityDialog = dialog;
+  }
+
+  private assertLaunchAllowed(action: string): void {
+    if (this.disposalStarted) {
+      throw new Error(`Cannot ${action}; application shutdown has begun`);
+    }
+  }
+
+  private async waitForDemoRollback(): Promise<void> {
+    while (this.demoRollbackPromise) {
+      await this.demoRollbackPromise;
+    }
+  }
+
+  private beginDemoRollback(panelIndices: readonly number[]): Promise<void> {
+    const previous = this.demoRollbackPromise ?? Promise.resolve();
+    const uniquePanelIndices = [...new Set(panelIndices)];
+    const rollback = previous.then(async () => {
+      await Promise.allSettled(
+        uniquePanelIndices.map((panelIndex) => this.stopTerminalSession(panelIndex)),
+      );
+    });
+
+    let tracked!: Promise<void>;
+    tracked = rollback.finally(() => {
+      if (this.demoRollbackPromise === tracked) {
+        this.demoRollbackPromise = null;
+      }
+    });
+    this.demoRollbackPromise = tracked;
+    return tracked;
+  }
+
+  private async offerOfflineDemo(): Promise<void> {
+    await this.waitForDemoRollback();
+    if (this.disposalStarted) return;
+
+    const confirmed = await showConfirmDialog(
+      this.screen,
+      this.theme,
+      'Start Offline Conference Demo',
+      'Launch two deterministic local demo agents now? The demo uses no network or API credentials.',
+    );
+    if (this.disposalStarted) return;
+    if (!confirmed) {
+      showToast(this.screen, 'Offline demo was not started — press Ctrl+O to retry');
+      return;
+    }
+
+    try {
+      await this.startOfflineDemo();
+    } catch (error) {
+      logger.error('Offline demo failed to start', error);
+      if (this.disposalStarted) return;
+      showErrorToast(
+        this.screen,
+        `Offline demo failed: ${sanitizeUserText(
+          error instanceof Error ? error.message : String(error),
+          160,
+        )}. Press Ctrl+O to retry.`,
+      );
+    }
+  }
+
+  private async actionOrchestrateOrDemo(): Promise<void> {
+    await this.waitForDemoRollback();
+    if (this.disposalStarted) return;
+
+    const demoRolesAreRunning = DEMO_AGENT_ROLE_ORDER.some(
+      (_, panelIndex) => this.hasLiveTerminalSession(panelIndex),
+    );
+    if (this.launch.demo && !demoRolesAreRunning) {
+      this.demoStarted = false;
+      await this.offerOfflineDemo();
+      return;
+    }
+    await this.actionOrchestrate();
+  }
+
+  private async startOfflineDemo(): Promise<void> {
+    await this.waitForDemoRollback();
+    this.assertLaunchAllowed('start the offline demo');
+    if (this.demoStarted) return;
+    this.demoStarted = true;
+    this.demoPanelRoles.clear();
+    const launchedPanels: number[] = [];
+    const terminals: TerminalPanel[] = [];
+
+    try {
+      for (let index = 0; index < DEMO_AGENT_ROLE_ORDER.length; index++) {
+        this.assertLaunchAllowed('launch an offline demo role');
+        const role = DEMO_AGENT_ROLE_ORDER[index];
+        let terminal = this.layout.getTerminalPanel(index);
+        if (this.hasLiveTerminalSession(index)) {
+          await this.stopTerminalSession(index);
+          this.assertLaunchAllowed('launch an offline demo role');
+        }
+        if (!terminal) {
+          terminal = this.layout.convertToTerminal(index);
+        }
+
+        // Register the role before launch so even an immediately failing child
+        // is attributed to the demo rather than treated as a generic session.
+        this.demoPanelRoles.set(index, role);
+        const launched = this.agentManager.launchInternalAgent(
+          createDemoAgentLaunchSpec(role),
+          terminal,
+        );
+        if (!launched) {
+          this.demoPanelRoles.delete(index);
+          throw new Error(`Unable to launch the ${role} role`);
+        }
+        launchedPanels.push(index);
+        terminals.push(terminal);
+        this.orchestrator.connectPanel(terminal);
+      }
+
+      this.layout.setActivePanel(0);
+      this.updateStatus();
+      this.screen.render();
+
+      // Both scanner-enabled sessions are registered before the explicit
+      // start token is sent, so the first SEND marker cannot outrun routing.
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+      this.assertLaunchAllowed('send the offline demo START token');
+      if (!terminals[0].sendInput('START\r')) {
+        throw new Error('Coordinator session closed before the START token was sent');
+      }
+      showToast(this.screen, 'Offline demo started — press F12 for routed activity');
+    } catch (error) {
+      this.demoStarted = false;
+      this.demoPanelRoles.clear();
+      await this.beginDemoRollback(launchedPanels);
+      throw error;
+    }
+  }
+
+  private handleAgentLifecycle(event: AgentLifecycleEvent): void {
+    if (event.type !== 'exited') return;
+    const role = this.demoPanelRoles.get(event.panelIndex);
+    if (!role) return;
+    this.demoPanelRoles.delete(event.panelIndex);
+
+    const processFailed = event.reason === 'spawn-error'
+      || (
+        event.reason === 'process-exit'
+        && (
+          event.signal !== null
+          || (event.exitCode !== null && event.exitCode !== 0)
+        )
+      );
+    if (!processFailed) {
+      if (event.reason !== 'process-exit') {
+        this.demoStarted = false;
+        const peerPanels = [...this.demoPanelRoles.keys()];
+        this.demoPanelRoles.clear();
+        void this.beginDemoRollback(peerPanels);
+      }
+      return;
+    }
+    if (!this.demoStarted) return;
+
+    this.demoStarted = false;
+    const peerPanels = [...this.demoPanelRoles.keys()];
+    this.demoPanelRoles.clear();
+
+    const detail = event.reason === 'spawn-error'
+      ? ' (spawn error)'
+      : event.signal
+      ? ` (${event.signal})`
+      : event.exitCode === null
+        ? ''
+        : ` (code ${event.exitCode})`;
+    logger.error('Offline demo role exited unexpectedly', {
+      role,
+      panelIndex: event.panelIndex,
+      exitCode: event.exitCode,
+      signal: event.signal,
+      reason: event.reason,
+    });
+    const rollback = this.beginDemoRollback(peerPanels);
+    void rollback.then(() => {
+      if (this.disposalStarted) return;
+      showErrorToast(
+        this.screen,
+        `${DEMO_AGENT_ROLES[role].name} stopped unexpectedly${detail}. `
+          + 'The peer was stopped; press Ctrl+O to retry.',
+        5000,
+      );
+    });
   }
 
   private async actionAddPanel(): Promise<void> {
@@ -204,7 +497,7 @@ export class App {
       }
 
       try {
-        this.agentManager.killAll();
+        await this.stopAllTerminalSessions();
         this.orchestrator.resetState();
         await this.layout.setMode(mode);
         this.updateStatus();
@@ -233,12 +526,7 @@ export class App {
       }
 
       try {
-        if (this.agentManager.hasAgent(idx)) {
-          this.agentManager.killAgent(idx);
-        } else if (tp?.isRunning) {
-          tp.killAgent(true);
-        }
-        if (tp) this.orchestrator.disconnectPanel(idx);
+        await this.stopTerminalSession(idx);
 
         const removed = this.layout.removePanel();
         if (removed) {
@@ -267,7 +555,7 @@ export class App {
       }
 
       try {
-        this.agentManager.killAll();
+        await this.stopAllTerminalSessions();
         this.orchestrator.resetState();
         await this.layout.resetToDefault();
         this.updateStatus();
@@ -310,14 +598,27 @@ export class App {
     return this.confirmSessionReplacement(panelIndex, nextAction);
   }
 
-  private stopTerminalSession(panelIndex: number): void {
+  private async stopTerminalSession(panelIndex: number): Promise<void> {
     const terminal = this.layout.getTerminalPanel(panelIndex);
+    let termination: Promise<void> = Promise.resolve();
     if (this.agentManager.hasAgent(panelIndex)) {
-      this.agentManager.killAgent(panelIndex);
-    } else if (terminal?.isRunning) {
-      terminal.killAgent(true);
+      termination = this.agentManager.killAgent(panelIndex);
+    } else if (terminal) {
+      termination = terminal.killAgent(true);
     }
     if (terminal) this.orchestrator.disconnectPanel(panelIndex);
+    await termination;
+  }
+
+  private async stopAllTerminalSessions(): Promise<void> {
+    const terminalPanels = [...this.layout.terminalPanels];
+    const terminations: Array<Promise<void>> = [
+      Promise.resolve(this.agentManager.killAll()),
+      ...terminalPanels.map(
+        (panel) => Promise.resolve(panel.killAgent(true)),
+      ),
+    ];
+    await Promise.allSettled(terminations);
   }
 
   private async actionViewFile(): Promise<void> {
@@ -380,6 +681,7 @@ export class App {
   }
 
   private async actionEditInVim(): Promise<boolean> {
+    if (this.disposalStarted) return false;
     const fp = this.layout.activeFilePanel;
     const entry = fp?.currentEntry;
     if (!fp || !entry || entry.isDirectory) {
@@ -418,7 +720,9 @@ export class App {
     panelPath: string,
     filePath: string,
   ): Promise<void> {
+    if (this.disposalStarted) return;
     const fp = await this.layout.convertToFile(panelIndex, panelPath);
+    if (this.disposalStarted) return;
     fp.focusEntry(filePath);
     this.updateStatus();
   }
@@ -573,13 +877,15 @@ export class App {
       this.config.agents,
     );
 
+    if (this.disposalStarted) return;
     if (choice) {
       const { agentType, panelIndex } = choice;
       let tp = this.layout.getTerminalPanel(panelIndex);
       if (this.hasLiveTerminalSession(panelIndex)) {
         const confirmed = await this.confirmSessionReplacement(panelIndex, `launch ${agentType}`);
         if (!confirmed) return;
-        this.stopTerminalSession(panelIndex);
+        await this.stopTerminalSession(panelIndex);
+        if (this.disposalStarted) return;
       }
       if (!tp) {
         tp = this.layout.convertToTerminal(panelIndex);
@@ -603,6 +909,7 @@ export class App {
       this.layout.allPanels.indexOf(this.layout.activePanel),
     );
 
+    if (this.disposalStarted) return;
     if (!choice) return;
 
     const { content, panelIndex, templateName } = choice;
@@ -618,7 +925,9 @@ export class App {
         `send template “${sanitizeUserText(templateName, 60)}”`,
       );
       if (!confirmed) return;
+      if (this.disposalStarted) return;
       const result = await this.orchestrator.sendTask(managedAgent, panelIndex, content);
+      if (this.disposalStarted) return;
       if (!result.success) {
         logger.error(`Template send failed: ${result.error}`);
         showErrorToast(screen, `Failed to send template: ${result.error}`);
@@ -634,6 +943,7 @@ export class App {
         panelIndex,
         this.config.agents,
       );
+      if (this.disposalStarted) return;
       if (agentChoice) {
         const targetPanel = agentChoice.panelIndex;
         const confirmed = await this.confirmTaskTarget(
@@ -642,11 +952,13 @@ export class App {
           `launch ${agentChoice.agentType} and send the template`,
         );
         if (!confirmed) return;
+        if (this.disposalStarted) return;
         const result = await this.orchestrator.sendTask(
           agentChoice.agentType,
           targetPanel,
           content,
         );
+        if (this.disposalStarted) return;
         if (!result.success) {
           logger.error(`Template send failed: ${result.error}`);
           showErrorToast(screen, `Failed to send template: ${result.error}`);
@@ -669,6 +981,7 @@ export class App {
       this.config.agents,
     );
 
+    if (this.disposalStarted) return;
     if (!choice) return;
 
     const confirmed = await this.confirmTaskTarget(
@@ -677,12 +990,14 @@ export class App {
       `launch ${choice.agentType} and send the task`,
     );
     if (!confirmed) return;
+    if (this.disposalStarted) return;
 
     const result = await this.orchestrator.sendTask(
       choice.agentType,
       choice.panelIndex,
       choice.task,
     );
+    if (this.disposalStarted) return;
     if (!result.success) {
       logger.error(`Orchestrate failed: ${result.error}`);
       showErrorToast(
@@ -701,7 +1016,7 @@ export class App {
       : 'Exit Agents Commander?';
     const confirmed = await showConfirmDialog(this.screen, this.theme, 'Quit', msg);
     if (confirmed) {
-      this.shutdown();
+      await this.shutdown();
     }
   }
 
@@ -715,7 +1030,7 @@ export class App {
     // rejections from crashing the process.
     const guard = (action: () => void | Promise<void>) => {
       return () => {
-        if (isDialogActive() || this.fullScreenOverlayActive) return;
+        if (this.disposalStarted || isDialogActive() || this.fullScreenOverlayActive) return;
         try {
           const result = action();
           if (result && typeof (result as Promise<void>).catch === 'function') {
@@ -735,7 +1050,7 @@ export class App {
     // User can Tab to a file panel to access these shortcuts.
     const termGuard = (action: () => void | Promise<void>) => {
       return () => {
-        if (isDialogActive() || this.fullScreenOverlayActive) return;
+        if (this.disposalStarted || isDialogActive() || this.fullScreenOverlayActive) return;
         if (this.layout.activeTerminalPanel?.isRunning) return;
         try {
           const result = action();
@@ -783,12 +1098,7 @@ export class App {
           'Terminate the running session?',
         );
         if (confirmed) {
-          if (hasManagedAgent) {
-            this.agentManager.killAgent(tp.panelIndex);
-          } else {
-            tp.killAgent();
-          }
-          this.orchestrator.disconnectPanel(tp.panelIndex);
+          await this.stopTerminalSession(tp.panelIndex);
           screen.render();
         }
       }
@@ -817,13 +1127,15 @@ export class App {
       }
     }));
 
-    // F12 - Inter-agent communication guide (F11 is captured by macOS)
-    screen.key(['f12'], guard(() => {
-      showProtocolGuide(screen, this.theme);
-    }));
+    // F12 - live routed-message activity (works from terminal panels).
+    screen.key(['f12'], guard(() => this.actionActivity()));
 
-    // Ctrl+O - Orchestrate: send task to another agent
-    screen.key(['C-o'], guard(() => this.actionOrchestrate()));
+    // Shift+F12 - protocol guide (F12 itself is reserved for Activity).
+    screen.key(['S-f12'], guard(() => showProtocolGuide(screen, this.theme)));
+
+    // Ctrl+O - Orchestrate; in offline-demo mode it also provides a safe
+    // retry/replay path when neither bundled role is running.
+    screen.key(['C-o'], guard(() => this.actionOrchestrateOrDemo()));
 
     // Ctrl+P - Inject protocol instructions into active agent
     let injecting = false;
@@ -868,11 +1180,7 @@ export class App {
             'A session is running. Kill it and switch back to a file panel?',
           );
           if (!confirmed) return;
-          if (hasManagedAgent) {
-            this.agentManager.killAgent(idx);
-          } else if (tp) {
-            tp.killAgent(true);
-          }
+          await this.stopTerminalSession(idx);
         }
         this.orchestrator.disconnectPanel(idx);
         await this.layout.convertToFile(idx);
@@ -910,12 +1218,27 @@ export class App {
 
   }
 
+  private conferenceStatus(): { modeLabel?: string; warning?: string } {
+    if (!this.launch.conference) return {};
+    const columns = typeof this.screen.width === 'number' ? this.screen.width : 80;
+    const rows = typeof this.screen.height === 'number' ? this.screen.height : 24;
+    const warning = columns < RECOMMENDED_CONFERENCE_COLUMNS || rows < RECOMMENDED_CONFERENCE_ROWS
+      ? `screen ${columns}x${rows}; use ${RECOMMENDED_CONFERENCE_COLUMNS}x${RECOMMENDED_CONFERENCE_ROWS}+`
+      : undefined;
+    return {
+      modeLabel: this.launch.demo ? 'OFFLINE DEMO' : 'CONFERENCE',
+      warning,
+    };
+  }
+
   private updateStatus(): void {
     const panel = this.layout.activePanel;
+    const launchStatus = this.conferenceStatus();
 
     if (panel instanceof FilePanel) {
       const entry = panel.currentEntry;
       updateStatusBar(this.statusBar, {
+        ...launchStatus,
         fileName: entry?.name ?? '..',
         fileSize: entry?.size,
         fileDate: entry ? formatDate(entry.modified) : undefined,
@@ -926,9 +1249,12 @@ export class App {
       const agents = this.agentManager.getRunningAgents();
       const info = agents.find((a) => a.panelIndex === panel.panelIndex);
       updateStatusBar(this.statusBar, {
+        ...launchStatus,
         fileName: info ? `${info.name} [${info.status}]` : panel.sessionName ? `${panel.sessionName} [${panel.status}]` : 'Terminal',
         dirPath: this.workingDir,
       });
+    } else {
+      updateStatusBar(this.statusBar, launchStatus);
     }
 
     this.screen.render();
@@ -963,15 +1289,138 @@ export class App {
     }
   }
 
-  private shutdown(): void {
-    this.agentManager.killAll();
-    for (const panel of this.layout.terminalPanels) {
-      panel.killAgent(true);
-    }
-    stopWatching();
-    logger.info('Agents Commander shutting down');
-    logger.close();
-    this.screen.destroy();
-    process.exit(0);
+  /**
+   * Release every resource owned by this App instance without terminating the
+   * host process. Safe to call after partial startup and safe to call again.
+   */
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    this.disposalStarted = true;
+
+    let resolveDispose!: () => void;
+    let rejectDispose!: (reason: unknown) => void;
+    this.disposePromise = new Promise<void>((resolve, reject) => {
+      resolveDispose = resolve;
+      rejectDispose = reject;
+    });
+
+    const performDispose = async (): Promise<void> => {
+      const failures: unknown[] = [];
+      try {
+        this.unsubscribeAgentLifecycle?.();
+      } catch (error) {
+        failures.push(error);
+        logger.error('Failed to unsubscribe application lifecycle listener', error);
+      }
+      this.unsubscribeAgentLifecycle = null;
+      this.demoStarted = false;
+      this.demoPanelRoles.clear();
+      if (this.activityDialog) {
+        try {
+          this.activityDialog.close();
+        } catch (error) {
+          failures.push(error);
+          logger.error('Failed to close routed-message activity during disposal', error);
+        }
+        this.activityDialog = null;
+      }
+
+      let managedPanels: TerminalPanel[] = [];
+      try {
+        managedPanels = this.agentManager.prepareForShutdown();
+      } catch (error) {
+        failures.push(error);
+        logger.error('Failed to stop agent lifecycle management', error);
+      }
+
+      const terminalPanels = new Set<TerminalPanel>([
+        ...managedPanels,
+        ...(this.layout?.terminalPanels ?? []),
+      ]);
+      const terminalShutdowns: Array<Promise<void>> = [];
+      for (const panel of terminalPanels) {
+        try {
+          // Invoke synchronously so every known panel is launch-sealed before
+          // disposal reaches its first await.
+          terminalShutdowns.push(panel.shutdownAgent());
+        } catch (error) {
+          failures.push(error);
+          logger.error('Failed to begin terminal shutdown', error);
+        }
+      }
+      const terminalResults = await Promise.allSettled(terminalShutdowns);
+      for (const result of terminalResults) {
+        if (result.status === 'rejected') failures.push(result.reason);
+      }
+      if (terminalResults.some((result) => result.status === 'rejected')) {
+        logger.error('Failed to stop every terminal session during disposal');
+      }
+      await TerminalPanel.waitForPendingTerminations();
+
+      if (this.refreshTimer) {
+        clearTimeout(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+      if (this.fileChangedHandler) {
+        appEvents.removeListener('file:changed', this.fileChangedHandler);
+        this.fileChangedHandler = null;
+      }
+
+      if (this.watcherStarted) {
+        try {
+          stopWatching();
+        } catch (error) {
+          failures.push(error);
+          logger.error('Failed to stop the file watcher', error);
+        }
+        this.watcherStarted = false;
+      }
+
+      try {
+        this.screen?.destroy();
+      } catch (error) {
+        failures.push(error);
+        logger.error('Failed to restore the terminal during disposal', error);
+      }
+
+      const onShutdown = this.onShutdown;
+      this.onShutdown = undefined;
+      if (onShutdown) {
+        try {
+          await onShutdown();
+        } catch (error) {
+          failures.push(error);
+          logger.error('Launch cleanup failed during disposal', error);
+        }
+      }
+
+      this.removeProcessHandlers();
+      if (failures.length > 0) {
+        throw new AggregateError(failures, 'Agents Commander disposal was incomplete');
+      }
+    };
+    void performDispose().then(resolveDispose, rejectDispose);
+
+    return this.disposePromise;
+  }
+
+  private shutdown(exitCode = 0): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+
+    this.shutdownPromise = (async () => {
+      let finalExitCode = exitCode;
+      try {
+        await this.dispose();
+      } catch (error) {
+        finalExitCode = finalExitCode || 1;
+        logger.error('Agents Commander shutdown was incomplete', error);
+      }
+
+      logger.info('Agents Commander shutting down', { exitCode: finalExitCode });
+      logger.close();
+      process.exit(finalExitCode);
+    })();
+
+    return this.shutdownPromise;
   }
 }

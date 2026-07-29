@@ -132,6 +132,159 @@ describe('AgentManager', () => {
     );
   });
 
+  it('registers a scanner-enabled internal agent with role identity and no restart', async () => {
+    vi.useFakeTimers();
+    const manager = new AgentManager();
+    const lifecycle = vi.fn();
+    manager.onLifecycle(lifecycle);
+    const mockPanel = {
+      panelIndex: 1,
+      isRunning: false,
+      workingDir: '/tmp/demo',
+      launchInternalAgent: vi.fn().mockImplementation(() => {
+        mockPanel.isRunning = true;
+        mockPanel.status = 'running';
+        return true;
+      }),
+      killAgent: vi.fn(),
+      status: 'running',
+      onExit: null as ((
+        code: number | null,
+        signal: string | null,
+        reason?: 'process-exit' | 'spawn-error',
+      ) => void) | null,
+    };
+
+    expect(manager.launchInternalAgent({
+      name: 'Demo Reviewer',
+      command: process.execPath,
+      args: ['/demo/demo-agent.js', '--role', 'reviewer'],
+      env: { LANG: 'C' },
+    }, mockPanel as never)).toBe(true);
+
+    expect(mockPanel.launchInternalAgent).toHaveBeenCalledWith(
+      'Demo Reviewer',
+      process.execPath,
+      ['/demo/demo-agent.js', '--role', 'reviewer'],
+      { LANG: 'C' },
+    );
+    const running = manager.getRunningAgents();
+    expect(running).toHaveLength(1);
+    expect(running[0]).toMatchObject({
+      panelIndex: 1,
+      type: 'generic',
+      name: 'Demo Reviewer',
+      status: 'running',
+    });
+    expect(running[0].sessionId).toMatch(/^generic_2_/);
+    expect(manager.getAgentType(1)).toBe('generic');
+    expect(manager.getAgentSessionId(1)).toBe(running[0].sessionId);
+    expect(manager.findPanelBySessionId(running[0].sessionId)).toBe(1);
+    expect(lifecycle).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'launched',
+      panelIndex: 1,
+      sessionId: running[0].sessionId,
+      agentType: 'generic',
+      agentName: 'Demo Reviewer',
+    }));
+
+    mockPanel.isRunning = false;
+    mockPanel.status = 'exited';
+    mockPanel.onExit?.(0, null);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(mockPanel.launchInternalAgent).toHaveBeenCalledTimes(1);
+    expect(manager.hasAgent(1)).toBe(false);
+    expect(lifecycle).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'exited',
+      panelIndex: 1,
+      sessionId: running[0].sessionId,
+      agentName: 'Demo Reviewer',
+      exitCode: 0,
+      signal: null,
+      reason: 'process-exit',
+    }));
+  });
+
+  it('preserves an asynchronous spawn-error reason with null exit metadata', () => {
+    const manager = new AgentManager();
+    const lifecycle = vi.fn();
+    manager.onLifecycle(lifecycle);
+    const mockPanel = {
+      panelIndex: 0,
+      isRunning: false,
+      workingDir: '/tmp/demo',
+      launchInternalAgent: vi.fn().mockReturnValue(true),
+      killAgent: vi.fn(async () => undefined),
+      status: 'error',
+      onExit: null as ((
+        code: number | null,
+        signal: string | null,
+        reason: 'process-exit' | 'spawn-error',
+      ) => void) | null,
+    };
+
+    expect(manager.launchInternalAgent({
+      name: 'Demo Coordinator',
+      command: process.execPath,
+    }, mockPanel as never)).toBe(true);
+    mockPanel.onExit?.(null, null, 'spawn-error');
+
+    expect(lifecycle).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'exited',
+      panelIndex: 0,
+      exitCode: null,
+      signal: null,
+      reason: 'spawn-error',
+    }));
+    expect(manager.hasAgent(0)).toBe(false);
+  });
+
+  it('irreversibly rejects launches after shutdown preparation begins', () => {
+    const manager = new AgentManager();
+    const mockPanel = {
+      panelIndex: 0,
+      isRunning: false,
+      workingDir: '/tmp',
+      launchAgent: vi.fn().mockReturnValue(true),
+      killAgent: vi.fn(async () => undefined),
+      status: 'idle',
+      onExit: null,
+    };
+
+    expect(manager.prepareForShutdown()).toEqual([]);
+    expect(manager.launchAgent('generic', mockPanel as never)).toBe(false);
+    expect(mockPanel.launchAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not replace a managed session for an invalid internal launch spec', () => {
+    const manager = new AgentManager() as any;
+    const mockPanel = {
+      panelIndex: 0,
+      isRunning: true,
+      launchInternalAgent: vi.fn(),
+      killAgent: vi.fn(),
+    };
+    manager.agents.set(0, {
+      type: 'codex',
+      info: { name: 'Codex CLI' },
+      panel: mockPanel,
+      launchedAt: new Date(),
+      restartCount: 0,
+      sessionId: 'existing',
+      restartTimer: null,
+      autoRestart: true,
+    });
+
+    expect(manager.launchInternalAgent({
+      name: ' ',
+      command: process.execPath,
+    }, mockPanel as never)).toBe(false);
+    expect(manager.getAgentSessionId(0)).toBe('existing');
+    expect(mockPanel.killAgent).not.toHaveBeenCalled();
+    expect(mockPanel.launchInternalAgent).not.toHaveBeenCalled();
+  });
+
   it('stops restarting after reaching max limit', () => {
     const manager = new AgentManager() as any;
     const mockPanel = {

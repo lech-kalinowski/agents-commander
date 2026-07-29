@@ -195,7 +195,10 @@ export class MessageLedger {
   getRecentMessages(limit = 50): MessageRecord[] {
     const count = Math.max(0, Math.trunc(limit));
     if (count === 0) return [];
-    return [...this.messages.values()].slice(-count).reverse();
+    return [...this.messages.values()]
+      .slice(-count)
+      .reverse()
+      .map((record) => this.snapshotMessage(record));
   }
 
   private pruneHistory(): void {
@@ -247,5 +250,31 @@ export class MessageLedger {
   private makeThreadId(): string {
     const id = this.nextThreadSeq++;
     return `thr_${id.toString(36).padStart(6, '0')}`;
+  }
+
+  private snapshotMessage(record: MessageRecord): MessageRecord {
+    return {
+      messageId: record.messageId,
+      threadId: record.threadId,
+      kind: record.kind,
+      source: {
+        sessionId: record.source.sessionId,
+        panelIndex: record.source.panelIndex,
+        agentName: record.source.agentName,
+        agentType: record.source.agentType,
+      },
+      target: {
+        sessionId: record.target.sessionId,
+        panelIndex: record.target.panelIndex,
+        agentName: record.target.agentName,
+        agentType: record.target.agentType,
+      },
+      content: record.content,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      status: record.status,
+      replyToMessageId: record.replyToMessageId,
+      ...(record.error === undefined ? {} : { error: record.error }),
+    };
   }
 }

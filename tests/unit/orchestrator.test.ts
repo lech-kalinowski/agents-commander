@@ -106,6 +106,50 @@ describe('Orchestrator', () => {
     });
   });
 
+  it('exposes detached routed activity without STATUS or QUERY records', () => {
+    const orchestrator = new Orchestrator(
+      {} as never,
+      mockAgentManager({ 0: 'claude', 1: 'codex' }) as any,
+    ) as any;
+    const source = {
+      sessionId: 'claude-session-0',
+      panelIndex: 0,
+      agentName: 'Claude Code',
+      agentType: 'claude' as const,
+    };
+    const target = {
+      sessionId: 'codex-session-1',
+      panelIndex: 1,
+      agentName: 'Codex CLI',
+      agentType: 'codex' as const,
+    };
+
+    orchestrator.ledger.createMessage({
+      kind: 'send',
+      source,
+      target,
+      content: 'first routed message',
+    });
+    orchestrator.ledger.createMessage({
+      kind: 'status',
+      source,
+      target,
+      content: 'live-only status',
+    });
+    orchestrator.ledger.createMessage({
+      kind: 'reply',
+      source: { ...target },
+      target: { ...source },
+      content: 'second routed message',
+    });
+
+    const activity = orchestrator.getRecentActivity(2);
+    expect(activity.map((record: any) => record.kind)).toEqual(['reply', 'send']);
+
+    activity[0].source.agentName = 'mutated snapshot';
+    expect(orchestrator.getRecentActivity(1)[0].source.agentName).toBe('Codex CLI');
+  });
+
   // ── REPLY routing ───────────────────────────────────────────────
 
   it('routes REPLY through the latest open thread for the replying session', () => {
@@ -538,6 +582,31 @@ describe('Orchestrator', () => {
   });
 
   // ── Task queue ──────────────────────────────────────────────────
+
+  it('awaits managed process termination before launching its replacement', async () => {
+    const panel = mockTerminalPanel(0, true);
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager({ 0: 'claude' });
+    let releaseTermination!: () => void;
+    const termination = new Promise<void>((resolve) => {
+      releaseTermination = resolve;
+    });
+    agents.killAgent.mockReturnValue(termination);
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    orchestrator.delay = vi.fn(async () => undefined);
+    orchestrator.sendTextToAgent = vi.fn(async () => undefined);
+    orchestrator.submitInput = vi.fn(async () => undefined);
+
+    const execution = orchestrator.executeTask('codex', 0, 'replacement task');
+    await Promise.resolve();
+
+    expect(agents.killAgent).toHaveBeenCalledWith(0);
+    expect(agents.launchAgent).not.toHaveBeenCalled();
+
+    releaseTermination();
+    await expect(execution).resolves.toEqual({ success: true });
+    expect(agents.launchAgent).toHaveBeenCalledWith('codex', panel);
+  });
 
   it('times out queued tasks after 60 seconds', async () => {
     vi.useFakeTimers();

@@ -3,10 +3,29 @@
 import { Command } from 'commander';
 import path from 'node:path';
 import { statSync } from 'node:fs';
-import { App } from '../src/app.js';
+import {
+  doctorExitCode,
+  formatDoctorReport,
+  runDoctor,
+} from '../src/doctor/doctor.js';
+import type { DemoWorkspace } from '../src/demo/demo-workspace.js';
 import { getPackageVersion } from '../src/utils/package-info.js';
 
 const program = new Command();
+
+interface CliOptions {
+  theme?: string;
+  panels?: string;
+  showHidden?: boolean;
+  doctor?: boolean;
+  conference?: boolean;
+  demo?: boolean;
+}
+
+interface CliApp {
+  run(): Promise<void>;
+  dispose(): Promise<void>;
+}
 
 program
   .name('agents-commander')
@@ -16,27 +35,88 @@ program
   .option('-t, --theme <name>', 'Color theme (classic-blue, midnight)')
   .option('-p, --panels <count>', 'Number of panels (2, 3, or 4)')
   .option('--show-hidden', 'Show hidden files by default')
-  .action(async (directory: string, options: { theme?: string; panels?: string; showHidden?: boolean }) => {
-    const workingDir = path.resolve(directory);
+  .option('--doctor', 'Run startup diagnostics and exit')
+  .option('--conference', 'Use presentation-safe Conference Mode defaults')
+  .option('--demo', 'Launch the deterministic offline conference demo')
+  .action(async (directory: string, options: CliOptions, command: Command) => {
+    const requestedWorkingDir = path.resolve(directory);
 
+    if (options.doctor) {
+      try {
+        const report = await runDoctor({ workingDirectory: requestedWorkingDir });
+        process.stdout.write(`${formatDoctorReport(report)}\n`);
+        process.exitCode = doctorExitCode(report);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`Agents Commander Doctor failed: ${message}\n`);
+        process.exitCode = 1;
+      }
+      return;
+    }
+
+    let demoWorkspace: DemoWorkspace | null = null;
+    let app: CliApp | null = null;
     try {
       if (options.panels !== undefined && !/^[234]$/.test(options.panels)) {
         throw new Error(`Invalid panel count "${options.panels}". Expected 2, 3, or 4.`);
       }
-      if (!statSync(workingDir).isDirectory()) {
+      const panels = options.panels === undefined
+        ? undefined
+        : Number.parseInt(options.panels, 10) as 2 | 3 | 4;
+      const showHidden = command.getOptionValueSource('showHidden') === 'cli'
+        ? options.showHidden
+        : undefined;
+
+      let workingDir = requestedWorkingDir;
+      if (options.demo) {
+        const { createDemoWorkspace } = await import('../src/demo/demo-workspace.js');
+        demoWorkspace = await createDemoWorkspace();
+        workingDir = demoWorkspace.path;
+      } else if (!statSync(workingDir).isDirectory()) {
         throw new Error(`Not a directory: ${workingDir}`);
       }
-      const app = new App(workingDir, {
+
+      const { App } = await import('../src/app.js');
+      app = new App(workingDir, {
         theme: options.theme,
-        panels: options.panels === undefined ? undefined : parseInt(options.panels, 10),
-        showHidden: options.showHidden,
+        panels,
+        showHidden,
+        conference: options.conference,
+        demo: options.demo,
+        onShutdown: demoWorkspace?.cleanup,
+        onSignalOwnership: demoWorkspace
+          ? () => {
+            demoWorkspace?.transferSignalOwnership();
+            demoWorkspace = null;
+          }
+          : undefined,
       });
       await app.run();
     } catch (err) {
+      if (app) {
+        try {
+          await app.dispose();
+        } catch (rollbackError) {
+          const detail = rollbackError instanceof Error
+            ? rollbackError.message
+            : String(rollbackError);
+          console.error(`Failed to roll back Agents Commander startup: ${detail}`);
+        }
+      }
+      if (demoWorkspace) {
+        try {
+          await demoWorkspace.cleanup();
+        } catch (cleanupError) {
+          const detail = cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError);
+          console.error(`Failed to clean the offline demo workspace: ${detail}`);
+        }
+      }
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Failed to start Agents Commander: ${message}`);
-      process.exit(1);
+      process.exitCode = 1;
     }
   });
 
-program.parse();
+await program.parseAsync();

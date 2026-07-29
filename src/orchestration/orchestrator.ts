@@ -6,6 +6,7 @@ import type { TerminalPanel } from '../panels/terminal-panel.js';
 import { buildProtocolInstructions, type CommanderMessage, type MessageType } from './protocol.js';
 import {
   MessageLedger,
+  type MessageRecord,
   type PendingReplyRoute,
   type SessionRef,
 } from './message-ledger.js';
@@ -877,6 +878,24 @@ export class Orchestrator {
   // ── Public API ─────────────────────────────────────────────────
 
   /**
+   * Return detached snapshots of routed SEND, REPLY, and BROADCAST activity.
+   * STATUS and QUERY are live interactions and are intentionally not history.
+   */
+  getRecentActivity(limit = 50): readonly MessageRecord[] {
+    const count = Math.max(0, Math.trunc(limit));
+    if (count === 0) return [];
+
+    return this.ledger
+      .getRecentMessages(Number.MAX_SAFE_INTEGER)
+      .filter((record) => (
+        record.kind === 'send' ||
+        record.kind === 'reply' ||
+        record.kind === 'broadcast'
+      ))
+      .slice(0, count);
+  }
+
+  /**
    * Send a task to an agent panel. Tasks targeting the same panel are
    * queued and processed sequentially to prevent interleaved input.
    */
@@ -940,11 +959,10 @@ export class Orchestrator {
       if (tp.isRunning) {
         // Kill managed agent or raw terminal session
         if (currentAgent) {
-          this.agentManager.killAgent(panelIndex);
+          await this.agentManager.killAgent(panelIndex);
         } else {
-          tp.killAgent(true);
+          await tp.killAgent(true);
         }
-        await this.delay(300);
       }
 
       this.protocolInjected.delete(panelIndex);

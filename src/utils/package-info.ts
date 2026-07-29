@@ -19,8 +19,13 @@ export function getPackageInfo(moduleUrl = import.meta.url): PackageInfo {
 
   const candidates: string[] = [];
   try {
-    const moduleDir = path.dirname(fileURLToPath(moduleUrl));
-    candidates.push(path.resolve(moduleDir, '..', '..', 'package.json'));
+    let currentDirectory = path.dirname(fileURLToPath(moduleUrl));
+    while (true) {
+      candidates.push(path.join(currentDirectory, 'package.json'));
+      const parentDirectory = path.dirname(currentDirectory);
+      if (parentDirectory === currentDirectory) break;
+      currentDirectory = parentDirectory;
+    }
   } catch {
     // Use the fallback below.
   }
@@ -31,7 +36,11 @@ export function getPackageInfo(moduleUrl = import.meta.url): PackageInfo {
         name?: unknown;
         version?: unknown;
       };
-      if (typeof parsed.name === 'string' && typeof parsed.version === 'string') {
+      if (
+        parsed.name === FALLBACK_INFO.name
+        && typeof parsed.version === 'string'
+        && parsed.version.length > 0
+      ) {
         const info = { name: parsed.name, version: parsed.version };
         if (moduleUrl === import.meta.url) cachedInfo = info;
         return info;

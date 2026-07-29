@@ -1,7 +1,11 @@
 import { StringDecoder } from 'node:string_decoder';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CommanderMessage } from '../../src/orchestration/protocol.js';
+import {
+  ProtocolScanner,
+  type CommanderMessage,
+} from '../../src/orchestration/protocol.js';
 import { TerminalPanel } from '../../src/panels/terminal-panel.js';
+import { VTerm } from '../../src/panels/vterm.js';
 
 function createPanelHarness() {
   const emitted: CommanderMessage[] = [];
@@ -22,7 +26,7 @@ function createPanelHarness() {
     activeTailReplyKeys: new Set<string>(),
     scanner: { isMuted: false },
     vterm: {
-      getTail: vi.fn(() => []),
+      getTailLogicalLines: vi.fn(() => []),
     },
   };
 
@@ -36,6 +40,8 @@ function createPanelHarness() {
   panel.schedulePendingReplyEmission = TerminalPanel.prototype['schedulePendingReplyEmission'];
   panel.cancelPendingReplyEmission = TerminalPanel.prototype['cancelPendingReplyEmission'];
   panel.clearPendingReplyEmissions = TerminalPanel.prototype['clearPendingReplyEmissions'];
+  panel.scanGridForProtocol = TerminalPanel.prototype['scanGridForProtocol'];
+  panel.feedScannerFromVTerm = TerminalPanel.prototype['feedScannerFromVTerm'];
   panel.scanRenderedTailForReplies = TerminalPanel.prototype['scanRenderedTailForReplies'];
   panel.decodePtyChunk = TerminalPanel.prototype['decodePtyChunk'];
 
@@ -117,7 +123,7 @@ describe('TerminalPanel reply transport', () => {
 
   it('detects a reply from the rendered tail when grid and scrollback miss it', () => {
     const { panel, emitted } = createPanelHarness();
-    panel.vterm.getTail.mockReturnValue([
+    panel.vterm.getTailLogicalLines.mockReturnValue([
       'some unrelated line',
       '✦ ===COMMANDER:REPLY===',
       '  GEMINI_SMOKE_OK',
@@ -141,6 +147,132 @@ describe('TerminalPanel reply transport', () => {
 
     expect(panel.decodePtyChunk(decoder, bytes.subarray(0, 1))).toBe('');
     expect(panel.decodePtyChunk(decoder, bytes.subarray(1))).toBe('⠋');
+  });
+
+  it('rejoins VTerm soft wraps without changing routed SEND or REPLY content', () => {
+    const sendHarness = createPanelHarness();
+    sendHarness.panel.agentName = 'Demo Coordinator';
+    sendHarness.panel.vterm = new VTerm(47, 10);
+    sendHarness.panel.vterm.write([
+      '===COMMANDER:SEND:generic:2===',
+      'Review brief.md and confirm that the deterministic total is 42.',
+      '===COMMANDER:END===',
+    ].join('\r\n'));
+
+    sendHarness.panel.scanGridForProtocol();
+
+    expect(sendHarness.emitted).toEqual([
+      expect.objectContaining({
+        type: 'send',
+        content: 'Review brief.md and confirm that the deterministic total is 42.',
+      }),
+    ]);
+
+    const replyHarness = createPanelHarness();
+    replyHarness.panel.agentName = 'Demo Reviewer';
+    replyHarness.panel.vterm = new VTerm(47, 10);
+    replyHarness.panel.vterm.write([
+      '===COMMANDER:REPLY===',
+      'Deterministic review passed: calculateTotal([19, 23]) equals 42.',
+      '===COMMANDER:END===',
+    ].join('\r\n'));
+
+    replyHarness.panel.scanGridForProtocol();
+
+    expect(replyHarness.emitted).toEqual([
+      expect.objectContaining({
+        type: 'reply',
+        content: 'Deterministic review passed: calculateTotal([19, 23]) equals 42.',
+      }),
+    ]);
+  });
+
+  it('preserves significant spaces when routed content wraps at the panel edge', () => {
+    const { panel, emitted } = createPanelHarness();
+    panel.agentName = 'Boundary Space Agent';
+    panel.vterm = new VTerm(18, 12);
+    const content = `${'A'.repeat(16)}  tail`;
+    panel.vterm.write([
+      '===COMMANDER:SEND:generic:2===',
+      content,
+      '===COMMANDER:END===',
+    ].join('\r\n'));
+
+    panel.scanGridForProtocol();
+
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: 'send',
+        content,
+      }),
+    ]);
+  });
+
+  it('streams soft-wrapped scrollback rows as complete logical protocol lines', () => {
+    const emitted: CommanderMessage[] = [];
+    const vterm = new VTerm(18, 3);
+    const panel: any = {
+      scannerEnabled: true,
+      scanner: new ProtocolScanner(0, 'Demo Coordinator', (message) => {
+        emitted.push(message);
+      }),
+      vterm,
+      lastScrollbackIndex: 0,
+      scheduleGridScan: vi.fn(),
+    };
+    panel.feedScannerFromVTerm = TerminalPanel.prototype['feedScannerFromVTerm'];
+
+    vterm.write([
+      '===COMMANDER:SEND:generic:2===',
+      'deterministic-content-without-added-whitespace',
+      '===COMMANDER:END===',
+      'padding-1',
+      'padding-2',
+      'padding-3',
+      'padding-4',
+    ].join('\r\n'));
+    panel.feedScannerFromVTerm();
+
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: 'send',
+        content: 'deterministic-content-without-added-whitespace',
+      }),
+    ]);
+  });
+
+  it('streams significant wrap-boundary spaces from scrollback unchanged', () => {
+    const emitted: CommanderMessage[] = [];
+    const vterm = new VTerm(18, 3);
+    const panel: any = {
+      scannerEnabled: true,
+      scanner: new ProtocolScanner(0, 'Boundary Space Agent', (message) => {
+        emitted.push(message);
+      }),
+      vterm,
+      lastScrollbackIndex: 0,
+      scheduleGridScan: vi.fn(),
+    };
+    panel.feedScannerFromVTerm = TerminalPanel.prototype['feedScannerFromVTerm'];
+    const content = `${'A'.repeat(16)}  tail`;
+
+    vterm.write([
+      '===COMMANDER:SEND:generic:2===',
+      content,
+      '===COMMANDER:END===',
+      'padding-1',
+      'padding-2',
+      'padding-3',
+      'padding-4',
+    ].join('\r\n'));
+    panel.feedScannerFromVTerm();
+
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: 'send',
+        content,
+      }),
+    ]);
   });
 });
 

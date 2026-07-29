@@ -22,6 +22,8 @@ export function createStatusBar(parent: blessed.Widgets.Screen, theme: Theme): b
 export function updateStatusBar(
   bar: blessed.Widgets.BoxElement,
   info: {
+    modeLabel?: string;
+    warning?: string;
     fileName?: string;
     fileSize?: number;
     fileDate?: string;
@@ -33,6 +35,12 @@ export function updateStatusBar(
 ): void {
   const parts: string[] = [];
 
+  if (info.modeLabel) {
+    parts.push(`[${sanitizeUserText(info.modeLabel, 40)}]`);
+  }
+  if (info.warning) {
+    parts.push(`! ${sanitizeUserText(info.warning, 120)}`);
+  }
   if (info.fileName) {
     parts.push(sanitizeUserText(info.fileName, 160));
   }

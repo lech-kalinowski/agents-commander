@@ -14,18 +14,28 @@ afterEach(() => {
 });
 
 describe('package metadata', () => {
-  it('resolves package.json from source and bundled module layouts', () => {
+  it('resolves package.json from source, entry, and split-chunk module layouts', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-commander-package-'));
     tempDirs.push(root);
     fs.writeFileSync(
       path.join(root, 'package.json'),
       JSON.stringify({ name: 'agents-commander', version: '9.8.7' }),
     );
+    fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'dist', 'package.json'),
+      JSON.stringify({ name: 'unrelated-package', version: '1.0.0' }),
+    );
 
-    const moduleUrl = pathToFileURL(path.join(root, 'dist', 'src', 'index.js')).href;
-    expect(getPackageInfo(moduleUrl)).toEqual({
-      name: 'agents-commander',
-      version: '9.8.7',
-    });
+    for (const modulePath of [
+      path.join(root, 'src', 'utils', 'package-info.js'),
+      path.join(root, 'dist', 'bin', 'agents-commander.js'),
+      path.join(root, 'dist', 'chunk-runtime.js'),
+    ]) {
+      expect(getPackageInfo(pathToFileURL(modulePath).href)).toEqual({
+        name: 'agents-commander',
+        version: '9.8.7',
+      });
+    }
   });
 });

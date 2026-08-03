@@ -36,6 +36,10 @@ function createDemoHarness() {
     demoPanelRoles: new Map(),
     demoRollbackPromise: null,
     layout: {
+      panelCount: 2,
+      workspacePanelIds: [0, 1],
+      addPanel: vi.fn(async () => true),
+      hasPanel: vi.fn((panelId: number) => [0, 1].includes(panelId)),
       getTerminalPanel: vi.fn(() => null),
       convertToTerminal: vi.fn((index: number) => terminals[index]),
       setActivePanel: vi.fn(),
@@ -84,6 +88,27 @@ describe('App conference and offline demo integration', () => {
       app.screen,
       expect.stringContaining('press F12'),
     );
+  });
+
+  it('launches demo roles on the first two surviving stable panel IDs', async () => {
+    const { app, terminals } = createDemoHarness();
+    terminals[0].panelIndex = 4;
+    terminals[1].panelIndex = 9;
+    app.layout.workspacePanelIds = [4, 9];
+    app.layout.hasPanel.mockImplementation((panelId: number) => [4, 9].includes(panelId));
+    app.layout.convertToTerminal.mockImplementation((panelId: number) => (
+      panelId === 4 ? terminals[0] : terminals[1]
+    ));
+
+    const started = app.startOfflineDemo();
+    await vi.advanceTimersByTimeAsync(150);
+    await started;
+
+    expect(app.layout.convertToTerminal).toHaveBeenNthCalledWith(1, 4);
+    expect(app.layout.convertToTerminal).toHaveBeenNthCalledWith(2, 9);
+    expect(app.layout.setActivePanel).toHaveBeenCalledWith(4);
+    expect([...app.demoPanelRoles.keys()]).toEqual([4, 9]);
+    expect(terminals[0].sendInput).toHaveBeenCalledWith('START\r');
   });
 
   it('cleans a partial demo launch and permits a later retry', async () => {
@@ -240,6 +265,7 @@ describe('App conference and offline demo integration', () => {
     Object.assign(app, {
       launch: { demo: true },
       demoStarted: true,
+      demoPanelRoles: new Map(),
       hasLiveTerminalSession: vi.fn(() => false),
       offerOfflineDemo: vi.fn(async () => undefined),
       actionOrchestrate: vi.fn(async () => undefined),
@@ -257,6 +283,7 @@ describe('App conference and offline demo integration', () => {
     Object.assign(app, {
       launch: { demo: true },
       demoStarted: true,
+      demoPanelRoles: new Map([[0, 'coordinator']]),
       hasLiveTerminalSession: vi.fn((panelIndex: number) => panelIndex === 0),
       offerOfflineDemo: vi.fn(async () => undefined),
       actionOrchestrate: vi.fn(async () => undefined),

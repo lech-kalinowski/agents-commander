@@ -1,4 +1,5 @@
 import type { AgentProfile } from '../agents/types.js';
+import type { PanelDensity } from '../panel-limits.js';
 
 export interface Theme {
   name: string;
@@ -38,7 +39,10 @@ export interface AgentCommandConfig {
 
 export interface AppConfig {
   theme: string;
-  panelCount: 2 | 3 | 4;
+  /** Panels retained in the active workspace, independent of view density. */
+  panelCount: number;
+  /** Responsive view density or an explicit visible-panel cap. */
+  panelDensity: PanelDensity;
   showHidden: boolean;
   sortBy: 'name' | 'size' | 'date' | 'ext';
   sortAscending: boolean;

@@ -3,7 +3,14 @@ import type { Theme } from '../../config/types.js';
 import type { AgentProfile, AgentType } from '../../agents/types.js';
 import { discoverAgents } from '../../agents/agent-registry.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
-import { renderPanelBoxes } from './panel-picker.js';
+import {
+  adjacentPanelId,
+  initialPanelId,
+  normalizePanelIds,
+  PanelNumberInputBuffer,
+  renderPanelBoxes,
+  type PanelPickerSource,
+} from './panel-picker.js';
 import type { AgentCommandConfig } from '../../config/types.js';
 import { bindOverlayResize, screenGeometry } from './geometry.js';
 import { sanitizeUserText } from '../../utils/user-facing-errors.js';
@@ -24,12 +31,15 @@ let agentDialogOpen = false;
 export function showAgentDialog(
   screen: blessed.Widgets.Screen,
   theme: Theme,
-  panelCount: number,
+  panelSource: PanelPickerSource,
   activePanelIndex: number,
   agentOverrides?: Record<string, AgentCommandConfig>,
   agentProfiles?: readonly AgentProfile[],
 ): Promise<AgentLaunchChoice | null> {
   if (agentDialogOpen) return Promise.resolve(null);
+  const panelIds = normalizePanelIds(panelSource);
+  const firstPanelId = initialPanelId(panelIds, activePanelIndex);
+  if (firstPanelId === null) return Promise.resolve(null);
   agentDialogOpen = true;
   enterDialog();
 
@@ -115,11 +125,18 @@ export function showAgentDialog(
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
-    let selectedPanel = activePanelIndex;
+    let selectedPanel = firstPanelId;
+    let pickerWidth = Math.max(12, geometry.width - 8);
+    const numberInput = new PanelNumberInputBuffer(panelIds, () => {
+      updatePanelDisplay();
+      screen.render();
+    });
 
     function updatePanelDisplay(): void {
-      const header = '{bold}Target panel:{/bold}  (press 1-' + panelCount + ' to change)\n\n';
-      panelLabel.setContent(header + renderPanelBoxes(selectedPanel, panelCount, panelCount));
+      const header = '{bold}Target panel:{/bold}  (arrows or type P-number)\n\n';
+      panelLabel.setContent(
+        header + renderPanelBoxes(selectedPanel, panelIds, 4, pickerWidth, numberInput.digits),
+      );
     }
     updatePanelDisplay();
 
@@ -127,7 +144,7 @@ export function showAgentDialog(
       parent: dialog,
       bottom: 0,
       left: 'center',
-      content: ' Enter=Launch  1-4=Panel  Esc=Cancel ',
+      content: ' Enter=Launch  Left/Right=Panel  0-9=Type P#  Esc=Cancel ',
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
@@ -141,28 +158,45 @@ export function showAgentDialog(
         const nextListHeight = Math.max(3, Math.min(agents.length, nextGeometry.height - 13));
         list.height = nextListHeight;
         panelLabel.top = nextListHeight + 4;
+        pickerWidth = Math.max(12, nextGeometry.width - 8);
+        updatePanelDisplay();
       },
     );
     const cleanup = () => {
       if (resolved) return;
       resolved = true;
       agentDialogOpen = false;
+      numberInput.dispose();
       leaveDialog();
       unbindResize();
       dialog.destroy();
       screen.render();
     };
 
-    // Number keys to select panel
-    for (let n = 1; n <= panelCount; n++) {
+    const moveSelection = (direction: -1 | 1) => {
+      numberInput.reset();
+      selectedPanel = adjacentPanelId(panelIds, selectedPanel, direction) ?? selectedPanel;
+      updatePanelDisplay();
+      screen.render();
+    };
+    list.key(['left'], () => moveSelection(-1));
+    list.key(['right'], () => moveSelection(1));
+
+    for (let n = 0; n <= 9; n++) {
       list.key([String(n)], () => {
-        selectedPanel = n - 1;
+        const panelId = numberInput.acceptDigit(String(n));
+        if (panelId !== null) selectedPanel = panelId;
         updatePanelDisplay();
         screen.render();
       });
     }
 
     const handleSelect = (index: number) => {
+      if (!numberInput.canConfirm) {
+        updatePanelDisplay();
+        screen.render();
+        return;
+      }
       const agent = agents[index];
       cleanup();
       if (agent && agent.installed && agent.supported && !agent.configurationError) {

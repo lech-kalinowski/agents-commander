@@ -15,6 +15,9 @@ vi.mock('../../src/screen/dialog/template-dialog.js', () => ({
 vi.mock('../../src/screen/dialog/orchestrate-dialog.js', () => ({
   showOrchestrateDialog: vi.fn(),
 }));
+vi.mock('../../src/screen/dialog/panel-navigator-dialog.js', () => ({
+  showPanelNavigatorDialog: vi.fn(),
+}));
 vi.mock('../../src/screen/toast.js', () => ({
   showToast: vi.fn(),
   showErrorToast: vi.fn(),
@@ -29,16 +32,18 @@ vi.mock('../../src/file-manager/file-operations.js', async (importOriginal) => (
 }));
 
 import { App } from '../../src/app.js';
-import { copyFiles, createDirectory } from '../../src/file-manager/file-operations.js';
+import { TerminalPanel } from '../../src/panels/terminal-panel.js';
+import { copyFiles, createDirectory, moveFile } from '../../src/file-manager/file-operations.js';
 import { showConfirmDialog } from '../../src/screen/dialog/confirm-dialog.js';
 import { showInputDialog } from '../../src/screen/dialog/input-dialog.js';
 import { showAgentDialog } from '../../src/screen/dialog/agent-dialog.js';
 import { showTemplateDialog } from '../../src/screen/dialog/template-dialog.js';
 import { showOrchestrateDialog } from '../../src/screen/dialog/orchestrate-dialog.js';
+import { showPanelNavigatorDialog } from '../../src/screen/dialog/panel-navigator-dialog.js';
 import { showErrorToast } from '../../src/screen/toast.js';
 
 function createHarness(options: {
-  mode?: 2 | 3 | 4;
+  mode?: 'auto' | 2 | 3 | 4;
   livePanels?: Array<{ panelIndex: number; sessionName: string | null; isRunning: boolean }>;
   managed?: boolean;
   managedSessions?: Array<{
@@ -58,17 +63,31 @@ function createHarness(options: {
     uptime: 1,
   }));
   const activePanel = livePanels[0] ?? { panelIndex: 0, sessionName: null, isRunning: false };
+  const allPanels = [activePanel, { panelIndex: 1 }, { panelIndex: 2 }];
   const layout = {
     mode: options.mode ?? 2,
+    density: options.mode ?? 2,
     panelCount: 3,
+    workspacePanelIds: [0, 1, 2],
+    viewport: { pageNumber: 1, pageCount: 1 },
     terminalPanels: livePanels,
-    allPanels: [activePanel, {}, {}],
+    allPanels,
     activePanel,
+    activePanelId: activePanel.panelIndex,
+    addPanel: vi.fn(async () => true),
     setMode: vi.fn(async () => undefined),
     resetToDefault: vi.fn(async () => undefined),
     getTerminalPanel: vi.fn((panelIndex: number) => (
       livePanels.find((panel) => panel.panelIndex === panelIndex) ?? null
     )),
+    getPanel: vi.fn((panelIndex: number) => (
+      allPanels.find((panel) => panel.panelIndex === panelIndex) ?? null
+    )),
+    convertToTerminal: vi.fn((panelIndex: number) => (
+      livePanels.find((panel) => panel.panelIndex === panelIndex) ?? null
+    )),
+    hasPanel: vi.fn((panelIndex: number) => [0, 1, 2].includes(panelIndex)),
+    setActivePanel: vi.fn(),
     removePanel: vi.fn(() => true),
   };
   const agentManager = {
@@ -76,7 +95,9 @@ function createHarness(options: {
     hasAgent: vi.fn(() => options.managed ?? false),
     killAgent: vi.fn(),
     launchAgent: vi.fn(() => true),
+    launchProfile: vi.fn(() => true),
     prepareForShutdown: vi.fn(() => []),
+    handlePanelRemoval: vi.fn(),
     reindexAfterPanelRemoval: vi.fn(),
     getRunningAgents: vi.fn(() => managedSessions),
     getAgentType: vi.fn((panelIndex: number) => (
@@ -89,6 +110,7 @@ function createHarness(options: {
   const orchestrator = {
     resetState: vi.fn(),
     disconnectPanel: vi.fn(),
+    handlePanelRemoval: vi.fn(),
     reindexAfterPanelRemoval: vi.fn(),
     sendTask: vi.fn(async () => ({ success: true })),
   };
@@ -97,7 +119,7 @@ function createHarness(options: {
     layout,
     agentManager,
     orchestrator,
-    screen: { destroy: vi.fn(), render: vi.fn() },
+    screen: { destroy: vi.fn(), render: vi.fn(), key: vi.fn() },
     theme: {},
     config: { agents: {} },
     destructiveTransitionInProgress: false,
@@ -111,6 +133,7 @@ function createHarness(options: {
     unsubscribeAgentLifecycle: null,
     processHandlersInstalled: false,
     watcherStarted: false,
+    workingDir: '/workspace',
     updateStatus: vi.fn(),
   });
   return { app, layout, agentManager, orchestrator, activePanel };
@@ -153,57 +176,156 @@ describe('App destructive layout actions', () => {
 
     await Promise.all([action, disposal]);
     expect(agentManager.launchAgent).not.toHaveBeenCalled();
+    expect(agentManager.launchProfile).not.toHaveBeenCalled();
   });
 
-  it('preserves all state when a live-session layout change is canceled', async () => {
-    vi.mocked(showConfirmDialog).mockResolvedValue(false);
+  it('does not overwrite a replacement session that starts while termination is pending', async () => {
+    let releaseTermination!: () => void;
+    const termination = new Promise<void>((resolve) => { releaseTermination = resolve; });
+    vi.mocked(showAgentDialog).mockResolvedValue({
+      agentType: 'codex',
+      panelIndex: 0,
+    });
+    vi.mocked(showConfirmDialog).mockResolvedValue(true);
+    const { app, agentManager, activePanel } = createHarness({
+      managed: true,
+      livePanels: [{ panelIndex: 0, sessionName: 'Old Agent', isRunning: true }],
+    });
+    agentManager.killAgent.mockImplementation(() => {
+      activePanel.isRunning = false;
+      return termination;
+    });
+
+    const launch = app.actionLaunchAgent();
+    await vi.waitFor(() => expect(agentManager.killAgent).toHaveBeenCalledWith(0));
+    activePanel.isRunning = true;
+    activePanel.sessionName = 'Replacement Agent';
+    releaseTermination();
+    await launch;
+
+    expect(agentManager.launchProfile).not.toHaveBeenCalled();
+    expect(showErrorToast).toHaveBeenCalledWith(
+      app.screen,
+      expect.stringContaining('started another session'),
+    );
+  });
+
+  it('passes ordered sparse stable IDs to every target-panel dialog', async () => {
+    vi.mocked(showAgentDialog).mockResolvedValue(null);
+    vi.mocked(showTemplateDialog).mockResolvedValue(null);
+    vi.mocked(showOrchestrateDialog).mockResolvedValue(null);
+    const { app, layout } = createHarness();
+    layout.workspacePanelIds = [0, 2, 9, 99];
+    layout.activePanel = { panelIndex: 99, sessionName: null, isRunning: false };
+
+    await app.actionLaunchAgent();
+    await app.actionBrowseTemplates();
+    await app.actionOrchestrate();
+
+    expect(showAgentDialog).toHaveBeenCalledWith(
+      app.screen,
+      app.theme,
+      [0, 2, 9, 99],
+      99,
+      app.config.agents,
+      app.config.agentProfiles,
+    );
+    expect(showTemplateDialog).toHaveBeenCalledWith(
+      app.screen,
+      app.theme,
+      [0, 2, 9, 99],
+      99,
+    );
+    expect(showOrchestrateDialog).toHaveBeenCalledWith(
+      app.screen,
+      app.theme,
+      [0, 2, 9, 99],
+      99,
+      app.config.agents,
+      app.config.agentProfiles,
+    );
+  });
+
+  it('navigates to the stable panel ID selected through F11 search', async () => {
+    vi.mocked(showPanelNavigatorDialog).mockResolvedValue(2);
+    const { app, layout } = createHarness();
+    layout.workspacePanelIds = [0, 2, 99];
+    layout.allPanels = [0, 2, 99].map((panelIndex) => Object.assign(
+      Object.create(TerminalPanel.prototype),
+      {
+        panelIndex,
+        agentName: '',
+        _status: 'idle',
+        cwd: `/workspace/panel-${panelIndex + 1}`,
+      },
+    ));
+    layout.hasPanel.mockImplementation((panelIndex: number) => (
+      [0, 2, 99].includes(panelIndex)
+    ));
+
+    await app.actionNavigatePanel();
+
+    expect(showPanelNavigatorDialog).toHaveBeenCalledWith(
+      app.screen,
+      app.theme,
+      expect.arrayContaining([
+        expect.objectContaining({ panelId: 0, panelNumber: 1 }),
+        expect.objectContaining({ panelId: 2, panelNumber: 3 }),
+        expect.objectContaining({ panelId: 99, panelNumber: 100 }),
+      ]),
+      0,
+    );
+    expect(layout.setActivePanel).toHaveBeenCalledWith(2);
+    expect(app.updateStatus).toHaveBeenCalledOnce();
+  });
+
+  it('changes density without prompting, stopping, or rerouting live sessions', async () => {
     const { app, layout, agentManager, orchestrator } = createHarness({
       livePanels: [{ panelIndex: 0, sessionName: 'Claude', isRunning: true }],
     });
 
     await app.actionChangeLayout(3);
 
+    expect(showConfirmDialog).not.toHaveBeenCalled();
     expect(agentManager.killAll).not.toHaveBeenCalled();
     expect(orchestrator.resetState).not.toHaveBeenCalled();
-    expect(layout.setMode).not.toHaveBeenCalled();
+    expect(layout.setMode).toHaveBeenCalledWith(3);
   });
 
-  it('changes layout exactly once after confirmation', async () => {
-    vi.mocked(showConfirmDialog).mockResolvedValue(true);
+  it('changes density exactly once while preserving running agents', async () => {
     const { app, layout, agentManager, orchestrator } = createHarness({
       livePanels: [{ panelIndex: 0, sessionName: 'Claude', isRunning: true }],
     });
 
     await app.actionChangeLayout(4);
 
-    expect(agentManager.killAll).toHaveBeenCalledOnce();
-    expect(orchestrator.resetState).toHaveBeenCalledOnce();
+    expect(agentManager.killAll).not.toHaveBeenCalled();
+    expect(orchestrator.resetState).not.toHaveBeenCalled();
     expect(layout.setMode).toHaveBeenCalledOnce();
     expect(layout.setMode).toHaveBeenCalledWith(4);
   });
 
-  it('waits for an unmanaged terminal to close before replacing the layout', async () => {
-    vi.mocked(showConfirmDialog).mockResolvedValue(true);
-    let releaseTermination!: () => void;
-    const termination = new Promise<void>((resolve) => {
-      releaseTermination = resolve;
-    });
+  it('cycles density through a portable Shift+F4 action', async () => {
+    const { app, layout } = createHarness({ mode: 'auto' });
+
+    await app.actionCyclePanelDensity();
+
+    expect(layout.setMode).toHaveBeenCalledWith(2);
+  });
+
+  it('keeps an unmanaged terminal alive while changing density', async () => {
     const terminal = {
       panelIndex: 0,
       sessionName: 'Vim',
       isRunning: true,
-      killAgent: vi.fn(() => termination),
+      killAgent: vi.fn(),
     };
     const { app, layout } = createHarness({ livePanels: [terminal] });
 
-    const change = app.actionChangeLayout(4);
-    await vi.waitFor(() => {
-      expect(terminal.killAgent).toHaveBeenCalledWith(true);
-    });
-    expect(layout.setMode).not.toHaveBeenCalled();
+    await app.actionChangeLayout(4);
 
-    releaseTermination();
-    await change;
+    expect(showConfirmDialog).not.toHaveBeenCalled();
+    expect(terminal.killAgent).not.toHaveBeenCalled();
     expect(layout.setMode).toHaveBeenCalledWith(4);
   });
 
@@ -216,21 +338,20 @@ describe('App destructive layout actions', () => {
     expect(layout.setMode).toHaveBeenCalledWith(3);
   });
 
-  it('collapses repeated destructive shortcut requests', async () => {
-    let resolveConfirmation!: (value: boolean) => void;
-    vi.mocked(showConfirmDialog).mockReturnValue(
-      new Promise<boolean>((resolve) => { resolveConfirmation = resolve; }),
-    );
+  it('collapses repeated density requests while one reflow is in flight', async () => {
+    let releaseReflow!: () => void;
+    const reflow = new Promise<void>((resolve) => { releaseReflow = resolve; });
     const { app, layout } = createHarness({
       livePanels: [{ panelIndex: 0, sessionName: 'shell', isRunning: true }],
     });
+    layout.setMode.mockReturnValue(reflow);
 
     const first = app.actionChangeLayout(3);
     const second = app.actionChangeLayout(4);
-    resolveConfirmation(true);
+    releaseReflow();
     await Promise.all([first, second]);
 
-    expect(showConfirmDialog).toHaveBeenCalledOnce();
+    expect(showConfirmDialog).not.toHaveBeenCalled();
     expect(layout.setMode).toHaveBeenCalledOnce();
     expect(layout.setMode).toHaveBeenCalledWith(3);
   });
@@ -266,8 +387,7 @@ describe('App destructive layout actions', () => {
     expect(layout.resetToDefault).not.toHaveBeenCalled();
   });
 
-  it('treats a managed agent waiting to restart as a live session', async () => {
-    vi.mocked(showConfirmDialog).mockResolvedValue(false);
+  it('preserves a managed agent waiting to restart across density changes', async () => {
     const { app, layout, agentManager } = createHarness({
       livePanels: [{ panelIndex: 1, sessionName: 'Codex', isRunning: false }],
       managedSessions: [{
@@ -280,9 +400,9 @@ describe('App destructive layout actions', () => {
 
     await app.actionChangeLayout(3);
 
-    expect(showConfirmDialog).toHaveBeenCalledOnce();
+    expect(showConfirmDialog).not.toHaveBeenCalled();
     expect(agentManager.killAll).not.toHaveBeenCalled();
-    expect(layout.setMode).not.toHaveBeenCalled();
+    expect(layout.setMode).toHaveBeenCalledWith(3);
   });
 
   it('does not deliver an orchestrated task when replacing a session is declined', async () => {
@@ -370,6 +490,44 @@ describe('App destructive layout actions', () => {
       expect.stringContaining('permission denied'),
     );
     expect(layout.refreshAll).not.toHaveBeenCalled();
+  });
+
+  it('renames one selected item inside the active panel instead of a hidden panel', async () => {
+    vi.mocked(showInputDialog).mockResolvedValue('renamed.md');
+    const { app, layout } = createHarness();
+    Object.assign(layout, {
+      activeFilePanel: {
+        currentPath: '/active',
+        selectedEntries: [{
+          name: 'notes.md',
+          fullPath: '/active/notes.md',
+          isDirectory: false,
+        }],
+      },
+      inactiveFilePanel: { currentPath: '/hidden-unrelated' },
+      refreshAll: vi.fn(),
+    });
+
+    await app.actionMove();
+
+    expect(moveFile).toHaveBeenCalledWith('/active/notes.md', '/active/renamed.md');
+    expect(moveFile).not.toHaveBeenCalledWith(
+      '/active/notes.md',
+      '/hidden-unrelated/renamed.md',
+    );
+  });
+
+  it('blocks global mutations while a destructive transition is in progress', () => {
+    const { app, layout } = createHarness();
+    app.destructiveTransitionInProgress = true;
+    app.setupGlobalKeys();
+    const f3Registration = vi.mocked(app.screen.key).mock.calls.find(
+      (call) => (call[0] as string[]).includes('f3'),
+    );
+
+    expect(f3Registration).toBeDefined();
+    f3Registration![1]();
+    expect(layout.addPanel).not.toHaveBeenCalled();
   });
 
   it('rejects unsafe directory names before touching the filesystem', async () => {

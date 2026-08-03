@@ -382,13 +382,22 @@ describe('ProtocolScanner edge cases', () => {
     expect(cb.mock.calls[0][0].content).toBe('');
   });
 
-  it('rejects invalid panel numbers', () => {
+  it('accepts the maximum protocol panel number', () => {
     const cb = vi.fn();
     const scanner = new ProtocolScanner(0, 'Test', cb);
 
-    // Panel 0 (zero-based would be -1) and panel 5 (> max 4)
+    scanner.feed('===COMMANDER:SEND:claude:1000000===\nhello\n===COMMANDER:END===\n');
+
+    expect(cb).toHaveBeenCalledOnce();
+    expect(cb.mock.calls[0][0].targetPanel).toBe(999999);
+  });
+
+  it('rejects protocol panel numbers outside 1..1000000', () => {
+    const cb = vi.fn();
+    const scanner = new ProtocolScanner(0, 'Test', cb);
+
     scanner.feed('===COMMANDER:SEND:claude:0===\nhello\n===COMMANDER:END===\n');
-    scanner.feed('===COMMANDER:SEND:claude:5===\nhello\n===COMMANDER:END===\n');
+    scanner.feed('===COMMANDER:SEND:claude:1000001===\nhello\n===COMMANDER:END===\n');
 
     expect(cb).not.toHaveBeenCalled();
   });
@@ -473,6 +482,7 @@ describe('buildProtocolInstructions', () => {
     const text = buildProtocolInstructions(0, 'Claude Code', []);
     expect(text).toContain('Claude Code');
     expect(text).toContain('Panel 1');
+    expect(text).toContain('Panel numbers: 1-1000000');
   });
 
   it('lists other running agents', () => {

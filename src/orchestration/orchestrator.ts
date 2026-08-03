@@ -39,7 +39,14 @@ interface QueuedTask {
   started: boolean;
   cancelled: boolean;
   queuedAt: number;
+  retained: boolean;
+  retainedBytes: number;
+  queuePanelIndex: number;
 }
+
+type EnqueueResult =
+  | { accepted: true; task: QueuedTask }
+  | { accepted: false; error: string };
 
 interface PanelQueueState {
   tasks: QueuedTask[];
@@ -54,8 +61,25 @@ interface ProtocolSessionState {
   lastUserInputAt: number;
 }
 
+interface ManagedTaskTarget {
+  panelIndex: number;
+  terminal: TerminalPanel;
+  sessionId: string;
+  agentType: AgentType;
+  profileId: string;
+}
+
 const CLAUDE_DIRECT_TYPE_MAX_CHARS = 320;
 const CLAUDE_DIRECT_SUBMIT_DELAY_MS = 120;
+
+/**
+ * Routed-task retention limits. Counts include the task currently being
+ * delivered, because its content remains resident until delivery settles.
+ */
+export const ROUTED_QUEUE_MAX_TASKS_PER_PANEL = 64;
+export const ROUTED_QUEUE_MAX_TASKS_GLOBAL = 512;
+export const ROUTED_QUEUE_MAX_BYTES_PER_PANEL = 512 * 1024;
+export const ROUTED_QUEUE_MAX_BYTES_GLOBAL = 4 * 1024 * 1024;
 
 /**
  * Orchestrator — handles both manual (Ctrl+O) and automatic (inter-agent)
@@ -84,6 +108,10 @@ export class Orchestrator {
   private panelQueues = new Map<number, PanelQueueState>();
   private panelProcessing = new Set<number>();
   private nextTaskId = 1;
+  private retainedTaskCount = 0;
+  private retainedTaskBytes = 0;
+  private retainedTaskCountByPanel = new Map<number, number>();
+  private retainedTaskBytesByPanel = new Map<number, number>();
   /** Grace period after protocol injection — ignore non-SEND messages from this panel. */
   private injectionGrace = new Map<number, number>();
   /** Tracks whether a freshly injected session has been explicitly engaged yet. */
@@ -164,45 +192,13 @@ export class Orchestrator {
     }
   }
 
-  reindexAfterPanelRemoval(removedPanelIndex: number): void {
-    const shiftPanelIndex = (panelIndex: number): number => (
-      panelIndex > removedPanelIndex ? panelIndex - 1 : panelIndex
-    );
+  handlePanelRemoval(removedPanelId: number): void {
+    this.disconnectPanel(removedPanelId);
+  }
 
-    const removedQueue = this.panelQueues.get(removedPanelIndex);
-    if (removedQueue) {
-      this.failPendingTasks(removedQueue, `Panel ${removedPanelIndex + 1} was removed`);
-      removedQueue.detachedReason = `Panel ${removedPanelIndex + 1} was removed`;
-    }
-
-    this.connectedPanels = new Set(
-      [...this.connectedPanels]
-        .filter((panelIndex) => panelIndex !== removedPanelIndex)
-        .map(shiftPanelIndex),
-    );
-
-    this.protocolInjected = new Set(
-      [...this.protocolInjected]
-        .filter((panelIndex) => panelIndex !== removedPanelIndex)
-        .map(shiftPanelIndex),
-    );
-
-    const reindexedQueues = new Map<number, PanelQueueState>();
-    for (const [panelIndex, queueState] of this.panelQueues) {
-      if (panelIndex === removedPanelIndex) continue;
-      this.remapQueueSources(queueState, removedPanelIndex);
-      reindexedQueues.set(shiftPanelIndex(panelIndex), queueState);
-    }
-    this.panelQueues = reindexedQueues;
-    this.syncPanelProcessing();
-
-    const reindexedGrace = new Map<number, number>();
-    for (const [panelIndex, graceEnd] of this.injectionGrace) {
-      if (panelIndex === removedPanelIndex) continue;
-      reindexedGrace.set(shiftPanelIndex(panelIndex), graceEnd);
-    }
-    this.injectionGrace = reindexedGrace;
-
+  /** @deprecated Panel IDs are stable; use handlePanelRemoval. */
+  reindexAfterPanelRemoval(removedPanelId: number): void {
+    this.handlePanelRemoval(removedPanelId);
   }
 
   resetState(): void {
@@ -210,8 +206,9 @@ export class Orchestrator {
       this.failPendingTasks(queueState, 'Orchestration state was reset');
       queueState.detachedReason = 'Orchestration state was reset';
     }
-    for (let i = 0; i < this.layout.panelCount; i++) {
-      const tp = this.layout.getTerminalPanel(i);
+    for (const panel of this.layout.allPanels) {
+      const panelId = panel.panelIndex;
+      const tp = this.layout.getTerminalPanel(panelId);
       if (tp) {
         tp.onCommanderMessage = null;
         tp.onUserInput = null;
@@ -511,6 +508,8 @@ export class Orchestrator {
     }
 
     const queuedFor: string[] = [];
+    const rejectedFor: string[] = [];
+    let firstRejection: string | null = null;
 
     for (const panelIndex of targets) {
       const targetInfo = this.findRunningAgent(panelIndex);
@@ -530,7 +529,7 @@ export class Orchestrator {
       });
 
       const prefixed = this.formatBroadcastMessage(source, record.messageId, record.threadId, msg.content);
-      this.enqueueTask(panelIndex, {
+      const admission = this.enqueueTask(panelIndex, {
         agentType,
         task: prefixed,
         source: {
@@ -546,11 +545,22 @@ export class Orchestrator {
         skipAck: true,
       });
 
-      queuedFor.push(`${targetInfo?.name ?? agentType} in Panel ${panelIndex + 1}`);
+      const targetLabel = `${targetInfo?.name ?? agentType} in Panel ${panelIndex + 1}`;
+      if (admission.accepted) {
+        queuedFor.push(targetLabel);
+      } else {
+        rejectedFor.push(targetLabel);
+        firstRejection ??= admission.error;
+      }
     }
 
-    if (queuedFor.length > 0) {
-      const ack = `[Commander ACK] kind=broadcast queued=${queuedFor.length} targets=${queuedFor.join(', ')}`;
+    if (queuedFor.length > 0 || rejectedFor.length > 0) {
+      const ack = rejectedFor.length === 0
+        ? `[Commander ACK] kind=broadcast queued=${queuedFor.length} targets=${queuedFor.join(', ')}`
+        : `[Commander ACK] kind=broadcast status=${queuedFor.length > 0 ? 'partial' : 'failed'} `
+          + `queued=${queuedFor.length} rejected=${rejectedFor.length} `
+          + `targets=${queuedFor.join(', ') || 'none'} rejectedTargets=${rejectedFor.join(', ')} `
+          + `error="${firstRejection ?? 'Routing queue capacity exceeded'}"`;
       this.sendInfoToPanel(msg.sourcePanel, ack);
     }
   }
@@ -606,15 +616,16 @@ export class Orchestrator {
       }
     } else if (query === 'panels') {
       const info: string[] = [];
-      for (let i = 0; i < this.layout.panelCount; i++) {
-        const tp = this.layout.getTerminalPanel(i);
-        const agent = this.agentManager.getAgentType(i);
+      for (const panel of this.layout.allPanels) {
+        const panelId = panel.panelIndex;
+        const tp = this.layout.getTerminalPanel(panelId);
+        const agent = this.agentManager.getAgentType(panelId);
         if (tp && agent) {
-          info.push(`  Panel ${i + 1}: ${agent} (${tp.isRunning ? 'running' : 'stopped'})`);
+          info.push(`  Panel ${panelId + 1}: ${agent} (${tp.isRunning ? 'running' : 'stopped'})`);
         } else if (tp) {
-          info.push(`  Panel ${i + 1}: terminal (no agent)`);
+          info.push(`  Panel ${panelId + 1}: terminal (no agent)`);
         } else {
-          info.push(`  Panel ${i + 1}: file browser`);
+          info.push(`  Panel ${panelId + 1}: file browser`);
         }
       }
       response = `[Commander] Panel layout (${this.layout.panelCount} panels):\n${info.join('\n')}`;
@@ -699,45 +710,58 @@ export class Orchestrator {
    * Inject Commander protocol instructions into a running agent.
    * Call this after an agent has initialised.
    */
-  async injectProtocol(tp: TerminalPanel): Promise<void> {
-    if (!tp.isRunning) return;
+  async injectProtocol(tp: TerminalPanel): Promise<boolean> {
+    if (!tp.isRunning) return false;
 
-    const myAgent = this.agentManager.getAgentType(tp.panelIndex);
-    if (!myAgent) return;
+    const panelIndex = tp.panelIndex;
+    const myAgent = this.agentManager.getAgentType(panelIndex);
+    if (!myAgent) return false;
+
+    const targetGeneration = this.captureManagedTaskTarget(panelIndex, tp, myAgent);
+    if (!targetGeneration) return false;
+    const targetIsCurrent = () => this.isManagedTaskTargetCurrent(targetGeneration);
 
     const myInfo = this.agentManager.getRunningAgents().find(
-      (a) => a.panelIndex === tp.panelIndex,
+      (a) => a.panelIndex === panelIndex,
     );
 
     const others = this.agentManager.getRunningAgents()
-      .filter((a) => a.panelIndex !== tp.panelIndex)
+      .filter((a) => a.panelIndex !== panelIndex)
       .map((a) => ({ name: a.name, type: a.type, panel: a.panelIndex }));
 
     const instructions = buildProtocolInstructions(
-      tp.panelIndex,
+      panelIndex,
       myInfo?.name ?? myAgent,
       others,
     );
 
     try {
+      if (!targetIsCurrent()) throw new Error('Managed session changed before protocol injection');
       tp.markProtocolTextAsProcessed(instructions);
-      await this.sendTextToAgent(tp, instructions);
-      await this.submitInput(tp);
-      await this.delay(this.orchConfig.gridScanDelay);
-      tp.snapshotVisibleProtocolAsProcessed();
-      this.protocolInjected.add(tp.panelIndex);
-      const sessionId = this.agentManager.getAgentSessionId(tp.panelIndex);
-      if (sessionId) {
-        this.protocolSessionState.set(sessionId, {
-          injectedAt: Date.now(),
-          engaged: false,
-          lastUserInputAt: 0,
-        });
+      if (
+        await this.sendTextToAgent(tp, instructions, targetIsCurrent) === false
+        || !targetIsCurrent()
+      ) {
+        throw new Error('Terminal stopped accepting protocol input');
       }
-      this.injectionGrace.delete(tp.panelIndex);
-      logger.info(`Orchestrator: injected protocol instructions to panel ${tp.panelIndex}`);
+      if (await this.submitInput(tp, targetIsCurrent) === false || !targetIsCurrent()) {
+        throw new Error('Terminal stopped accepting protocol input');
+      }
+      await this.delay(this.orchConfig.gridScanDelay);
+      if (!targetIsCurrent()) throw new Error('Managed session changed during protocol injection');
+      tp.snapshotVisibleProtocolAsProcessed();
+      this.protocolInjected.add(panelIndex);
+      this.protocolSessionState.set(targetGeneration.sessionId, {
+        injectedAt: Date.now(),
+        engaged: false,
+        lastUserInputAt: 0,
+      });
+      this.injectionGrace.delete(panelIndex);
+      logger.info(`Orchestrator: injected protocol instructions to panel ${panelIndex}`);
+      return true;
     } catch (err) {
-      logger.error(`Orchestrator: protocol injection failed for panel ${tp.panelIndex}`, err);
+      logger.error(`Orchestrator: protocol injection failed for panel ${panelIndex}`, err);
+      return false;
     }
   }
 
@@ -745,16 +769,31 @@ export class Orchestrator {
 
   private enqueueTask(
     panelIndex: number,
-    task: Omit<QueuedTask, 'id' | 'started' | 'cancelled' | 'queuedAt'>,
-  ): QueuedTask {
-    const queueState = this.getOrCreateQueue(panelIndex);
+    task: Omit<
+      QueuedTask,
+      'id' | 'started' | 'cancelled' | 'queuedAt' | 'retained' | 'retainedBytes' | 'queuePanelIndex'
+    >,
+  ): EnqueueResult {
+    const retainedBytes = Buffer.byteLength(task.task, 'utf8');
+    const admissionError = this.getQueueAdmissionError(panelIndex, retainedBytes);
+    if (admissionError) {
+      this.rejectTask(panelIndex, task, admissionError);
+      return { accepted: false, error: admissionError };
+    }
+
     const queuedTask: QueuedTask = {
       ...task,
       id: this.nextTaskId++,
       started: false,
       cancelled: false,
       queuedAt: Date.now(),
+      retained: true,
+      retainedBytes,
+      queuePanelIndex: panelIndex,
     };
+    this.retainTask(queuedTask);
+
+    const queueState = this.getOrCreateQueue(panelIndex);
     queueState.tasks.push(queuedTask);
     logger.info(`Orchestrator: queued task for panel ${panelIndex} (queue depth: ${queueState.tasks.length})`);
 
@@ -762,7 +801,91 @@ export class Orchestrator {
       void this.processQueue(queueState);
     }
 
-    return queuedTask;
+    return { accepted: true, task: queuedTask };
+  }
+
+  private getQueueAdmissionError(panelIndex: number, taskBytes: number): string | null {
+    const panelTaskCount = this.retainedTaskCountByPanel.get(panelIndex) ?? 0;
+    if (panelTaskCount >= ROUTED_QUEUE_MAX_TASKS_PER_PANEL) {
+      return `Panel ${panelIndex + 1} routing queue is full (${ROUTED_QUEUE_MAX_TASKS_PER_PANEL} retained tasks)`;
+    }
+    if (this.retainedTaskCount >= ROUTED_QUEUE_MAX_TASKS_GLOBAL) {
+      return `Global routing queue is full (${ROUTED_QUEUE_MAX_TASKS_GLOBAL} retained tasks)`;
+    }
+
+    const panelTaskBytes = this.retainedTaskBytesByPanel.get(panelIndex) ?? 0;
+    if (panelTaskBytes + taskBytes > ROUTED_QUEUE_MAX_BYTES_PER_PANEL) {
+      return `Panel ${panelIndex + 1} routing queue byte limit exceeded (${ROUTED_QUEUE_MAX_BYTES_PER_PANEL} bytes)`;
+    }
+    if (this.retainedTaskBytes + taskBytes > ROUTED_QUEUE_MAX_BYTES_GLOBAL) {
+      return `Global routing queue byte limit exceeded (${ROUTED_QUEUE_MAX_BYTES_GLOBAL} bytes)`;
+    }
+    return null;
+  }
+
+  private rejectTask(
+    panelIndex: number,
+    task: Omit<
+      QueuedTask,
+      'id' | 'started' | 'cancelled' | 'queuedAt' | 'retained' | 'retainedBytes' | 'queuePanelIndex'
+    >,
+    error: string,
+  ): void {
+    if (task.messageId) this.ledger.markFailed(task.messageId, error);
+    if (task.claimedReplyRoute) this.restoreReplyWindowIfActive(task.claimedReplyRoute);
+
+    try {
+      task.onComplete?.({ success: false, error });
+    } catch (err) {
+      logger.error('Orchestrator: rejected task completion callback failed', err);
+    }
+
+    if (task.source && this.isSourceSessionStillActive(task.source) && !task.skipAck) {
+      const targetInfo = this.findRunningAgent(panelIndex);
+      this.sendAck(
+        task.source.panel,
+        targetInfo?.name ?? task.agentType,
+        panelIndex,
+        false,
+        task.messageId,
+        task.threadId,
+        error,
+      );
+    }
+    logger.warn(`Orchestrator: rejected task for panel ${panelIndex}: ${error}`);
+  }
+
+  private retainTask(task: QueuedTask): void {
+    this.retainedTaskCount += 1;
+    this.retainedTaskBytes += task.retainedBytes;
+    this.retainedTaskCountByPanel.set(
+      task.queuePanelIndex,
+      (this.retainedTaskCountByPanel.get(task.queuePanelIndex) ?? 0) + 1,
+    );
+    this.retainedTaskBytesByPanel.set(
+      task.queuePanelIndex,
+      (this.retainedTaskBytesByPanel.get(task.queuePanelIndex) ?? 0) + task.retainedBytes,
+    );
+  }
+
+  private releaseTask(task: QueuedTask): void {
+    if (!task.retained) return;
+    task.retained = false;
+    this.retainedTaskCount = Math.max(0, this.retainedTaskCount - 1);
+    this.retainedTaskBytes = Math.max(0, this.retainedTaskBytes - task.retainedBytes);
+
+    const panelTaskCount = Math.max(
+      0,
+      (this.retainedTaskCountByPanel.get(task.queuePanelIndex) ?? 0) - 1,
+    );
+    const panelTaskBytes = Math.max(
+      0,
+      (this.retainedTaskBytesByPanel.get(task.queuePanelIndex) ?? 0) - task.retainedBytes,
+    );
+    if (panelTaskCount === 0) this.retainedTaskCountByPanel.delete(task.queuePanelIndex);
+    else this.retainedTaskCountByPanel.set(task.queuePanelIndex, panelTaskCount);
+    if (panelTaskBytes === 0) this.retainedTaskBytesByPanel.delete(task.queuePanelIndex);
+    else this.retainedTaskBytesByPanel.set(task.queuePanelIndex, panelTaskBytes);
   }
 
   private async processQueue(queueState: PanelQueueState): Promise<void> {
@@ -777,7 +900,10 @@ export class Orchestrator {
         if (panelIndex === null || queueState.tasks.length === 0) break;
 
         const task = queueState.tasks.shift()!;
-        if (task.cancelled) continue;
+        if (task.cancelled) {
+          this.releaseTask(task);
+          continue;
+        }
 
         // Warn if task was stuck in queue for long
         const waitTime = Date.now() - task.queuedAt;
@@ -842,12 +968,10 @@ export class Orchestrator {
             }
           } else {
             this.ledger.markFailed(task.messageId, result.error ?? 'unknown error');
-            if (task.claimedReplyRoute) {
-              this.ledger.restoreReplyWindow(task.claimedReplyRoute);
-            }
+            if (task.claimedReplyRoute) this.restoreReplyWindowIfActive(task.claimedReplyRoute);
           }
         } else if (!result.success && task.claimedReplyRoute) {
-          this.ledger.restoreReplyWindow(task.claimedReplyRoute);
+          this.restoreReplyWindowIfActive(task.claimedReplyRoute);
         }
 
         if (task.source && this.isSourceSessionStillActive(task.source) && !task.skipAck) {
@@ -869,9 +993,11 @@ export class Orchestrator {
           }
         }
 
+        this.releaseTask(task);
         queueState.currentTask = null;
       }
     } finally {
+      if (queueState.currentTask) this.releaseTask(queueState.currentTask);
       queueState.currentTask = null;
       queueState.processing = false;
       const panelIndex = this.findQueuePanelIndex(queueState);
@@ -924,7 +1050,7 @@ export class Orchestrator {
           : { success: false, error: `Task is still in progress after ${this.orchConfig.ackTimeout}ms` });
       }, this.orchConfig.ackTimeout);
 
-      queuedTask = this.enqueueTask(panelIndex, {
+      const admission = this.enqueueTask(panelIndex, {
         agentType,
         ...(profileId ? { profileId } : {}),
         task,
@@ -935,6 +1061,7 @@ export class Orchestrator {
           resolve(result);
         },
       });
+      queuedTask = admission.accepted ? admission.task : null;
     });
   }
 
@@ -947,6 +1074,13 @@ export class Orchestrator {
     directType?: boolean,
     profileId?: string,
   ): Promise<{ success: boolean; error?: string }> {
+    if (!this.layout.hasPanel(panelIndex)) {
+      return {
+        success: false,
+        error: `Panel ${panelIndex + 1} is not available`,
+      };
+    }
+
     const existingTerminal = this.layout.getTerminalPanel(panelIndex);
     const existingAgent = this.agentManager.getAgentType(panelIndex);
     const existingProfile = typeof this.agentManager.getAgentProfileId === 'function'
@@ -966,21 +1100,13 @@ export class Orchestrator {
       return { success: false, error: launchError };
     }
 
-    // 1. Ensure we have enough panels
-    while (this.layout.panelCount <= panelIndex) {
-      const added = await this.layout.addPanel();
-      if (!added) {
-        return { success: false, error: `Cannot create panel ${panelIndex + 1} (max 4)` };
-      }
+    // 1. Convert to terminal if it's a file panel.
+    const tp = this.layout.convertToTerminal(panelIndex);
+    if (!this.isCurrentTarget(panelIndex, tp)) {
+      return this.targetUnavailable(panelIndex);
     }
 
-    // 2. Convert to terminal if it's a file panel
-    let tp = this.layout.getTerminalPanel(panelIndex);
-    if (!tp) {
-      tp = this.layout.convertToTerminal(panelIndex);
-    }
-
-    // 3. Launch agent if not running or different agent
+    // 2. Launch agent if not running or different agent
     const currentAgent = this.agentManager.getAgentType(panelIndex);
     const currentProfile = typeof this.agentManager.getAgentProfileId === 'function'
       ? this.agentManager.getAgentProfileId(panelIndex)
@@ -988,6 +1114,7 @@ export class Orchestrator {
     const needsLaunch = !tp.isRunning || currentAgent !== agentType || (
       profileId !== undefined && currentProfile !== profileId
     );
+    let targetGeneration: ManagedTaskTarget | null = null;
 
     if (needsLaunch) {
       if (tp.isRunning) {
@@ -996,6 +1123,12 @@ export class Orchestrator {
           await this.agentManager.killAgent(panelIndex);
         } else {
           await tp.killAgent(true);
+        }
+        if (!this.isCurrentTarget(panelIndex, tp)) {
+          return this.targetUnavailable(panelIndex);
+        }
+        if (this.agentManager.getAgentSessionId(panelIndex) !== null) {
+          return this.managedTargetUnavailable(panelIndex);
         }
       }
 
@@ -1006,38 +1139,71 @@ export class Orchestrator {
       if (!ok) {
         return { success: false, error: `Failed to launch ${agentType}` };
       }
+      if (!this.isCurrentTarget(panelIndex, tp)) {
+        return this.targetUnavailable(panelIndex);
+      }
+      targetGeneration = this.captureManagedTaskTarget(panelIndex, tp, agentType, profileId);
+      if (!targetGeneration) {
+        return this.managedTargetUnavailable(panelIndex);
+      }
 
       // Connect monitoring
       this.connectPanel(tp);
 
       logger.info(`Orchestrator: launched ${agentType} on panel ${panelIndex}, waiting for init…`);
       await this.delay(this.orchConfig.initDelay);
+      if (!this.isManagedTaskTargetCurrent(targetGeneration)) {
+        return this.managedTargetUnavailable(panelIndex);
+      }
 
       // Protocol injection is manual only (Ctrl+P). Do NOT auto-inject here —
       // it floods the agent with text while it's still initializing and causes
       // unwanted message queueing (e.g. Codex's "submitted after next tool call").
+    } else {
+      targetGeneration = this.captureManagedTaskTarget(panelIndex, tp, agentType, profileId);
+      if (!targetGeneration) {
+        return this.managedTargetUnavailable(panelIndex);
+      }
     }
 
-    // 4. Ensure panel is connected for inter-agent message detection
+    // 3. Ensure panel is connected for inter-agent message detection
+    if (!this.isManagedTaskTargetCurrent(targetGeneration)) {
+      return this.managedTargetUnavailable(panelIndex);
+    }
     this.connectPanel(tp);
 
-    // 5-6. Send the task text.
+    // 4-5. Send the task text.
     //    Claude Code: short single-line tasks can still be typed directly to
     //    avoid the "bypass permissions" prompt, but longer routed replies are
     //    more reliable via bracketed paste + delayed submit.
     //    Other agents / manual sends: bracketed paste preserves formatting.
-    const currentAgentType = this.agentManager.getAgentType(panelIndex);
+    const currentAgentType = targetGeneration.agentType;
+    const targetIsCurrent = () => this.isManagedTaskTargetCurrent(targetGeneration);
+    if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
     tp.reserveProtocolTextForEcho(task);
     if (currentAgentType === 'claude' && this.shouldDirectTypeToClaude(task, directType)) {
       const flat = task.replace(/\n/g, ' ');
-      await this.sendTextChunked(tp, flat);
+      const sent = await this.sendTextChunked(tp, flat, targetIsCurrent);
+      if (sent === false || !targetIsCurrent()) {
+        return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+      }
       await this.delay(CLAUDE_DIRECT_SUBMIT_DELAY_MS);
-      tp.sendInput('\r');
+      if (!targetIsCurrent() || tp.sendInput('\r') === false) {
+        return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+      }
+      if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
       tp.showCommanderActivity('Commander task received');
       logger.info(`Orchestrator: typed short task directly to Claude on panel ${panelIndex} (${task.length} chars)`);
     } else {
-      await this.sendTextToAgent(tp, task);
-      await this.submitInput(tp);
+      const sent = await this.sendTextToAgent(tp, task, targetIsCurrent);
+      if (sent === false || !targetIsCurrent()) {
+        return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+      }
+      const submitted = await this.submitInput(tp, targetIsCurrent);
+      if (submitted === false || !targetIsCurrent()) {
+        return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+      }
+      if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
       tp.showCommanderActivity('Commander task received');
       logger.info(
         `Orchestrator: sent task to ${agentType} on panel ${panelIndex} (${task.length} chars)` +
@@ -1045,7 +1211,10 @@ export class Orchestrator {
       );
     }
 
-    // 7. Focus the target panel
+    // 6. Focus the target panel
+    if (!targetIsCurrent()) {
+      return this.managedTargetUnavailable(panelIndex);
+    }
     this.layout.setActivePanel(panelIndex);
 
     return { success: true };
@@ -1062,16 +1231,21 @@ export class Orchestrator {
    * renders and is swallowed.  A 5-second delay ensures Claude has read the
    * paste, rendered the prompt, and is waiting for input before `\r` arrives.
    */
-  private async submitInput(tp: TerminalPanel): Promise<void> {
+  private async submitInput(
+    tp: TerminalPanel,
+    isStillValid: () => boolean = () => true,
+  ): Promise<boolean> {
     const agentType = this.agentManager.getAgentType(tp.panelIndex);
     if (agentType === 'claude') {
       // Delay so the paste is read + bypass prompt rendered before \r.
       // The prompt appears within 1-2s; 2.5s gives comfortable margin.
       await this.delay(this.orchConfig.claudeSubmitDelay);
-      tp.sendInput('\r');
+      if (!isStillValid()) return false;
+      return tp.sendInput('\r');
     } else {
       await this.delay(100);
-      tp.sendInput('\r');
+      if (!isStillValid()) return false;
+      return tp.sendInput('\r');
     }
   }
 
@@ -1084,10 +1258,14 @@ export class Orchestrator {
    * in Claude Code (Ink treats both \r and \n as Enter) and the text is
    * split into fragments.
    */
-  private async sendTextToAgent(tp: TerminalPanel, text: string): Promise<void> {
-    tp.sendInput('\x1b[200~');
-    await this.sendTextChunked(tp, text);
-    tp.sendInput('\x1b[201~');
+  private async sendTextToAgent(
+    tp: TerminalPanel,
+    text: string,
+    isStillValid: () => boolean = () => true,
+  ): Promise<boolean> {
+    if (!isStillValid() || !tp.sendInput('\x1b[200~')) return false;
+    if (!await this.sendTextChunked(tp, text, isStillValid)) return false;
+    return isStillValid() && tp.sendInput('\x1b[201~');
   }
 
   /**
@@ -1095,14 +1273,85 @@ export class Orchestrator {
    * 1024 bytes stays within the PTY line discipline buffer on all platforms
    * (macOS MAX_INPUT=1024 in non-canonical mode, Linux=4096).
    */
-  private async sendTextChunked(tp: TerminalPanel, text: string): Promise<void> {
+  private async sendTextChunked(
+    tp: TerminalPanel,
+    text: string,
+    isStillValid: () => boolean = () => true,
+  ): Promise<boolean> {
     const CHUNK_SIZE = 1024;
     for (let i = 0; i < text.length; i += CHUNK_SIZE) {
-      tp.sendInput(text.slice(i, i + CHUNK_SIZE));
+      if (!isStillValid() || !tp.sendInput(text.slice(i, i + CHUNK_SIZE))) {
+        return false;
+      }
       if (i + CHUNK_SIZE < text.length) {
         await this.delay(15);
+        if (!isStillValid()) return false;
       }
     }
+    return true;
+  }
+
+  private isCurrentTarget(panelIndex: number, tp: TerminalPanel): boolean {
+    return this.layout.hasPanel(panelIndex) && this.layout.getTerminalPanel(panelIndex) === tp;
+  }
+
+  private captureManagedTaskTarget(
+    panelIndex: number,
+    terminal: TerminalPanel,
+    expectedAgentType: AgentType,
+    expectedProfileId?: string,
+  ): ManagedTaskTarget | null {
+    if (!this.isCurrentTarget(panelIndex, terminal)) return null;
+    const sessionId = this.agentManager.getAgentSessionId(panelIndex);
+    const agentType = this.agentManager.getAgentType(panelIndex);
+    const profileId = typeof this.agentManager.getAgentProfileId === 'function'
+      ? this.agentManager.getAgentProfileId(panelIndex)
+      : agentType;
+    if (!sessionId || agentType !== expectedAgentType || !profileId) return null;
+    if (expectedProfileId !== undefined && profileId !== expectedProfileId) return null;
+    return { panelIndex, terminal, sessionId, agentType, profileId };
+  }
+
+  private isManagedTaskTargetCurrent(target: ManagedTaskTarget): boolean {
+    if (!this.isCurrentTarget(target.panelIndex, target.terminal)) return false;
+    const profileId = typeof this.agentManager.getAgentProfileId === 'function'
+      ? this.agentManager.getAgentProfileId(target.panelIndex)
+      : this.agentManager.getAgentType(target.panelIndex);
+    return this.agentManager.getAgentSessionId(target.panelIndex) === target.sessionId
+      && this.agentManager.getAgentType(target.panelIndex) === target.agentType
+      && profileId === target.profileId;
+  }
+
+  private targetUnavailable(panelIndex: number): { success: false; error: string } {
+    return {
+      success: false,
+      error: `Panel ${panelIndex + 1} is no longer available`,
+    };
+  }
+
+  private managedTargetUnavailable(panelIndex: number): { success: false; error: string } {
+    return this.layout.hasPanel(panelIndex)
+      ? {
+          success: false,
+          error: `Panel ${panelIndex + 1} managed session changed before delivery`,
+        }
+      : this.targetUnavailable(panelIndex);
+  }
+
+  private targetDeliveryFailure(
+    panelIndex: number,
+    tp: TerminalPanel,
+    targetGeneration?: ManagedTaskTarget,
+  ): { success: false; error: string } {
+    if (targetGeneration && !this.isManagedTaskTargetCurrent(targetGeneration)) {
+      return this.managedTargetUnavailable(panelIndex);
+    }
+    return this.isCurrentTarget(panelIndex, tp)
+      ? {
+          success: false,
+          error: `Panel ${panelIndex + 1} terminal is not accepting input`,
+        }
+      : this.targetUnavailable(panelIndex);
   }
 
   private shouldDirectTypeToClaude(task: string, directType?: boolean): boolean {
@@ -1150,12 +1399,11 @@ export class Orchestrator {
       if (taskIndex === -1) continue;
       const [task] = queueState.tasks.splice(taskIndex, 1);
       task.cancelled = true;
+      this.releaseTask(task);
       if (task.messageId) {
         this.ledger.markFailed(task.messageId, 'Task was cancelled before delivery', 'timed_out');
       }
-      if (task.claimedReplyRoute) {
-        this.ledger.restoreReplyWindow(task.claimedReplyRoute);
-      }
+      if (task.claimedReplyRoute) this.restoreReplyWindowIfActive(task.claimedReplyRoute);
       return true;
     }
     return false;
@@ -1164,14 +1412,13 @@ export class Orchestrator {
   private failPendingTasks(queueState: PanelQueueState, error: string): void {
     const pendingTasks = queueState.tasks.splice(0);
     for (const task of pendingTasks) {
+      this.releaseTask(task);
       if (task.cancelled) continue;
       task.cancelled = true;
       if (task.messageId) {
         this.ledger.markFailed(task.messageId, error, 'dropped');
       }
-      if (task.claimedReplyRoute) {
-        this.ledger.restoreReplyWindow(task.claimedReplyRoute);
-      }
+      if (task.claimedReplyRoute) this.restoreReplyWindowIfActive(task.claimedReplyRoute);
       try {
         task.onComplete?.({ success: false, error });
       } catch (err) {
@@ -1180,56 +1427,14 @@ export class Orchestrator {
     }
   }
 
-  private remapQueueSources(queueState: PanelQueueState, removedPanelIndex: number): void {
-    const remapTask = (task: QueuedTask, allowFailure: boolean): QueuedTask | null => {
-      if (!task.source) return task;
-      if (task.source.panel === removedPanelIndex) {
-        if (allowFailure) {
-          task.cancelled = true;
-          if (task.messageId) {
-            this.ledger.markFailed(task.messageId, 'Source panel was removed', 'dropped');
-          }
-          if (task.claimedReplyRoute) {
-            this.ledger.restoreReplyWindow(task.claimedReplyRoute);
-          }
-          try {
-            task.onComplete?.({ success: false, error: 'Source panel was removed' });
-          } catch (err) {
-            logger.error('Orchestrator: failed to settle task after source panel removal', err);
-          }
-          return null;
-        }
-        task.source = undefined;
-        return task;
-      }
-      if (task.source.panel > removedPanelIndex) {
-        task.source = {
-          ...task.source,
-          panel: task.source.panel - 1,
-        };
-      }
-      return task;
-    };
-
-    queueState.tasks = queueState.tasks
-      .map((task) => remapTask(task, true))
-      .filter((task): task is QueuedTask => task !== null);
-
-    if (queueState.currentTask) {
-      queueState.currentTask = remapTask(queueState.currentTask, false);
-    }
-  }
-
   private scrubSourceReferences(panelIndex: number): void {
     for (const queueState of this.panelQueues.values()) {
       queueState.tasks = queueState.tasks.filter((task) => {
         if (task.source?.panel !== panelIndex) return true;
         task.cancelled = true;
+        this.releaseTask(task);
         if (task.messageId) {
           this.ledger.markFailed(task.messageId, `Source panel ${panelIndex + 1} is no longer available`, 'dropped');
-        }
-        if (task.claimedReplyRoute) {
-          this.ledger.restoreReplyWindow(task.claimedReplyRoute);
         }
         try {
           task.onComplete?.({ success: false, error: `Source panel ${panelIndex + 1} is no longer available` });
@@ -1240,7 +1445,15 @@ export class Orchestrator {
       });
       if (queueState.currentTask?.source?.panel === panelIndex) {
         queueState.currentTask.source = undefined;
+        queueState.currentTask.claimedReplyRoute = undefined;
       }
     }
+  }
+
+  private restoreReplyWindowIfActive(route: PendingReplyRoute): void {
+    const waitingPanel = this.agentManager.findPanelBySessionId(route.waitingOnSessionId);
+    const returnPanel = this.agentManager.findPanelBySessionId(route.returnToSessionId);
+    if (typeof waitingPanel !== 'number' || typeof returnPanel !== 'number') return;
+    this.ledger.restoreReplyWindow(route);
   }
 }

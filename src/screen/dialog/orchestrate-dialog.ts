@@ -3,7 +3,14 @@ import type { AgentCommandConfig, Theme } from '../../config/types.js';
 import type { AgentProfile, AgentType } from '../../agents/types.js';
 import { discoverAgents } from '../../agents/agent-registry.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
-import { isValidPanelNumber, renderPanelBoxes } from './panel-picker.js';
+import {
+  adjacentPanelId,
+  initialPanelId,
+  normalizePanelIds,
+  PanelNumberInputBuffer,
+  renderPanelBoxes,
+  type PanelPickerSource,
+} from './panel-picker.js';
 import { showErrorToast } from '../toast.js';
 import { bindOverlayResize, screenGeometry } from './geometry.js';
 import { sanitizeUserText } from '../../utils/user-facing-errors.js';
@@ -34,12 +41,15 @@ export function getAvailableOrchestrationAgents(
 export function showOrchestrateDialog(
   screen: blessed.Widgets.Screen,
   theme: Theme,
-  panelCount: number,
+  panelSource: PanelPickerSource,
   activePanelIndex: number,
   agentOverrides?: Record<string, AgentCommandConfig>,
   agentProfiles?: readonly AgentProfile[],
 ): Promise<OrchestrateChoice | null> {
   if (dialogOpen) return Promise.resolve(null);
+  const panelIds = normalizePanelIds(panelSource);
+  const firstPanelId = initialPanelId(panelIds, activePanelIndex);
+  if (firstPanelId === null) return Promise.resolve(null);
   dialogOpen = true;
   enterDialog();
 
@@ -170,15 +180,25 @@ export function showOrchestrateDialog(
 
     // ── State ──
     let selectedAgent: (typeof agents)[0] | null = null;
-    let selectedPanel = activePanelIndex;
+    let selectedPanel = firstPanelId;
     let currentStep: 1 | 2 | 3 = 1;
+    let pickerWidth = Math.max(12, geometry.width - 10);
+    const numberInput = new PanelNumberInputBuffer(panelIds, () => {
+      if (currentStep !== 2) return;
+      renderPanelContent();
+      screen.render();
+    });
 
     let resolved = false;
-    const unbindResize = bindOverlayResize(screen, dialog, 70, 22);
+    const unbindResize = bindOverlayResize(screen, dialog, 70, 22, (nextGeometry) => {
+      pickerWidth = Math.max(12, nextGeometry.width - 10);
+      if (currentStep === 2) renderPanelContent();
+    });
     const cleanup = () => {
       if (resolved) return;
       resolved = true;
       dialogOpen = false;
+      numberInput.dispose();
       leaveDialog();
       unbindResize();
       dialog.destroy();
@@ -208,11 +228,14 @@ export function showOrchestrateDialog(
     // ── STEP 2: Panel selection ──
     function renderPanelContent(): void {
       const header = '  Select target panel:\n\n';
-      panelBox.setContent(header + renderPanelBoxes(selectedPanel, panelCount, panelCount));
+      panelBox.setContent(
+        header + renderPanelBoxes(selectedPanel, panelIds, 4, pickerWidth, numberInput.digits),
+      );
     }
 
     function showStep2() {
       currentStep = 2;
+      numberInput.reset();
       agentList.hide();
       stepBox.setContent(
         `{bold}Step 2/3:{/bold} Select target panel for {cyan-fg}` +
@@ -221,27 +244,36 @@ export function showOrchestrateDialog(
 
       renderPanelContent();
       panelBox.show();
-      footer.setContent(` 1-${panelCount}=Panel  Enter=Confirm  Esc=Back `);
+      footer.setContent(' Left/Right=Panel  0-9=Type P#  Enter=Confirm  Esc=Back ');
       panelBox.focus();
       screen.render();
     }
 
     panelBox.on('keypress', (ch: string | undefined, _key: any) => {
-      if (currentStep !== 2 || !ch) return;
-      const n = parseInt(ch, 10);
-      if (isValidPanelNumber(n, panelCount)) {
-        selectedPanel = n - 1;
-        renderPanelContent();
-        screen.render();
-      }
+      if (currentStep !== 2 || !ch || !/^\d$/u.test(ch)) return;
+      const panelId = numberInput.acceptDigit(ch);
+      if (panelId !== null) selectedPanel = panelId;
+      renderPanelContent();
+      screen.render();
     });
 
+    const movePanelSelection = (direction: -1 | 1) => {
+      if (currentStep !== 2) return;
+      numberInput.reset();
+      selectedPanel = adjacentPanelId(panelIds, selectedPanel, direction) ?? selectedPanel;
+      renderPanelContent();
+      screen.render();
+    };
+    panelBox.key(['left'], () => movePanelSelection(-1));
+    panelBox.key(['right'], () => movePanelSelection(1));
+
     panelBox.key(['enter'], () => {
-      if (currentStep === 2) showStep3();
+      if (currentStep === 2 && numberInput.canConfirm) showStep3();
     });
 
     panelBox.key(['escape'], () => {
       if (currentStep !== 2) return;
+      numberInput.reset();
       currentStep = 1;
       panelBox.hide();
       agentList.show();

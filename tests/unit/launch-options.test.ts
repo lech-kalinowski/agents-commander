@@ -33,7 +33,8 @@ describe('resolveLaunchOptions', () => {
     explicit: ExplicitLaunchOptions;
     expected: {
       theme: string;
-      panels: 2 | 3 | 4;
+      panels: number;
+      density: 'auto' | 2 | 3 | 4;
       showHidden: boolean;
       skipWelcome: boolean;
       conference: boolean;
@@ -46,6 +47,7 @@ describe('resolveLaunchOptions', () => {
       expected: {
         theme: 'saved-theme',
         panels: 4,
+        density: 'auto',
         showHidden: true,
         skipWelcome: false,
         conference: false,
@@ -58,6 +60,7 @@ describe('resolveLaunchOptions', () => {
       expected: {
         theme: 'midnight',
         panels: 2,
+        density: 2,
         showHidden: false,
         skipWelcome: true,
         conference: true,
@@ -69,13 +72,15 @@ describe('resolveLaunchOptions', () => {
       explicit: {
         conference: true,
         theme: 'presenter-theme',
-        panels: 3,
+        panels: 75,
+        density: 3,
         showHidden: true,
         skipWelcome: false,
       },
       expected: {
         theme: 'presenter-theme',
-        panels: 3,
+        panels: 75,
+        density: 3,
         showHidden: true,
         skipWelcome: false,
         conference: true,
@@ -88,6 +93,7 @@ describe('resolveLaunchOptions', () => {
       expected: {
         theme: 'midnight',
         panels: 2,
+        density: 2,
         showHidden: false,
         skipWelcome: true,
         conference: true,
@@ -100,13 +106,15 @@ describe('resolveLaunchOptions', () => {
         demo: true,
         conference: false,
         theme: 'classic-blue',
-        panels: 4,
+        panels: 100,
+        density: 4,
         showHidden: true,
         skipWelcome: false,
       },
       expected: {
         theme: 'classic-blue',
-        panels: 4,
+        panels: 100,
+        density: 4,
         showHidden: true,
         skipWelcome: false,
         conference: true,
@@ -124,6 +132,7 @@ describe('resolveLaunchOptions', () => {
     expect(result.config).toMatchObject({
       theme: expected.theme,
       panelCount: expected.panels,
+      panelDensity: expected.density,
       showHidden: expected.showHidden,
     });
   });
@@ -160,10 +169,33 @@ describe('resolveLaunchOptions', () => {
     );
   });
 
+  it('migrates density for pre-density runtime configuration objects', () => {
+    const legacy = savedConfig() as Record<string, unknown>;
+    legacy.panelCount = 3;
+    delete legacy.panelDensity;
+
+    const result = resolveLaunchOptions(legacy as never);
+
+    expect(result.config.panelCount).toBe(3);
+    expect(result.config.panelDensity).toBe(3);
+    expect(legacy).not.toHaveProperty('panelDensity');
+  });
+
+  it('ignores out-of-range runtime panel values without mutating saved settings', () => {
+    const result = resolveLaunchOptions(savedConfig(), {
+      panels: 101,
+      density: 5 as never,
+    });
+
+    expect(result.config.panelCount).toBe(4);
+    expect(result.config.panelDensity).toBe('auto');
+  });
+
   it('exposes an immutable conference preset with presentation-safe defaults', () => {
     expect(CONFERENCE_PRESET).toEqual({
       theme: 'midnight',
       panels: 2,
+      density: 2,
       showHidden: false,
       skipWelcome: true,
     });

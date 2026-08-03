@@ -55,8 +55,13 @@ import { logger } from './utils/logger.js';
 import { isDialogActive } from './utils/dialog-state.js';
 import { showToast, showErrorToast } from './screen/toast.js';
 import { showWelcomeDialog } from './screen/dialog/welcome-dialog.js';
+import {
+  showPanelNavigatorDialog,
+  type PanelSummary,
+} from './screen/dialog/panel-navigator-dialog.js';
 import { buildVimLaunchSpec, resolveCtrlGAction } from './utils/shortcut-routing.js';
 import { formatUserError, sanitizeUserText } from './utils/user-facing-errors.js';
+import type { PanelDensity } from './panel-limits.js';
 
 const RECOMMENDED_CONFERENCE_COLUMNS = 100;
 const RECOMMENDED_CONFERENCE_ROWS = 24;
@@ -112,13 +117,7 @@ export class App {
   private readonly handleSigterm = (): void => { void this.shutdown(143); };
 
   constructor(workingDir?: string, options: AppLaunchOptions = {}) {
-    const panels = options.panels !== undefined && [2, 3, 4].includes(options.panels)
-      ? options.panels
-      : undefined;
-    this.launch = resolveLaunchOptions(loadConfig(), {
-      ...options,
-      panels,
-    });
+    this.launch = resolveLaunchOptions(loadConfig(), options);
     this.config = this.launch.config;
     this.theme = getTheme(this.config.theme);
     this.workingDir = workingDir || process.cwd();
@@ -185,7 +184,11 @@ export class App {
     this.statusBar = createStatusBar(this.screen, this.theme);
 
     this.layout = new LayoutManager(this.screen, this.theme, this.config);
-    await this.layout.initialize(this.workingDir, this.config.panelCount);
+    await this.layout.initialize(
+      this.workingDir,
+      this.config.panelCount,
+      this.config.panelDensity,
+    );
     this.layout.onOpenFile = (entry) => {
       void this.openPreview(entry).catch((err) => {
         logger.error(`Failed to preview file: ${entry.fullPath}`, err);
@@ -320,8 +323,8 @@ export class App {
     await this.waitForDemoRollback();
     if (this.disposalStarted) return;
 
-    const demoRolesAreRunning = DEMO_AGENT_ROLE_ORDER.some(
-      (_, panelIndex) => this.hasLiveTerminalSession(panelIndex),
+    const demoRolesAreRunning = [...this.demoPanelRoles.keys()].some(
+      (panelId) => this.hasLiveTerminalSession(panelId),
     );
     if (this.launch.demo && !demoRolesAreRunning) {
       this.demoStarted = false;
@@ -341,35 +344,45 @@ export class App {
     const terminals: TerminalPanel[] = [];
 
     try {
+      while (this.layout.panelCount < DEMO_AGENT_ROLE_ORDER.length) {
+        const added = await this.layout.addPanel();
+        if (!added) throw new Error('Unable to create the two demo panels');
+      }
+      const demoPanelIds = this.layout.workspacePanelIds.slice(
+        0,
+        DEMO_AGENT_ROLE_ORDER.length,
+      );
+
       for (let index = 0; index < DEMO_AGENT_ROLE_ORDER.length; index++) {
         this.assertLaunchAllowed('launch an offline demo role');
         const role = DEMO_AGENT_ROLE_ORDER[index];
-        let terminal = this.layout.getTerminalPanel(index);
-        if (this.hasLiveTerminalSession(index)) {
-          await this.stopTerminalSession(index);
+        const panelId = demoPanelIds[index];
+        if (this.hasLiveTerminalSession(panelId)) {
+          await this.stopTerminalSession(panelId);
           this.assertLaunchAllowed('launch an offline demo role');
         }
-        if (!terminal) {
-          terminal = this.layout.convertToTerminal(index);
+        if (!this.layout.hasPanel(panelId)) {
+          throw new Error(`Demo panel ${panelId + 1} is no longer available`);
         }
+        const terminal = this.layout.convertToTerminal(panelId);
 
         // Register the role before launch so even an immediately failing child
         // is attributed to the demo rather than treated as a generic session.
-        this.demoPanelRoles.set(index, role);
+        this.demoPanelRoles.set(panelId, role);
         const launched = this.agentManager.launchInternalAgent(
           createDemoAgentLaunchSpec(role),
           terminal,
         );
         if (!launched) {
-          this.demoPanelRoles.delete(index);
+          this.demoPanelRoles.delete(panelId);
           throw new Error(`Unable to launch the ${role} role`);
         }
-        launchedPanels.push(index);
+        launchedPanels.push(panelId);
         terminals.push(terminal);
         this.orchestrator.connectPanel(terminal);
       }
 
-      this.layout.setActivePanel(0);
+      this.layout.setActivePanel(demoPanelIds[0]);
       this.updateStatus();
       this.screen.render();
 
@@ -481,62 +494,60 @@ export class App {
     }
   }
 
-  private async actionChangeLayout(mode: 2 | 3 | 4): Promise<void> {
+  private async actionChangeLayout(mode: PanelDensity): Promise<void> {
     if (mode === this.layout.mode) return;
 
     await this.runDestructiveTransition(async () => {
-      const liveSessions = this.getLiveTerminalSessions();
-      if (liveSessions.length > 0) {
-        const confirmed = await showConfirmDialog(
-          this.screen,
-          this.theme,
-          'Change Layout',
-          `Changing to ${mode} panels closes ${liveSessions.length} live terminal session(s). Continue?`,
-        );
-        if (!confirmed) return;
-      }
-
       try {
-        await this.stopAllTerminalSessions();
-        this.orchestrator.resetState();
         await this.layout.setMode(mode);
         this.updateStatus();
       } catch (err) {
-        logger.error(`Failed to change layout to ${mode} panels`, err);
-        showErrorToast(this.screen, 'Layout change failed — current view was preserved where possible');
+        logger.error(`Failed to change panel density to ${mode}`, err);
+        showErrorToast(this.screen, 'Panel density change failed — current view was preserved');
       }
     });
   }
 
+  private async actionCyclePanelDensity(): Promise<void> {
+    const densities: readonly PanelDensity[] = ['auto', 2, 3, 4];
+    const currentIndex = densities.indexOf(this.layout.mode);
+    const nextDensity = densities[(currentIndex + 1 + densities.length) % densities.length];
+    await this.actionChangeLayout(nextDensity);
+  }
+
   private async actionRemovePanel(): Promise<void> {
-    if (this.layout.panelCount <= 2) return;
+    if (this.layout.panelCount <= 1) return;
 
     await this.runDestructiveTransition(async () => {
-      const idx = this.layout.allPanels.indexOf(this.layout.activePanel);
-      const tp = this.layout.getTerminalPanel(idx);
-      if (this.hasLiveTerminalSession(idx)) {
+      const panelId = this.layout.activePanel.panelIndex;
+      const targetPanel = this.layout.getPanel(panelId);
+      if (!targetPanel) return;
+      const tp = this.layout.getTerminalPanel(panelId);
+      if (this.hasLiveTerminalSession(panelId)) {
         const label = tp?.sessionName ? ` “${sanitizeUserText(tp.sessionName, 60)}”` : '';
         const confirmed = await showConfirmDialog(
           this.screen,
           this.theme,
           'Remove Panel',
-          `Panel ${idx + 1}${label} has a live session. Close it and remove the panel?`,
+          `Panel ${panelId + 1}${label} has a live session. Close it and remove the panel?`,
         );
         if (!confirmed) return;
+        if (this.layout.getPanel(panelId) !== targetPanel) return;
       }
 
       try {
-        await this.stopTerminalSession(idx);
+        await this.stopTerminalSession(panelId);
+        if (this.layout.getPanel(panelId) !== targetPanel) return;
 
-        const removed = this.layout.removePanel();
+        const removed = this.layout.removePanel(panelId);
         if (removed) {
-          this.agentManager.reindexAfterPanelRemoval(idx);
-          this.orchestrator.reindexAfterPanelRemoval(idx);
+          this.agentManager.handlePanelRemoval(panelId);
+          this.orchestrator.handlePanelRemoval(panelId);
           this.updateStatus();
         }
       } catch (err) {
-        logger.error(`Failed to remove panel ${idx + 1}`, err);
-        showErrorToast(this.screen, `Unable to remove Panel ${idx + 1}`);
+        logger.error(`Failed to remove panel ${panelId + 1}`, err);
+        showErrorToast(this.screen, `Unable to remove Panel ${panelId + 1}`);
       }
     });
   }
@@ -691,10 +702,7 @@ export class App {
       return false;
     }
 
-    const panelIndex = this.layout.allPanels.indexOf(fp);
-    if (panelIndex === -1) {
-      return false;
-    }
+    const panelIndex = fp.panelIndex;
 
     const panelPath = fp.currentPath;
     const spec = buildVimLaunchSpec(entry.fullPath);
@@ -777,7 +785,7 @@ export class App {
 
     if (entries.length === 1) {
       const newName = await showInputDialog(
-        this.screen, this.theme, 'Rename/Move', 'New name:', entries[0].name,
+        this.screen, this.theme, 'Rename', 'New name in this panel:', entries[0].name,
       );
       if (newName) {
         try {
@@ -787,12 +795,14 @@ export class App {
           showErrorToast(this.screen, formatUserError('Move', err));
           return;
         }
-        const target = this.layout.inactiveFilePanel;
-        const destDir = target ? target.currentPath : fp.currentPath;
         try {
-          await moveFile(entries[0].fullPath, path.join(destDir, newName));
+          // A single-item rename stays in the active panel. With paged
+          // workspaces an arbitrary inactive panel may be hidden and point at
+          // an unrelated directory; multi-item moves still show their target
+          // path in an explicit confirmation dialog below.
+          await moveFile(entries[0].fullPath, path.join(fp.currentPath, newName));
           await this.layout.refreshAll();
-          showToast(this.screen, `Moved “${sanitizeUserText(entries[0].name, 80)}”`);
+          showToast(this.screen, `Renamed “${sanitizeUserText(entries[0].name, 80)}”`);
         } catch (err) {
           logger.error('Move failed', err);
           showErrorToast(this.screen, formatUserError('Move', err));
@@ -875,8 +885,8 @@ export class App {
     const choice = await showAgentDialog(
       screen,
       this.theme,
-      this.layout.panelCount,
-      this.layout.allPanels.indexOf(this.layout.activePanel),
+      this.layout.workspacePanelIds,
+      this.layout.activePanel.panelIndex,
       this.config.agents,
       this.config.agentProfiles,
     );
@@ -885,16 +895,26 @@ export class App {
     if (choice) {
       const { agentType, panelIndex } = choice;
       const profileId = choice.profileId ?? agentType;
-      let tp = this.layout.getTerminalPanel(panelIndex);
+      const targetPanel = this.layout.getPanel(panelIndex);
+      if (!targetPanel) {
+        showErrorToast(screen, `Panel ${panelIndex + 1} is no longer available`);
+        return;
+      }
       if (this.hasLiveTerminalSession(panelIndex)) {
         const confirmed = await this.confirmSessionReplacement(panelIndex, `launch ${agentType}`);
         if (!confirmed) return;
+        if (this.layout.getPanel(panelIndex) !== targetPanel) return;
         await this.stopTerminalSession(panelIndex);
-        if (this.disposalStarted) return;
+        if (this.disposalStarted || this.layout.getPanel(panelIndex) !== targetPanel) return;
+        if (this.hasLiveTerminalSession(panelIndex)) {
+          showErrorToast(
+            screen,
+            `Panel ${panelIndex + 1} started another session; launch was cancelled`,
+          );
+          return;
+        }
       }
-      if (!tp) {
-        tp = this.layout.convertToTerminal(panelIndex);
-      }
+      const tp = this.layout.convertToTerminal(panelIndex);
       const ok = this.agentManager.launchProfile(profileId, tp);
       if (ok) {
         this.orchestrator.connectPanel(tp);
@@ -910,14 +930,18 @@ export class App {
     const choice = await showTemplateDialog(
       screen,
       this.theme,
-      this.layout.panelCount,
-      this.layout.allPanels.indexOf(this.layout.activePanel),
+      this.layout.workspacePanelIds,
+      this.layout.activePanel.panelIndex,
     );
 
     if (this.disposalStarted) return;
     if (!choice) return;
 
     const { content, panelIndex, templateName } = choice;
+    if (!this.layout.hasPanel(panelIndex)) {
+      showErrorToast(screen, `Panel ${panelIndex + 1} is no longer available`);
+      return;
+    }
 
     // Check if a managed agent is running on the target panel
     const managedAgent = this.getManagedSession(panelIndex)?.type ?? null;
@@ -930,7 +954,7 @@ export class App {
         `send template “${sanitizeUserText(templateName, 60)}”`,
       );
       if (!confirmed) return;
-      if (this.disposalStarted) return;
+      if (this.disposalStarted || !this.layout.hasPanel(panelIndex)) return;
       const result = await this.orchestrator.sendTask(managedAgent, panelIndex, content);
       if (this.disposalStarted) return;
       if (!result.success) {
@@ -944,7 +968,7 @@ export class App {
       const agentChoice = await showAgentDialog(
         screen,
         this.theme,
-        this.layout.panelCount,
+        this.layout.workspacePanelIds,
         panelIndex,
         this.config.agents,
         this.config.agentProfiles,
@@ -952,6 +976,10 @@ export class App {
       if (this.disposalStarted) return;
       if (agentChoice) {
         const targetPanel = agentChoice.panelIndex;
+        if (!this.layout.hasPanel(targetPanel)) {
+          showErrorToast(screen, `Panel ${targetPanel + 1} is no longer available`);
+          return;
+        }
         const confirmed = await this.confirmTaskTarget(
           agentChoice.agentType,
           targetPanel,
@@ -959,7 +987,7 @@ export class App {
           agentChoice.profileId,
         );
         if (!confirmed) return;
-        if (this.disposalStarted) return;
+        if (this.disposalStarted || !this.layout.hasPanel(targetPanel)) return;
         const result = await this.orchestrator.sendTask(
           agentChoice.agentType,
           targetPanel,
@@ -984,14 +1012,18 @@ export class App {
     const choice = await showOrchestrateDialog(
       this.screen,
       this.theme,
-      this.layout.panelCount,
-      this.layout.allPanels.indexOf(this.layout.activePanel),
+      this.layout.workspacePanelIds,
+      this.layout.activePanel.panelIndex,
       this.config.agents,
       this.config.agentProfiles,
     );
 
     if (this.disposalStarted) return;
     if (!choice) return;
+    if (!this.layout.hasPanel(choice.panelIndex)) {
+      showErrorToast(this.screen, `Panel ${choice.panelIndex + 1} is no longer available`);
+      return;
+    }
 
     const confirmed = await this.confirmTaskTarget(
       choice.agentType,
@@ -1000,7 +1032,7 @@ export class App {
       choice.profileId,
     );
     if (!confirmed) return;
-    if (this.disposalStarted) return;
+    if (this.disposalStarted || !this.layout.hasPanel(choice.panelIndex)) return;
 
     const result = await this.orchestrator.sendTask(
       choice.agentType,
@@ -1016,6 +1048,53 @@ export class App {
         `Task delivery failed: ${result.error ?? 'unknown error'}`,
       );
     }
+    this.updateStatus();
+    this.screen.render();
+  }
+
+  private panelSummaries(): PanelSummary[] {
+    const runningByPanel = new Map(
+      this.agentManager.getRunningAgents().map((agent) => [agent.panelIndex, agent]),
+    );
+
+    return this.layout.allPanels.map((panel) => {
+      const running = runningByPanel.get(panel.panelIndex);
+      if (panel instanceof FilePanel) {
+        return {
+          panelId: panel.panelIndex,
+          panelNumber: panel.panelIndex + 1,
+          title: path.basename(panel.currentPath) || panel.currentPath,
+          kind: 'files',
+          status: panel.isVisible ? 'visible' : 'hidden',
+          cwd: panel.currentPath,
+        };
+      }
+      return {
+        panelId: panel.panelIndex,
+        panelNumber: panel.panelIndex + 1,
+        title: running?.profileLabel ?? panel.sessionName ?? 'Terminal',
+        kind: 'terminal',
+        status: running?.status ?? panel.status,
+        cwd: panel.workingDir,
+        ...(running ? { agent: running.name } : {}),
+        ...(running?.model ? { model: running.model } : {}),
+      };
+    });
+  }
+
+  private async actionNavigatePanel(): Promise<void> {
+    const panelId = await showPanelNavigatorDialog(
+      this.screen,
+      this.theme,
+      this.panelSummaries(),
+      this.layout.activePanelId ?? undefined,
+    );
+    if (this.disposalStarted || panelId === null) return;
+    if (!this.layout.hasPanel(panelId)) {
+      showErrorToast(this.screen, `Panel ${panelId + 1} is no longer available`);
+      return;
+    }
+    this.layout.setActivePanel(panelId);
     this.updateStatus();
     this.screen.render();
   }
@@ -1041,7 +1120,12 @@ export class App {
     // rejections from crashing the process.
     const guard = (action: () => void | Promise<void>) => {
       return () => {
-        if (this.disposalStarted || isDialogActive() || this.fullScreenOverlayActive) return;
+        if (
+          this.disposalStarted
+          || this.destructiveTransitionInProgress
+          || isDialogActive()
+          || this.fullScreenOverlayActive
+        ) return;
         try {
           const result = action();
           if (result && typeof (result as Promise<void>).catch === 'function') {
@@ -1061,7 +1145,12 @@ export class App {
     // User can Tab to a file panel to access these shortcuts.
     const termGuard = (action: () => void | Promise<void>) => {
       return () => {
-        if (this.disposalStarted || isDialogActive() || this.fullScreenOverlayActive) return;
+        if (
+          this.disposalStarted
+          || this.destructiveTransitionInProgress
+          || isDialogActive()
+          || this.fullScreenOverlayActive
+        ) return;
         if (this.layout.activeTerminalPanel?.isRunning) return;
         try {
           const result = action();
@@ -1139,6 +1228,7 @@ export class App {
     }));
 
     // F12 - live routed-message activity (works from terminal panels).
+    screen.key(['f11'], guard(() => this.actionNavigatePanel()));
     screen.key(['f12'], guard(() => this.actionActivity()));
 
     // Shift+F12 - protocol guide (F12 itself is reserved for Activity).
@@ -1167,7 +1257,11 @@ export class App {
         showToast(screen, `Injecting protocol into ${agentInfo?.name ?? 'agent'}…`, 2000);
         screen.render();
         this.orchestrator.connectPanel(tp);
-        await this.orchestrator.injectProtocol(tp);
+        const injected = await this.orchestrator.injectProtocol(tp);
+        if (!injected) {
+          showErrorToast(screen, 'Protocol injection stopped because the agent session changed');
+          return;
+        }
         const agents = this.agentManager.getRunningAgents();
         const info = agents.find((a) => a.panelIndex === tp.panelIndex);
         showToast(screen, `Protocol injected into ${info?.name ?? 'agent'} [Panel ${tp.panelIndex + 1}]`);
@@ -1181,8 +1275,10 @@ export class App {
 
     // Ctrl+T - Convert active panel to terminal (or back to file)
     screen.key(['C-t'], guard(() => this.runDestructiveTransition(async () => {
-      const idx = this.layout.allPanels.indexOf(this.layout.activePanel);
+      const idx = this.layout.activePanel.panelIndex;
       if (this.layout.isTerminalPanel(idx)) {
+        const targetPanel = this.layout.getPanel(idx);
+        if (!targetPanel) return;
         const tp = this.layout.getTerminalPanel(idx);
         const hasManagedAgent = this.agentManager.hasAgent(idx);
         if (tp?.isRunning || hasManagedAgent) {
@@ -1191,7 +1287,9 @@ export class App {
             'A session is running. Kill it and switch back to a file panel?',
           );
           if (!confirmed) return;
+          if (this.layout.getPanel(idx) !== targetPanel) return;
           await this.stopTerminalSession(idx);
+          if (this.layout.getPanel(idx) !== targetPanel) return;
         }
         this.orchestrator.disconnectPanel(idx);
         await this.layout.convertToFile(idx);
@@ -1218,7 +1316,10 @@ export class App {
       showLogDialog(screen, this.theme);
     }));
 
-    // Ctrl+2/3/4 - Change layout
+    // Shift+F4 is a portable density cycle. Ctrl+number aliases are retained
+    // for terminals that can emit them distinctly.
+    screen.key(['S-f4'], guard(() => this.actionCyclePanelDensity()));
+    screen.key(['C-0'], guard(() => this.actionChangeLayout('auto')));
     screen.key(['C-2'], guard(() => this.actionChangeLayout(2)));
     screen.key(['C-3'], guard(() => this.actionChangeLayout(3)));
     screen.key(['C-4'], guard(() => this.actionChangeLayout(4)));
@@ -1245,11 +1346,19 @@ export class App {
   private updateStatus(): void {
     const panel = this.layout.activePanel;
     const launchStatus = this.conferenceStatus();
+    const workspaceStatus = {
+      panelNumber: panel.panelIndex + 1,
+      panelCount: this.layout.panelCount,
+      pageNumber: this.layout.viewport.pageNumber,
+      pageCount: this.layout.viewport.pageCount,
+      density: this.layout.density,
+    };
 
     if (panel instanceof FilePanel) {
       const entry = panel.currentEntry;
       updateStatusBar(this.statusBar, {
         ...launchStatus,
+        ...workspaceStatus,
         fileName: entry?.name ?? '..',
         fileSize: entry?.size,
         fileDate: entry ? formatDate(entry.modified) : undefined,
@@ -1261,11 +1370,12 @@ export class App {
       const info = agents.find((a) => a.panelIndex === panel.panelIndex);
       updateStatusBar(this.statusBar, {
         ...launchStatus,
+        ...workspaceStatus,
         fileName: info ? `${info.name} [${info.status}]` : panel.sessionName ? `${panel.sessionName} [${panel.status}]` : 'Terminal',
         dirPath: this.workingDir,
       });
     } else {
-      updateStatusBar(this.statusBar, launchStatus);
+      updateStatusBar(this.statusBar, { ...launchStatus, ...workspaceStatus });
     }
 
     this.screen.render();

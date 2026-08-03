@@ -104,7 +104,22 @@ Demo Mode creates a temporary seeded workspace, applies the Conference Mode defa
 
 ### Multi-Agent Terminal
 
-Run up to **4 AI agents simultaneously** in split panels. Each agent gets its own pseudo-terminal with ANSI/xterm-256color rendering for common interactive CLI output. Type directly into any agent -- keystrokes are forwarded in real-time.
+Keep up to **100 active panels** in one workspace. A panel can be a file browser or a PTY-backed agent terminal with ANSI/xterm-256color rendering for common interactive CLI output. Type directly into any agent -- keystrokes are forwarded in real-time.
+
+The workspace size and the visible layout are separate:
+
+- `--panels <1-100>` chooses how many active panels exist when Commander starts.
+- `--density auto|2|3|4` chooses how many panels can be visible on one page. `auto` fits as many readable panels as the window allows; `2`, `3`, and `4` set a manual cap.
+- `Shift+F4` reliably cycles `auto` / `2` / `3` / `4` density without creating, removing, or restarting panels. `Ctrl+0`, `Ctrl+2`, `Ctrl+3`, and `Ctrl+4` remain direct aliases on terminals that emit those combinations distinctly.
+- `Tab` moves through every active panel and brings its page into view. Terminal sessions on hidden pages keep running.
+
+For example, this creates a 12-panel workspace while showing no more than four panels at once:
+
+```bash
+agents-commander --panels 12 --density 4 .
+```
+
+Panel numbers are stable for the lifetime of the workspace. Removing Panel 2 does not renumber Panel 3, so gaps are normal and protocol routes keep pointing at the same panel. Newly added panels receive new numbers; `Ctrl+E` is the explicit reset to fresh Panels 1 and 2.
 
 Supported adapters:
 
@@ -116,9 +131,9 @@ Supported adapters:
 
 The selector also catalogues five future presets that are not launchable yet: Aider, Cline, Goose, Kiro, and Amp.
 
-### Dual-Panel File Manager
+### Integrated File Manager
 
-A dual-panel file manager built into the same interface. Browse, copy, move, rename, and delete files without leaving the tool. Toggle between file panels and agent terminals with `Ctrl+T`.
+A file manager built into every file panel. Browse, copy, move, rename, and delete files without leaving the tool. Toggle between file panels and agent terminals with `Ctrl+T`.
 
 ### Inter-Agent Communication
 
@@ -214,7 +229,7 @@ Don't want to wait for agents to figure it out? Press `Ctrl+O` to manually send 
 1. Press `Ctrl+B` to open the template browser
 2. Browse categories with `Up/Down` arrows -- the preview pane on the right shows full details
 3. Press `Enter` to select a template
-4. Pick a target panel (`1-4`) and press `Enter` to confirm
+4. Pick a live target panel by its stable panel number and press `Enter` to confirm
 5. If an agent is already running on that panel, the template is sent directly. If not, you'll be asked to pick an agent first -- Commander launches it and sends the template automatically.
 
 #### Categories
@@ -262,7 +277,7 @@ numbered steps, or any other text.
 | `description` | Empty | One-line description shown in the preview |
 | `category` | `other` | Category for grouping (e.g., `testing`, `security`, or your own) |
 | `agents` | `[any]` | Recommended agents: `[any]`, `[claude]`, `[claude, codex]`, etc. |
-| `panels` | `1` | Recommended number of panels from `1` to `4` |
+| `panels` | `1` | Recommended number of active panels from `1` to `100` |
 
 All metadata fields are optional. The lightweight parser supports the scalar and bracketed-list forms shown above; it is not a full YAML parser.
 
@@ -314,7 +329,8 @@ tests yourself."
 
 | Key | Action |
 |-----|--------|
-| `Tab` | Switch between panels |
+| `Tab` | Switch to the next active panel and bring its page into view |
+| `F11` | Search and jump to any panel by number, path, agent, model, or status |
 | `Up/Down` | Move cursor / scroll |
 | `Enter` | Open directory or file |
 | `Backspace` | Parent directory |
@@ -343,9 +359,12 @@ These are global application shortcuts:
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+2/3/4` | Switch to 2/3/4 panel layout |
+| `Shift+F4` | Cycle automatic, 2-, 3-, and 4-panel visible density |
+| `Ctrl+0/2/3/4` | Terminal-dependent direct density aliases |
 | `F12` | Routed-message Activity |
 | `Shift+F12` | Inter-agent protocol guide |
+
+Layout density only changes what is visible. It does not add, remove, renumber, or restart panels. Use `F3` to add a panel, `Ctrl+W` to remove the active panel, and `Tab` to move across pages.
 
 These are file-panel actions. On terminal panels they pass through to the running agent, so switch to a file panel with `Tab` first:
 
@@ -365,6 +384,7 @@ Create `~/.agents-commander/config.json`:
 {
   "theme": "midnight",
   "panelCount": 2,
+  "panelDensity": "auto",
   "showHidden": false,
   "sortBy": "name",
   "sortAscending": true,
@@ -393,6 +413,8 @@ Create `~/.agents-commander/config.json`:
 }
 ```
 
+`panelCount` is the initial active workspace size (`1` to `100`), matching `--panels`. `panelDensity` is the visible-page policy (`"auto"`, `2`, `3`, or `4`), matching `--density`. The two settings are independent.
+
 `agentProfiles` adds named launch choices without removing the built-in profiles. OpenCode models use the full `provider/model` form; `agent` is optional, and `configPath` must be absolute. Keep provider credentials in your normal OpenCode authentication or environment setup rather than committing them to the repository.
 
 ### Themes
@@ -406,7 +428,7 @@ Create `~/.agents-commander/config.json`:
 src/
   app.ts                    # Main application, key bindings, lifecycle
   panels/
-    file-panel.ts           # Dual-panel file browser
+    file-panel.ts           # File browser used by workspace panels
     terminal-panel.ts       # PTY-backed agent terminal with key forwarding
     preview-panel.ts        # Full-screen file viewer
     vterm.ts                # Virtual terminal emulator (ANSI/xterm)
@@ -419,7 +441,7 @@ src/
     types.ts                # Agent type definitions & known agents list
     pty-helper.py           # PTY allocator (cross-platform)
   screen/
-    layout-manager.ts       # 2-4 panel dynamic layout engine
+    layout-manager.ts       # Adaptive, paged workspace for up to 100 active panels
     function-bar.ts         # Bottom menu bar (F-keys)
     status-bar.ts           # Status line
     toast.ts                # Toast notifications
@@ -461,8 +483,8 @@ This is not a dumb pipe. It's a terminal emulator inside a terminal emulator.
 
 Agents Commander combines several local workflows in one TUI:
 
-- two to four PTY-backed panels for the supported agent adapters
-- dual-panel file browsing and file operations
+- up to 100 active file or PTY-backed agent panels in an adaptive, paged workspace
+- integrated file browsing and file operations in any file panel
 - text-marker scanning and routed SEND, REPLY, BROADCAST, STATUS, and QUERY messages
 - one-key protocol instruction delivery, manual orchestration, and routed-message Activity
 - a built-in library of 121 prompts

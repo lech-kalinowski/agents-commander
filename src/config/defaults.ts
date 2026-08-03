@@ -15,6 +15,7 @@ const defaultAgents = Object.fromEntries(
 export const defaultConfig: AppConfig = {
   theme: 'classic-blue',
   panelCount: 2,
+  panelDensity: 'auto',
   showHidden: false,
   sortBy: 'name',
   sortAscending: true,

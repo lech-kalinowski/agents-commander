@@ -341,7 +341,7 @@ describe('AgentManager', () => {
     expect(manager.hasAgent(0)).toBe(false);
   });
 
-  it('reindexes agents after a panel is removed', () => {
+  it('preserves surviving agent panel IDs after a panel is removed', () => {
     const manager = new AgentManager() as any;
     const now = new Date();
 
@@ -356,18 +356,53 @@ describe('AgentManager', () => {
     manager.agents.set(2, {
       type: 'claude',
       info: { name: 'Claude Code' },
-      panel: { isRunning: true, status: 'running', panelIndex: 1 },
+      panel: { isRunning: true, status: 'running', panelIndex: 2 },
       launchedAt: now,
       restartCount: 0,
       sessionId: 'claude-session-2',
     });
 
-    manager.reindexAfterPanelRemoval(1);
+    manager.handlePanelRemoval(1);
 
-    expect([...manager.agents.keys()]).toEqual([0, 1]);
+    expect([...manager.agents.keys()]).toEqual([0, 2]);
     const running = manager.getRunningAgents();
     expect(running).toHaveLength(2);
     expect(running[0].panelIndex).toBe(0);
-    expect(running[1].panelIndex).toBe(1);
+    expect(running[1].panelIndex).toBe(2);
+  });
+
+  it('cancels restart and closes lifecycle state when removing a managed panel', async () => {
+    vi.useFakeTimers();
+    const manager = new AgentManager() as any;
+    const lifecycle = vi.fn();
+    manager.onLifecycle(lifecycle);
+    const restart = vi.fn();
+    const restartTimer = setTimeout(restart, 1000);
+
+    manager.agents.set(7, {
+      type: 'opencode',
+      info: {
+        name: 'Local Reviewer',
+        profileId: 'local-reviewer',
+        profileLabel: 'Local Reviewer',
+      },
+      panel: { isRunning: false, status: 'error', panelIndex: 7 },
+      launchedAt: new Date(),
+      restartCount: 1,
+      sessionId: 'opencode-local-reviewer_8_session',
+      restartTimer,
+    });
+
+    manager.handlePanelRemoval(7);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(restart).not.toHaveBeenCalled();
+    expect(manager.hasAgent(7)).toBe(false);
+    expect(lifecycle).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'exited',
+      panelIndex: 7,
+      sessionId: 'opencode-local-reviewer_8_session',
+      reason: 'requested',
+    }));
   });
 });

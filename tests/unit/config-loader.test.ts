@@ -55,7 +55,8 @@ describe('loadConfig', () => {
   it('rejects invalid values instead of returning an unsafe typed config', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
-      panelCount: 99,
+      panelCount: 101,
+      panelDensity: 'dense',
       showHidden: 'yes',
       sortBy: 'random',
       watchDebounce: -1,
@@ -69,6 +70,7 @@ describe('loadConfig', () => {
     const config = loadConfig();
 
     expect(config.panelCount).toBe(defaultConfig.panelCount);
+    expect(config.panelDensity).toBe(defaultConfig.panelDensity);
     expect(config.showHidden).toBe(defaultConfig.showHidden);
     expect(config.sortBy).toBe(defaultConfig.sortBy);
     expect(config.watchDebounce).toBe(defaultConfig.watchDebounce);
@@ -78,6 +80,36 @@ describe('loadConfig', () => {
       env: { VALID: 'yes' },
     });
     expect(config.orchestration).toEqual(defaultConfig.orchestration);
+  });
+
+  it.each([1, 100])('accepts the active panel-count boundary %i', (panelCount) => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+      panelCount,
+      panelDensity: 'auto',
+    }) as never);
+
+    const config = loadConfig();
+
+    expect(config.panelCount).toBe(panelCount);
+    expect(config.panelDensity).toBe('auto');
+  });
+
+  it.each([0, 101, 1.5])('rejects invalid active panel count %s', (panelCount) => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ panelCount }) as never);
+
+    expect(loadConfig().panelCount).toBe(defaultConfig.panelCount);
+  });
+
+  it('migrates a legacy 2/3/4 panel count to the matching density preset', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ panelCount: 3 }) as never);
+
+    expect(loadConfig()).toMatchObject({
+      panelCount: 3,
+      panelDensity: 3,
+    });
   });
 
   it('returns fresh nested defaults on every load', () => {

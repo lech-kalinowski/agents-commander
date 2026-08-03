@@ -1,7 +1,13 @@
 import type { AppConfig } from './types.js';
 import { defaultConfig } from './defaults.js';
+import {
+  isActivePanelCount,
+  isPanelDensity,
+  type PanelDensity,
+} from '../panel-limits.js';
 
-export type LaunchPanelCount = 2 | 3 | 4;
+/** Initial active workspace size. Runtime validation constrains this to 1..100. */
+export type LaunchPanelCount = number;
 
 /**
  * Launch-only values supplied by the CLI or another embedding application.
@@ -11,6 +17,7 @@ export type LaunchPanelCount = 2 | 3 | 4;
 export interface ExplicitLaunchOptions {
   theme?: string;
   panels?: LaunchPanelCount;
+  density?: PanelDensity;
   showHidden?: boolean;
   skipWelcome?: boolean;
   conference?: boolean;
@@ -27,13 +34,20 @@ export interface ResolvedLaunchOptions {
 export const CONFERENCE_PRESET = Object.freeze({
   theme: 'midnight',
   panels: 2 as const,
+  density: 2 as const,
   showHidden: false,
   skipWelcome: true,
 });
 
 function cloneConfig(config: AppConfig): AppConfig {
+  const legacyPanelDensity = config.panelCount === 2 || config.panelCount === 3 || config.panelCount === 4
+    ? config.panelCount
+    : defaultConfig.panelDensity;
   return {
     ...config,
+    panelDensity: isPanelDensity(config.panelDensity)
+      ? config.panelDensity
+      : legacyPanelDensity,
     editor: { ...config.editor },
     agents: Object.fromEntries(
       Object.entries(config.agents).map(([type, agent]) => [
@@ -77,12 +91,14 @@ export function resolveLaunchOptions(
   if (conference) {
     config.theme = CONFERENCE_PRESET.theme;
     config.panelCount = CONFERENCE_PRESET.panels;
+    config.panelDensity = CONFERENCE_PRESET.density;
     config.showHidden = CONFERENCE_PRESET.showHidden;
     skipWelcome = CONFERENCE_PRESET.skipWelcome;
   }
 
   if (explicit.theme !== undefined) config.theme = explicit.theme;
-  if (explicit.panels !== undefined) config.panelCount = explicit.panels;
+  if (isActivePanelCount(explicit.panels)) config.panelCount = explicit.panels;
+  if (isPanelDensity(explicit.density)) config.panelDensity = explicit.density;
   if (explicit.showHidden !== undefined) config.showHidden = explicit.showHidden;
   if (explicit.skipWelcome !== undefined) skipWelcome = explicit.skipWelcome;
 

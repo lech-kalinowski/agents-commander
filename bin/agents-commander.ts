@@ -10,12 +10,17 @@ import {
 } from '../src/doctor/doctor.js';
 import type { DemoWorkspace } from '../src/demo/demo-workspace.js';
 import { getPackageVersion } from '../src/utils/package-info.js';
+import {
+  parseActivePanelCount,
+  parsePanelDensity,
+} from '../src/panel-limits.js';
 
 const program = new Command();
 
 interface CliOptions {
   theme?: string;
   panels?: string;
+  density?: string;
   showHidden?: boolean;
   doctor?: boolean;
   conference?: boolean;
@@ -33,7 +38,8 @@ program
   .version(getPackageVersion())
   .argument('[directory]', 'Working directory', process.cwd())
   .option('-t, --theme <name>', 'Color theme (classic-blue, midnight)')
-  .option('-p, --panels <count>', 'Number of panels (2, 3, or 4)')
+  .option('-p, --panels <count>', 'Initial workspace panel count (1-100)')
+  .option('--density <preset>', 'View density (auto, 2, 3, or 4)')
   .option('--show-hidden', 'Show hidden files by default')
   .option('--doctor', 'Run startup diagnostics and exit')
   .option('--conference', 'Use presentation-safe Conference Mode defaults')
@@ -57,12 +63,18 @@ program
     let demoWorkspace: DemoWorkspace | null = null;
     let app: CliApp | null = null;
     try {
-      if (options.panels !== undefined && !/^[234]$/.test(options.panels)) {
-        throw new Error(`Invalid panel count "${options.panels}". Expected 2, 3, or 4.`);
-      }
       const panels = options.panels === undefined
         ? undefined
-        : Number.parseInt(options.panels, 10) as 2 | 3 | 4;
+        : parseActivePanelCount(options.panels);
+      if (panels === null) {
+        throw new Error(`Invalid panel count "${options.panels}". Expected an integer from 1 to 100.`);
+      }
+      const density = options.density === undefined
+        ? undefined
+        : parsePanelDensity(options.density);
+      if (density === null) {
+        throw new Error(`Invalid density "${options.density}". Expected auto, 2, 3, or 4.`);
+      }
       const showHidden = command.getOptionValueSource('showHidden') === 'cli'
         ? options.showHidden
         : undefined;
@@ -80,6 +92,7 @@ program
       app = new App(workingDir, {
         theme: options.theme,
         panels,
+        density,
         showHidden,
         conference: options.conference,
         demo: options.demo,

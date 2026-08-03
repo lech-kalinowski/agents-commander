@@ -3,7 +3,14 @@ import type { Theme } from '../../config/types.js';
 import type { PromptTemplate } from '../../templates/types.js';
 import { getTemplatesByCategory, refreshTemplates } from '../../templates/loader.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
-import { isValidPanelNumber, renderPanelBoxes } from './panel-picker.js';
+import {
+  adjacentPanelId,
+  initialPanelId,
+  normalizePanelIds,
+  PanelNumberInputBuffer,
+  renderPanelBoxes,
+  type PanelPickerSource,
+} from './panel-picker.js';
 import { showErrorToast } from '../toast.js';
 import { bindOverlayResize, screenGeometry } from './geometry.js';
 
@@ -22,10 +29,13 @@ let dialogOpen = false;
 export function showTemplateDialog(
   screen: blessed.Widgets.Screen,
   theme: Theme,
-  panelCount: number,
+  panelSource: PanelPickerSource,
   activePanelIndex: number,
 ): Promise<TemplateChoice | null> {
   if (dialogOpen) return Promise.resolve(null);
+  const panelIds = normalizePanelIds(panelSource);
+  const firstPanelId = initialPanelId(panelIds, activePanelIndex);
+  if (firstPanelId === null) return Promise.resolve(null);
   dialogOpen = true;
   enterDialog();
 
@@ -161,8 +171,14 @@ export function showTemplateDialog(
 
     // ── State ──
     let selectedTemplate: PromptTemplate | null = null;
-    let selectedPanel = activePanelIndex;
+    let selectedPanel = firstPanelId;
     let inStep2 = false;
+    let pickerWidth = Math.max(12, geometry.width - 10);
+    const numberInput = new PanelNumberInputBuffer(panelIds, () => {
+      if (!inStep2) return;
+      renderPanelPicker();
+      screen.render();
+    });
 
     // Forward-declared so cleanup can remove it
     let onScreenKey: (ch: any, key: any) => void;
@@ -170,6 +186,8 @@ export function showTemplateDialog(
     let resolved = false;
     const unbindResize = bindOverlayResize(screen, dialog, 80, 28, (nextGeometry) => {
       panelBox.height = Math.max(6, Math.min(10, nextGeometry.height - 6));
+      pickerWidth = Math.max(12, nextGeometry.width - 10);
+      if (inStep2) renderPanelPicker();
       footer.setContent(nextGeometry.compact
         ? ' ↑↓ Browse  Enter Select  Esc Close '
         : ' Up/Down=Browse  PgUp/PgDn=Scroll Preview  Enter=Select  Esc=Close ');
@@ -178,6 +196,7 @@ export function showTemplateDialog(
       if (resolved) return;
       resolved = true;
       dialogOpen = false;
+      numberInput.dispose();
       leaveDialog();
       unbindResize();
       if (onScreenKey) screen.removeListener('keypress', onScreenKey);
@@ -307,21 +326,32 @@ export function showTemplateDialog(
     // Register panelBox handlers ONCE (not inside showStep2) to avoid stacking
     function renderPanelPicker(): void {
       const header = '  Select target panel:\n\n';
-      panelBox.setContent(header + renderPanelBoxes(selectedPanel, panelCount, panelCount));
+      panelBox.setContent(
+        header + renderPanelBoxes(selectedPanel, panelIds, 4, pickerWidth, numberInput.digits),
+      );
     }
 
     panelBox.on('keypress', (ch: string | undefined, _key: any) => {
-      if (!inStep2 || !ch) return;
-      const n = parseInt(ch, 10);
-      if (isValidPanelNumber(n, panelCount)) {
-        selectedPanel = n - 1;
-        renderPanelPicker();
-        screen.render();
-      }
+      if (!inStep2 || !ch || !/^\d$/u.test(ch)) return;
+      const panelId = numberInput.acceptDigit(ch);
+      if (panelId !== null) selectedPanel = panelId;
+      renderPanelPicker();
+      screen.render();
     });
+
+    const movePanelSelection = (direction: -1 | 1) => {
+      if (!inStep2) return;
+      numberInput.reset();
+      selectedPanel = adjacentPanelId(panelIds, selectedPanel, direction) ?? selectedPanel;
+      renderPanelPicker();
+      screen.render();
+    };
+    panelBox.key(['left'], () => movePanelSelection(-1));
+    panelBox.key(['right'], () => movePanelSelection(1));
 
     panelBox.key(['enter'], () => {
       if (!inStep2) return;
+      if (!numberInput.canConfirm) return;
       cleanup();
       resolve({
         content: selectedTemplate!.content,
@@ -332,6 +362,7 @@ export function showTemplateDialog(
 
     panelBox.key(['escape'], () => {
       if (!inStep2) return;
+      numberInput.reset();
       // Go back to step 1
       inStep2 = false;
       panelBox.hide();
@@ -345,6 +376,7 @@ export function showTemplateDialog(
 
     function showStep2() {
       inStep2 = true;
+      numberInput.reset();
       templateList.hide();
       preview.hide();
 
@@ -354,7 +386,7 @@ export function showTemplateDialog(
       stepBox.show();
       renderPanelPicker();
       panelBox.show();
-      footer.setContent(' 1-4=Panel  Enter=Confirm  Esc=Back ');
+      footer.setContent(' Left/Right=Panel  0-9=Type P#  Enter=Confirm  Esc=Back ');
       panelBox.focus();
       screen.render();
     }

@@ -26,6 +26,7 @@ import {
   runtimeAssetLookupForModule,
 } from '../utils/runtime-assets.js';
 import { sanitizeUserText } from '../utils/user-facing-errors.js';
+import { isPanelNumber } from '../panel-limits.js';
 
 /**
  * Keys reserved for the UI — never forwarded to the agent process.
@@ -45,7 +46,7 @@ const RESERVED_KEYS = new Set([
   'pageup',     // scroll output
   'pagedown',   // scroll output
   'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
-  'S-f12',
+  'S-f4', 'S-f12',
 ]);
 
 interface BlessedKeyEvent {
@@ -84,6 +85,11 @@ const COMMANDER_ACTIVITY_MS = 10000;
 const TERMINAL_SIGINT_GRACE_MS = 500;
 const TERMINAL_SIGTERM_GRACE_MS = 1000;
 const TERMINAL_SIGKILL_GRACE_MS = 500;
+
+function parseProtocolPanelId(value: string): number | null {
+  const panelNumber = Number(value);
+  return isPanelNumber(panelNumber) ? panelNumber - 1 : null;
+}
 
 type TerminalEnvironmentPolicy = 'inherit' | 'internal';
 
@@ -156,6 +162,8 @@ export class TerminalPanel {
   private orchConfig: OrchestrationConfig;
   public panelIndex: number;
   private _focused = false;
+  private _visible = true;
+  private destroyed = false;
 
   private proc: ChildProcess | null = null;
   /** Dedicated fd 3 pipe used only for framed PTY control messages. */
@@ -212,6 +220,7 @@ export class TerminalPanel {
   public onUserInput: (() => void) | null = null;
 
   get focused(): boolean { return this._focused; }
+  get isVisible(): boolean { return this._visible; }
   get status(): string { return this._status; }
   get isRunning(): boolean { return this._status === 'running'; }
   get cols(): number { return this.vterm.colCount; }
@@ -786,8 +795,8 @@ export class TerminalPanel {
         // ── SEND:agent:panel ──
         const startMatch = matchSendStart(line);
         if (startMatch && isAgentType(startMatch[1])) {
-          const panelNum = parseInt(startMatch[2], 10) - 1;
-          if (panelNum >= 0 && panelNum <= 3) {
+          const panelNum = parseProtocolPanelId(startMatch[2]);
+          if (panelNum !== null) {
             startIdx = i;
             msgType = 'send';
             target = { agent: startMatch[1], panel: panelNum };
@@ -872,6 +881,7 @@ export class TerminalPanel {
 
   /** Throttled render — max 15fps to keep UI responsive. */
   private scheduleRender(): void {
+    if (this.destroyed || !this._visible) return;
     // Update this panel's content immediately (cheap — just sets DOM text)
     this.updateContent();
     // Coalesce screen.render() calls through a single global timer
@@ -880,6 +890,7 @@ export class TerminalPanel {
   }
 
   private updateContent(): void {
+    if (this.destroyed || !this._visible) return;
     // Show cursor when this panel is focused and an agent is running
     const showCursor = this._focused && this._status === 'running';
     const lines = this.vterm.getLines(showCursor);
@@ -912,6 +923,7 @@ export class TerminalPanel {
   }
 
   private updateHeader(): void {
+    if (this.destroyed || !this._visible) return;
     if (!this.agentName) {
       this.headerBox.setContent(' No agent running  |  F2=Launch');
       return;
@@ -1221,7 +1233,7 @@ export class TerminalPanel {
   /** Keep the scanner's source identity in sync after panel reindexing. */
   updatePanelIndex(panelIndex: number): void {
     this.panelIndex = panelIndex;
-    this.box.setLabel(` Terminal [${panelIndex + 1}] `);
+    if (this._visible) this.box.setLabel(` Terminal [${panelIndex + 1}] `);
     this.scanner?.updateSource(panelIndex, this.agentName);
   }
 
@@ -1300,8 +1312,8 @@ export class TerminalPanel {
       if (startIdx < 0) {
         const startMatch = matchSendStart(line);
         if (startMatch && isAgentType(startMatch[1])) {
-          const panelNum = parseInt(startMatch[2], 10) - 1;
-          if (panelNum >= 0 && panelNum <= 3) {
+          const panelNum = parseProtocolPanelId(startMatch[2]);
+          if (panelNum !== null) {
             startIdx = i;
             msgType = 'send';
             target = { agent: startMatch[1], panel: panelNum };
@@ -1348,8 +1360,8 @@ export class TerminalPanel {
       if (startIdx < 0) {
         const startMatch = matchSendStart(line);
         if (startMatch && isAgentType(startMatch[1])) {
-          const panelNum = parseInt(startMatch[2], 10) - 1;
-          if (panelNum >= 0 && panelNum <= 3) {
+          const panelNum = parseProtocolPanelId(startMatch[2]);
+          if (panelNum !== null) {
             startIdx = i;
             msgType = 'send';
             target = { agent: startMatch[1], panel: panelNum };
@@ -1617,9 +1629,35 @@ export class TerminalPanel {
     }
   }
 
+  setVisible(visible: boolean): void {
+    if (this.destroyed || this._visible === visible) return;
+    this._visible = visible;
+
+    if (!visible) {
+      const focusedChild = this.screen.focused === this.outputBox;
+      this.box.hide();
+      if (focusedChild && this.screen.focused === this.outputBox) {
+        this.screen.rewindFocus();
+      }
+      TerminalPanel.scheduleScreenRender(this.screen);
+      return;
+    }
+
+    this.box.show();
+    this.box.setLabel(` Terminal [${this.panelIndex + 1}] `);
+    this.box.style.border = this._focused
+      ? this.theme.panel.borderFocus
+      : this.theme.panel.border;
+    this.updateHeader();
+    this.updateContent();
+    if (this._focused) this.outputBox.focus();
+    TerminalPanel.scheduleScreenRender(this.screen);
+  }
+
   setFocus(focused: boolean): void {
     this._focused = focused;
     this.box.style.border = focused ? this.theme.panel.borderFocus : this.theme.panel.border;
+    if (!this._visible) return;
     if (focused) this.outputBox.focus();
     this.screen.render();
   }
@@ -1636,6 +1674,9 @@ export class TerminalPanel {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this._visible = false;
     void this.shutdownAgent();
     this.clearCommanderActivity();
     this.box.destroy();

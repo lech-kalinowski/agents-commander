@@ -404,17 +404,29 @@ export class AgentManager {
     return [...panels];
   }
 
-  reindexAfterPanelRemoval(removedPanelIndex: number): void {
-    const reindexed = new Map<number, ManagedAgent>();
-    for (const [panelIndex, managed] of this.agents) {
-      if (panelIndex === removedPanelIndex) {
-        this.cancelRestart(managed);
-        continue;
-      }
-      const nextIndex = panelIndex > removedPanelIndex ? panelIndex - 1 : panelIndex;
-      reindexed.set(nextIndex, managed);
+  handlePanelRemoval(removedPanelId: number): void {
+    const managed = this.agents.get(removedPanelId);
+    if (managed) {
+      this.cancelRestart(managed);
+      this.emitLifecycle({
+        type: 'exited',
+        panelIndex: removedPanelId,
+        sessionId: managed.sessionId,
+        agentType: managed.type,
+        agentName: managed.info.name,
+        profileId: managed.info.profileId,
+        profileLabel: managed.info.profileLabel,
+        exitCode: null,
+        signal: null,
+        reason: 'requested',
+      });
     }
-    this.agents = reindexed;
+    this.agents.delete(removedPanelId);
+  }
+
+  /** @deprecated Panel IDs are stable; use handlePanelRemoval. */
+  reindexAfterPanelRemoval(removedPanelId: number): void {
+    this.handlePanelRemoval(removedPanelId);
   }
 
   getRunningAgents(): RunningAgentInfo[] {

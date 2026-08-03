@@ -1,4 +1,5 @@
 import type { AgentType } from '../agents/types.js';
+import { MAX_PANEL_NUMBER, isPanelNumber } from '../panel-limits.js';
 import { logger } from '../utils/logger.js';
 
 const VALID_AGENT_TYPES = new Set([
@@ -231,11 +232,12 @@ export class ProtocolScanner {
           logger.debug(`Scanner[${this.sourcePanel}] ignoring unknown agent type: ${startMatch[1]}`);
           return;
         }
-        const panelNum = parseInt(startMatch[2], 10) - 1;
-        if (panelNum < 0 || panelNum > 3) {
+        const panelNumber = Number(startMatch[2]);
+        if (!isPanelNumber(panelNumber)) {
           logger.debug(`Scanner[${this.sourcePanel}] ignoring invalid panel number: ${startMatch[2]}`);
           return;
         }
+        const panelNum = panelNumber - 1;
         this.collecting = true;
         this.collectType = 'send';
         this.target = { agent: startMatch[1], panel: panelNum };
@@ -336,7 +338,7 @@ export function buildProtocolInstructions(
     `  1) header: three "=" + "COMMANDER:SEND:<type>:<panel>" + three "="`,
     `  2) body: your message text`,
     `  3) footer: three "=" + "COMMANDER:END" + three "="`,
-    `Types: claude, codex, gemini, aider, cline, opencode, goose, kiro, amp, generic. Panels: 1-4.`,
+    `Types: claude, codex, gemini, aider, cline, opencode, goose, kiro, amp, generic. Panel numbers: 1-${MAX_PANEL_NUMBER}.`,
     ``,
     `Other line-1 headers (no :type:panel — just the keyword between "=" signs):`,
     `  REPLY     -> COMMANDER:REPLY        (auto-routes to whoever messaged you)`,

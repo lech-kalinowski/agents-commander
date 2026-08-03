@@ -78,11 +78,11 @@ function createScreen(): blessed.Widgets.Screen {
   return screen;
 }
 
-function createPanel(initialPath = '/workspace/current'): FilePanel {
+function createPanel(initialPath = '/workspace/current', panelIndex = 0): FilePanel {
   return new FilePanel(
     createScreen(),
     midnight,
-    0,
+    panelIndex,
     initialPath,
     { top: 0, left: 0, width: 90, height: 24 },
   );
@@ -96,10 +96,22 @@ afterEach(() => {
   for (const screen of screens.splice(0)) {
     screen.destroy();
   }
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
 describe('FilePanel navigation', () => {
+  it('keeps the stable public panel number in its label as the path changes', async () => {
+    mocks.readDirectory.mockResolvedValueOnce([]);
+    const panel = createPanel('/workspace/current', 99);
+
+    expect((panel.box as any)._label.content).toContain('P100 · /workspace/current');
+
+    await expect(panel.loadDirectory('/workspace/next')).resolves.toBe(true);
+
+    expect((panel.box as any)._label.content).toContain('P100 · /workspace/next');
+  });
+
   it('does not commit a candidate directory until its read succeeds', async () => {
     const original = fileEntry('old.txt', '/workspace/current/old.txt');
     mocks.readDirectory.mockResolvedValueOnce([original]);
@@ -317,5 +329,59 @@ describe('FilePanel navigation', () => {
     expect(labelContent).not.toContain('{blue-bg}unsafe');
     expect(rowContent).toContain('{open}red-fg{close}');
     expect(labelContent).toContain('{open}blue-bg{close}');
+  });
+
+  it('keeps directory state current while hidden and synchronizes the latest view when shown', async () => {
+    const original = fileEntry('old.txt', '/workspace/current/old.txt');
+    mocks.readDirectory.mockResolvedValueOnce([original]);
+    const panel = createPanel();
+    await panel.loadDirectory();
+    panel.setFocus(true);
+    vi.useFakeTimers();
+
+    const screen = (panel as any).screen as blessed.Widgets.Screen;
+    const render = vi.spyOn(screen, 'render');
+    const rewindFocus = vi.spyOn(screen, 'rewindFocus');
+    const setItems = vi.spyOn(panel.list, 'setItems');
+    const select = vi.spyOn(panel.list, 'select');
+    const setLabel = vi.spyOn(panel.box, 'setLabel');
+
+    panel.setVisible(false);
+
+    expect(panel.isVisible).toBe(false);
+    expect(panel.box.hidden).toBe(true);
+    expect(rewindFocus).toHaveBeenCalledOnce();
+    vi.runOnlyPendingTimers();
+
+    render.mockClear();
+    setItems.mockClear();
+    select.mockClear();
+    setLabel.mockClear();
+
+    const latest = fileEntry('latest.txt', '/workspace/latest/latest.txt');
+    mocks.readDirectory.mockResolvedValueOnce([latest]);
+    await expect(panel.loadDirectory('/workspace/latest')).resolves.toBe(true);
+    panel.focusEntry(latest.fullPath);
+    panel.resize({ top: 1, left: 2, width: 70, height: 20 });
+
+    expect(panel.currentPath).toBe('/workspace/latest');
+    expect(panel.currentEntry).toBe(latest);
+    expect(setItems).not.toHaveBeenCalled();
+    expect(select).not.toHaveBeenCalled();
+    expect(setLabel).not.toHaveBeenCalled();
+    expect(render).not.toHaveBeenCalled();
+
+    panel.setVisible(true);
+    vi.runOnlyPendingTimers();
+
+    expect(panel.isVisible).toBe(true);
+    expect(panel.box.hidden).toBe(false);
+    expect(setLabel).toHaveBeenCalledOnce();
+    expect(setItems).toHaveBeenCalledOnce();
+    expect(select).toHaveBeenCalledWith(1);
+    expect(render).toHaveBeenCalledOnce();
+    expect((panel.list as any).ritems[1]).toContain('latest.txt');
+    expect((panel.box as any)._label.content).toContain('P1 · /workspace/latest');
+    expect(screen.focused).toBe(panel.list);
   });
 });

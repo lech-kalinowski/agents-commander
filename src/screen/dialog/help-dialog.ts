@@ -59,8 +59,19 @@ Multi-panel AI Agent Manager & File Browser
 
 {bold}{yellow-fg}LAYOUT & SYSTEM{/yellow-fg}{/bold}
 
-  Ctrl+2/3/4  Switch to 2/3/4 panels
+  Up to 100 active panels share a paged workspace.
+  Tab follows focus across pages; terminal sessions on
+  hidden pages keep running.
+  Panel numbers stay stable; gaps after removal are normal.
+
+  F11         Search/jump to any panel by number or metadata
+  Shift+F4    Cycle Auto / 2 / 3 / 4 visible density
+  Ctrl+0      Auto-fit (terminal-dependent direct alias)
+  Ctrl+2/3/4  Direct density aliases when terminal supports them
   Ctrl+W      Remove active panel (confirms live session)
+
+  CLI: --panels 1-100 sets the initial workspace size.
+       --density auto|2|3|4 sets visible density.
 
   {bold}File panel only{/bold} (pass through to agents):
   Ctrl+E      Reset to default 2-panel view

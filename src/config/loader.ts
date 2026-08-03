@@ -5,10 +5,10 @@ import type { AgentCommandConfig, AppConfig, OrchestrationConfig } from './types
 import { defaultConfig } from './defaults.js';
 import type { AgentProfile, AgentType } from '../agents/types.js';
 import { KNOWN_AGENTS } from '../agents/types.js';
+import { isActivePanelCount, isPanelDensity } from '../panel-limits.js';
 
 const CONFIG_DIR = path.join(os.homedir(), '.agents-commander');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const PANEL_COUNTS = new Set([2, 3, 4]);
 const SORT_FIELDS = new Set(['name', 'size', 'date', 'ext']);
 const AGENT_TYPES = new Set<AgentType>(KNOWN_AGENTS.map((agent) => agent.type));
 const PROFILE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
@@ -196,11 +196,21 @@ function normalizeConfig(value: unknown): AppConfig {
     agents[agentType] = normalizeAgent(rawAgents[agentType], defaults);
   }
 
+  const panelCount = isActivePanelCount(input.panelCount)
+    ? input.panelCount
+    : defaultConfig.panelCount;
+  // Before panelDensity existed, panelCount also selected the 2/3/4 layout.
+  // Preserve that view for migrated configs while fresh configs use auto.
+  const legacyPanelDensity = input.panelCount === 2 || input.panelCount === 3 || input.panelCount === 4
+    ? input.panelCount
+    : defaultConfig.panelDensity;
+
   return {
     theme: typeof input.theme === 'string' && input.theme.trim() ? input.theme : defaultConfig.theme,
-    panelCount: typeof input.panelCount === 'number' && PANEL_COUNTS.has(input.panelCount)
-      ? input.panelCount as 2 | 3 | 4
-      : defaultConfig.panelCount,
+    panelCount,
+    panelDensity: isPanelDensity(input.panelDensity)
+      ? input.panelDensity
+      : legacyPanelDensity,
     showHidden: typeof input.showHidden === 'boolean' ? input.showHidden : defaultConfig.showHidden,
     sortBy: typeof input.sortBy === 'string' && SORT_FIELDS.has(input.sortBy)
       ? input.sortBy as AppConfig['sortBy']

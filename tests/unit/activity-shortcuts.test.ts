@@ -84,6 +84,12 @@ describe('Activity and protocol shortcuts', () => {
     expect(dialogMocks.showActivityDialog).not.toHaveBeenCalled();
   });
 
+  it('binds portable Shift+F4 panel-density cycling', () => {
+    const { handlers } = createHarness({ liveTerminal: true });
+
+    expect(handlers.has('S-f4')).toBe(true);
+  });
+
   it('retains the Ctrl+G file-panel fallback route to the protocol guide', () => {
     const { handlers } = createHarness({ filePanel: true });
 
@@ -119,6 +125,16 @@ describe('Activity and protocol shortcuts', () => {
     expect(HELP_TEXT).toContain('Aider · Cline · Goose · Kiro · Amp');
     expect(HELP_TEXT).toContain('not launchable yet');
     expect(HELP_TEXT).not.toContain('TESTED ADAPTERS');
+  });
+
+  it('documents the adaptive panel workspace and separates count from density', () => {
+    expect(HELP_TEXT).toContain('Up to 100 active panels');
+    expect(HELP_TEXT).toContain('hidden pages keep running');
+    expect(HELP_TEXT).toContain('Panel numbers stay stable');
+    expect(HELP_TEXT).toContain('Shift+F4    Cycle Auto / 2 / 3 / 4 visible density');
+    expect(HELP_TEXT).toContain('Ctrl+0      Auto-fit (terminal-dependent direct alias)');
+    expect(HELP_TEXT).toContain('--panels 1-100 sets the initial workspace size');
+    expect(HELP_TEXT).toContain('--density auto|2|3|4 sets visible density');
   });
 
   it('keeps the protocol guide limited to launchable SEND targets', () => {

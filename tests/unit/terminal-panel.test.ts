@@ -6,6 +6,7 @@ import {
 } from '../../src/orchestration/protocol.js';
 import { TerminalPanel } from '../../src/panels/terminal-panel.js';
 import { VTerm } from '../../src/panels/vterm.js';
+import { MAX_PANEL_NUMBER } from '../../src/panel-limits.js';
 
 function createPanelHarness() {
   const emitted: CommanderMessage[] = [];
@@ -22,6 +23,7 @@ function createPanelHarness() {
     protocolReservations: new Map<string, { remaining: number; expiresAt: number }>(),
     pendingReplyEmissions: new Map<string, { msg: CommanderMessage; timer: ReturnType<typeof setTimeout> }>(),
     instructionEchoGuardUntil: 0,
+    scannerEnabled: true,
     activeGridProtocolKeys: new Set<string>(),
     activeTailReplyKeys: new Set<string>(),
     scanner: { isMuted: false },
@@ -37,6 +39,10 @@ function createPanelHarness() {
   panel.pruneExpiredProtocolReservations = TerminalPanel.prototype['pruneExpiredProtocolReservations'];
   panel.emitDeduped = TerminalPanel.prototype['emitDeduped'];
   panel.reserveProtocolTextForEcho = TerminalPanel.prototype['reserveProtocolTextForEcho'];
+  panel.reserveProtocolLinesForEcho = TerminalPanel.prototype['reserveProtocolLinesForEcho'];
+  panel.markProtocolLinesAsProcessed = TerminalPanel.prototype['markProtocolLinesAsProcessed'];
+  panel.markTailRepliesAsProcessed = TerminalPanel.prototype['markTailRepliesAsProcessed'];
+  panel.snapshotGridAsProcessed = TerminalPanel.prototype['snapshotGridAsProcessed'];
   panel.schedulePendingReplyEmission = TerminalPanel.prototype['schedulePendingReplyEmission'];
   panel.cancelPendingReplyEmission = TerminalPanel.prototype['cancelPendingReplyEmission'];
   panel.clearPendingReplyEmissions = TerminalPanel.prototype['clearPendingReplyEmissions'];
@@ -187,6 +193,76 @@ describe('TerminalPanel reply transport', () => {
     ]);
   });
 
+  it('routes a grid SEND to Panel 5 using its zero-based stable ID', () => {
+    const { panel, emitted } = createPanelHarness();
+    panel.agentName = 'Expanded Grid Agent';
+    panel.vterm = new VTerm(48, 8);
+    panel.vterm.write([
+      '===COMMANDER:SEND:generic:5===',
+      'route beyond the legacy four-panel limit',
+      '===COMMANDER:END===',
+    ].join('\r\n'));
+
+    panel.scanGridForProtocol();
+
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: 'send',
+        targetPanel: 4,
+        content: 'route beyond the legacy four-panel limit',
+      }),
+    ]);
+  });
+
+  it('recognizes Panel 5 in snapshot and outgoing-reservation paths', () => {
+    const snapshotHarness = createPanelHarness();
+    snapshotHarness.panel.vterm = new VTerm(48, 8);
+    snapshotHarness.panel.vterm.write([
+      '===COMMANDER:SEND:generic:5===',
+      'snapshot Panel 5',
+      '===COMMANDER:END===',
+    ].join('\r\n'));
+
+    snapshotHarness.panel.snapshotGridAsProcessed();
+
+    expect(snapshotHarness.panel.activeGridProtocolKeys.size).toBe(1);
+
+    const reservationHarness = createPanelHarness();
+    reservationHarness.panel.reserveProtocolTextForEcho([
+      '===COMMANDER:SEND:generic:5===',
+      'reserved Panel 5',
+      '===COMMANDER:END===',
+    ].join('\n'));
+    const message: CommanderMessage = {
+      type: 'send',
+      sourcePanel: 0,
+      sourceAgent: 'Reservation Agent',
+      targetAgent: 'generic',
+      targetPanel: 4,
+      content: 'reserved Panel 5',
+    };
+
+    reservationHarness.panel.emitDeduped(message);
+    reservationHarness.panel.emitDeduped(message);
+
+    expect(reservationHarness.emitted).toEqual([message]);
+  });
+
+  it('rejects a grid SEND above the stable panel-number upper bound', () => {
+    const { panel, emitted } = createPanelHarness();
+    panel.agentName = 'Bounded Grid Agent';
+    panel.vterm = new VTerm(48, 8);
+    panel.vterm.write([
+      `===COMMANDER:SEND:generic:${MAX_PANEL_NUMBER + 1}===`,
+      'must not route',
+      '===COMMANDER:END===',
+    ].join('\r\n'));
+
+    panel.scanGridForProtocol();
+
+    expect(emitted).toEqual([]);
+  });
+
   it('preserves significant spaces when routed content wraps at the panel edge', () => {
     const { panel, emitted } = createPanelHarness();
     panel.agentName = 'Boundary Space Agent';
@@ -330,5 +406,119 @@ describe('TerminalPanel PTY sizing', () => {
     expect(panel.vterm.resize).toHaveBeenCalledWith(20, 8);
     expect(control.write).toHaveBeenCalledWith('resize 20 8\n');
     expect(panel.scheduleRender).toHaveBeenCalledOnce();
+  });
+});
+
+describe('TerminalPanel visibility', () => {
+  afterEach(() => {
+    const timer = (TerminalPanel as any).globalRenderTimer as ReturnType<typeof setTimeout> | null;
+    if (timer) clearTimeout(timer);
+    (TerminalPanel as any).globalRenderTimer = null;
+    vi.useRealTimers();
+  });
+
+  function createVisibilityHarness() {
+    const screen: any = {
+      focused: null,
+      rewindFocus: vi.fn(() => {
+        screen.focused = null;
+      }),
+      render: vi.fn(),
+    };
+    const outputBox: any = {
+      setContent: vi.fn(),
+      setScrollPerc: vi.fn(),
+      focus: vi.fn(() => {
+        screen.focused = outputBox;
+      }),
+    };
+    const panel: any = Object.assign(Object.create(TerminalPanel.prototype), {
+      _visible: true,
+      destroyed: false,
+      _focused: true,
+      _status: 'running',
+      panelIndex: 3,
+      agentName: 'Hidden Test Agent',
+      commanderActivityLabel: null,
+      userScrolled: false,
+      proc: null,
+      screen,
+      box: {
+        hide: vi.fn(),
+        show: vi.fn(),
+        setLabel: vi.fn(),
+        style: { border: null },
+      },
+      headerBox: { setContent: vi.fn() },
+      outputBox,
+      vterm: new VTerm(32, 6),
+      theme: {
+        panel: {
+          border: { fg: 'blue' },
+          borderFocus: { fg: 'cyan' },
+        },
+      },
+    });
+    screen.focused = outputBox;
+    return { panel, screen, outputBox };
+  }
+
+  it('suppresses Blessed content work while hidden and renders the latest VTerm buffer when shown', () => {
+    vi.useFakeTimers();
+    const { panel, screen, outputBox } = createVisibilityHarness();
+
+    panel.setVisible(false);
+    expect(panel.isVisible).toBe(false);
+    expect(panel.box.hide).toHaveBeenCalledOnce();
+    expect(screen.rewindFocus).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(50);
+    expect(screen.render).toHaveBeenCalledOnce();
+
+    screen.render.mockClear();
+    outputBox.setContent.mockClear();
+    panel.headerBox.setContent.mockClear();
+
+    panel.vterm.write('latest hidden output');
+    panel.scheduleRender();
+    panel.updateHeader();
+    vi.advanceTimersByTime(100);
+
+    expect(outputBox.setContent).not.toHaveBeenCalled();
+    expect(panel.headerBox.setContent).not.toHaveBeenCalled();
+    expect(screen.render).not.toHaveBeenCalled();
+    expect(panel.vterm.getLines(false).join('\n')).toContain('latest hidden output');
+
+    panel.setVisible(true);
+
+    expect(panel.isVisible).toBe(true);
+    expect(panel.box.show).toHaveBeenCalledOnce();
+    expect(panel.box.setLabel).toHaveBeenCalledWith(' Terminal [4] ');
+    expect(panel.headerBox.setContent).toHaveBeenCalledOnce();
+    expect(outputBox.setContent).toHaveBeenCalledOnce();
+    expect(outputBox.setContent.mock.calls[0][0]).toContain('latest hidden output');
+    expect(outputBox.focus).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(50);
+    expect(screen.render).toHaveBeenCalledOnce();
+  });
+
+  it('continues protocol scanning from a hidden VTerm', () => {
+    const { panel, emitted } = createPanelHarness();
+    panel._visible = false;
+    panel.agentName = 'Hidden Scanner Agent';
+    panel.vterm = new VTerm(48, 8);
+    panel.vterm.write([
+      '===COMMANDER:SEND:generic:2===',
+      'hidden scan stays active',
+      '===COMMANDER:END===',
+    ].join('\r\n'));
+
+    panel.scanGridForProtocol();
+
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: 'send',
+        content: 'hidden scan stays active',
+      }),
+    ]);
   });
 });

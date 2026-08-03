@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CommanderMessage } from '../../src/orchestration/protocol.js';
-import { Orchestrator } from '../../src/orchestration/orchestrator.js';
+import {
+  Orchestrator,
+  ROUTED_QUEUE_MAX_BYTES_GLOBAL,
+  ROUTED_QUEUE_MAX_BYTES_PER_PANEL,
+  ROUTED_QUEUE_MAX_TASKS_GLOBAL,
+  ROUTED_QUEUE_MAX_TASKS_PER_PANEL,
+} from '../../src/orchestration/orchestrator.js';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -30,8 +36,10 @@ function mockTerminalPanel(panelIndex: number, isRunning = true) {
 function mockLayout(panels: Record<number, ReturnType<typeof mockTerminalPanel>> = {}) {
   return {
     panelCount: Object.keys(panels).length || 2,
+    allPanels: Object.values(panels),
+    hasPanel: vi.fn((idx: number) => Object.prototype.hasOwnProperty.call(panels, idx)),
     getTerminalPanel: vi.fn((idx: number) => panels[idx] ?? null),
-    convertToTerminal: vi.fn(),
+    convertToTerminal: vi.fn((idx: number) => panels[idx] ?? null),
     addPanel: vi.fn(async () => true),
     setActivePanel: vi.fn(),
   };
@@ -39,10 +47,17 @@ function mockLayout(panels: Record<number, ReturnType<typeof mockTerminalPanel>>
 
 /** Create a mock AgentManager. */
 function mockAgentManager(agentTypes: Record<number, string> = {}) {
+  const sessionIds: Record<number, string> = {};
+  const profileIds: Record<number, string> = {};
+  let nextLaunchGeneration = 1;
+  for (const [idx, type] of Object.entries(agentTypes)) {
+    sessionIds[Number(idx)] = `${type}-session-${idx}`;
+    profileIds[Number(idx)] = type;
+  }
   const runningAgents = () =>
     Object.entries(agentTypes).map(([idx, type]) => ({
       panelIndex: Number(idx),
-      sessionId: `${type}-session-${idx}`,
+      sessionId: sessionIds[Number(idx)],
       type,
       name: type === 'claude' ? 'Claude Code' : type === 'codex' ? 'Codex CLI' : type === 'gemini' ? 'Gemini CLI' : type,
       status: 'running',
@@ -51,6 +66,7 @@ function mockAgentManager(agentTypes: Record<number, string> = {}) {
 
   return {
     getAgentType: vi.fn((panelIndex: number) => agentTypes[panelIndex] ?? null),
+    getAgentProfileId: vi.fn((panelIndex: number) => profileIds[panelIndex] ?? null),
     getRunningAgents: vi.fn(runningAgents),
     getAgentSessionId: vi.fn((panelIndex: number) => {
       const agent = runningAgents().find((entry) => entry.panelIndex === panelIndex);
@@ -61,8 +77,22 @@ function mockAgentManager(agentTypes: Record<number, string> = {}) {
       return agent?.panelIndex ?? null;
     }),
     onLifecycle: vi.fn(() => () => {}),
-    launchAgent: vi.fn(() => true),
-    killAgent: vi.fn(),
+    launchAgent: vi.fn((agentType: string, panel: { panelIndex: number }) => {
+      const panelIndex = panel.panelIndex;
+      agentTypes[panelIndex] = agentType;
+      profileIds[panelIndex] = agentType;
+      sessionIds[panelIndex] = `${agentType}-session-${panelIndex}-launch-${nextLaunchGeneration++}`;
+      return true;
+    }),
+    killAgent: vi.fn((panelIndex: number) => {
+      delete agentTypes[panelIndex];
+      delete profileIds[panelIndex];
+      delete sessionIds[panelIndex];
+      return Promise.resolve();
+    }),
+    _agentTypes: agentTypes,
+    _profileIds: profileIds,
+    _sessionIds: sessionIds,
   };
 }
 
@@ -77,7 +107,7 @@ describe('Orchestrator', () => {
   it('records the original source agent when routing SEND messages', () => {
     const agents = mockAgentManager({ 0: 'codex', 1: 'claude' });
     const orchestrator = new Orchestrator({} as never, agents as any) as any;
-    orchestrator.enqueueTask = vi.fn();
+    orchestrator.enqueueTask = vi.fn(() => ({ accepted: true, task: {} }));
 
     const msg: CommanderMessage = {
       type: 'send',
@@ -155,7 +185,7 @@ describe('Orchestrator', () => {
   it('routes REPLY through the latest open thread for the replying session', () => {
     const agents = mockAgentManager({ 0: 'claude', 1: 'codex' });
     const orchestrator = new Orchestrator({} as never, agents as any) as any;
-    orchestrator.enqueueTask = vi.fn();
+    orchestrator.enqueueTask = vi.fn(() => ({ accepted: true, task: {} }));
 
     orchestrator.ledger.openReplyWindow({
       threadId: 'thr_existing',
@@ -228,7 +258,7 @@ describe('Orchestrator', () => {
     const orchestrator = new Orchestrator(layout as any, agents as any) as any;
 
     orchestrator.connectedPanels = new Set([0, 1, 2]);
-    orchestrator.enqueueTask = vi.fn();
+    orchestrator.enqueueTask = vi.fn(() => ({ accepted: true, task: {} }));
 
     const msg: CommanderMessage = {
       type: 'broadcast',
@@ -260,7 +290,7 @@ describe('Orchestrator', () => {
     const orchestrator = new Orchestrator(layout as any, agents as any) as any;
 
     orchestrator.connectedPanels = new Set([0, 1, 2]);
-    orchestrator.enqueueTask = vi.fn();
+    orchestrator.enqueueTask = vi.fn(() => ({ accepted: true, task: {} }));
 
     const msg: CommanderMessage = {
       type: 'broadcast',
@@ -283,6 +313,40 @@ describe('Orchestrator', () => {
   });
 
   // ── STATUS handling ─────────────────────────────────────────────
+
+  it('reports a partial broadcast when one target queue is at capacity', () => {
+    const sourcePanel = mockTerminalPanel(0);
+    const layout = mockLayout({
+      0: sourcePanel,
+      1: mockTerminalPanel(1),
+      2: mockTerminalPanel(2),
+    });
+    const agents = mockAgentManager({ 0: 'codex', 1: 'claude', 2: 'gemini' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    orchestrator.connectedPanels = new Set([0, 1, 2]);
+    orchestrator.executeTask = vi.fn(() => new Promise(() => {}));
+    for (let index = 0; index < ROUTED_QUEUE_MAX_TASKS_PER_PANEL; index++) {
+      orchestrator.enqueueTask(1, { agentType: 'claude', task: `held-${index}` });
+    }
+
+    orchestrator.handleAgentMessage({
+      type: 'broadcast',
+      sourcePanel: 0,
+      sourceAgent: 'Codex CLI',
+      targetAgent: 'generic',
+      targetPanel: -1,
+      content: 'fan out safely',
+    } satisfies CommanderMessage);
+
+    const ack = sourcePanel.sendInput.mock.calls[0][0];
+    expect(ack).toContain('kind=broadcast status=partial');
+    expect(ack).toContain('queued=1 rejected=1');
+    expect(ack).toContain('rejectedTargets=Claude Code in Panel 2');
+    expect(orchestrator.getRecentActivity(2).map((record: any) => record.status).sort()).toEqual([
+      'failed',
+      'queued',
+    ]);
+  });
 
   it('shows STATUS as toast, acknowledges it locally, and does not send to any agent', () => {
     const tp0 = mockTerminalPanel(0);
@@ -574,14 +638,178 @@ describe('Orchestrator', () => {
 
     const injectPromise = orchestrator.injectProtocol(tp);
     await vi.advanceTimersByTimeAsync(200);
-    await injectPromise;
+    await expect(injectPromise).resolves.toBe(true);
 
     expect(tp.markProtocolTextAsProcessed).toHaveBeenCalled();
     expect(tp.snapshotVisibleProtocolAsProcessed).toHaveBeenCalled();
     expect(orchestrator.injectionGrace.has(0)).toBe(false);
   });
 
+  it('does not finish protocol injection after the managed session is replaced', async () => {
+    const tp = mockTerminalPanel(0);
+    const layout = mockLayout({ 0: tp });
+    const agents = mockAgentManager({ 0: 'codex', 1: 'claude' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    let releaseSend!: () => void;
+    const sendPaused = new Promise<void>((resolve) => { releaseSend = resolve; });
+    orchestrator.sendTextToAgent = vi.fn(async (
+      _panel: unknown,
+      _text: string,
+      isStillValid: () => boolean,
+    ) => {
+      await sendPaused;
+      return isStillValid();
+    });
+    orchestrator.submitInput = vi.fn(async () => true);
+
+    const injection = orchestrator.injectProtocol(tp);
+    await Promise.resolve();
+    agents._sessionIds[0] = 'codex-session-0-replacement';
+    releaseSend();
+    await expect(injection).resolves.toBe(false);
+
+    expect(orchestrator.submitInput).not.toHaveBeenCalled();
+    expect(tp.snapshotVisibleProtocolAsProcessed).not.toHaveBeenCalled();
+    expect(orchestrator.protocolInjected.has(0)).toBe(false);
+  });
+
   // ── Task queue ──────────────────────────────────────────────────
+
+  it('bounds retained tasks per panel and rejects overflow deterministically', () => {
+    const orchestrator = new Orchestrator({} as never, {} as never) as any;
+    orchestrator.executeTask = vi.fn(() => new Promise(() => {}));
+    const rejected: Array<{ success: boolean; error?: string }> = [];
+    const admissions = [];
+
+    for (let index = 0; index < ROUTED_QUEUE_MAX_TASKS_PER_PANEL + 3; index++) {
+      admissions.push(orchestrator.enqueueTask(0, {
+        agentType: 'codex',
+        task: `task-${index}`,
+        onComplete: (result: { success: boolean; error?: string }) => {
+          if (!result.success) rejected.push(result);
+        },
+      }));
+    }
+
+    expect(admissions.filter((entry: any) => entry.accepted)).toHaveLength(
+      ROUTED_QUEUE_MAX_TASKS_PER_PANEL,
+    );
+    expect(orchestrator.retainedTaskCount).toBe(ROUTED_QUEUE_MAX_TASKS_PER_PANEL);
+    expect(orchestrator.panelQueues.get(0).tasks).toHaveLength(
+      ROUTED_QUEUE_MAX_TASKS_PER_PANEL - 1,
+    );
+    expect(rejected).toEqual(Array.from({ length: 3 }, () => ({
+      success: false,
+      error: `Panel 1 routing queue is full (${ROUTED_QUEUE_MAX_TASKS_PER_PANEL} retained tasks)`,
+    })));
+  });
+
+  it('bounds retained tasks globally across panels', () => {
+    const orchestrator = new Orchestrator({} as never, {} as never) as any;
+    orchestrator.executeTask = vi.fn(() => new Promise(() => {}));
+
+    for (let index = 0; index < ROUTED_QUEUE_MAX_TASKS_GLOBAL; index++) {
+      const panelIndex = Math.floor(index / ROUTED_QUEUE_MAX_TASKS_PER_PANEL);
+      expect(orchestrator.enqueueTask(panelIndex, {
+        agentType: 'codex',
+        task: `task-${index}`,
+      }).accepted).toBe(true);
+    }
+
+    expect(orchestrator.enqueueTask(99, {
+      agentType: 'codex',
+      task: 'one too many',
+    })).toEqual({
+      accepted: false,
+      error: `Global routing queue is full (${ROUTED_QUEUE_MAX_TASKS_GLOBAL} retained tasks)`,
+    });
+    expect(orchestrator.retainedTaskCount).toBe(ROUTED_QUEUE_MAX_TASKS_GLOBAL);
+  });
+
+  it('enforces per-panel and global retained-byte limits', () => {
+    const orchestrator = new Orchestrator({} as never, {} as never) as any;
+    orchestrator.executeTask = vi.fn(() => new Promise(() => {}));
+    const panelBudget = 'x'.repeat(ROUTED_QUEUE_MAX_BYTES_PER_PANEL);
+
+    expect(orchestrator.enqueueTask(0, {
+      agentType: 'codex',
+      task: panelBudget,
+    }).accepted).toBe(true);
+    expect(orchestrator.enqueueTask(0, {
+      agentType: 'codex',
+      task: 'x',
+    })).toEqual({
+      accepted: false,
+      error: `Panel 1 routing queue byte limit exceeded (${ROUTED_QUEUE_MAX_BYTES_PER_PANEL} bytes)`,
+    });
+
+    const panelsAtGlobalLimit = ROUTED_QUEUE_MAX_BYTES_GLOBAL / ROUTED_QUEUE_MAX_BYTES_PER_PANEL;
+    for (let panelIndex = 1; panelIndex < panelsAtGlobalLimit; panelIndex++) {
+      expect(orchestrator.enqueueTask(panelIndex, {
+        agentType: 'codex',
+        task: panelBudget,
+      }).accepted).toBe(true);
+    }
+    expect(orchestrator.retainedTaskBytes).toBe(ROUTED_QUEUE_MAX_BYTES_GLOBAL);
+    expect(orchestrator.enqueueTask(panelsAtGlobalLimit, {
+      agentType: 'codex',
+      task: 'x',
+    })).toEqual({
+      accepted: false,
+      error: `Global routing queue byte limit exceeded (${ROUTED_QUEUE_MAX_BYTES_GLOBAL} bytes)`,
+    });
+  });
+
+  it('releases retained capacity after normal task completion', async () => {
+    const orchestrator = new Orchestrator({} as never, {} as never) as any;
+    orchestrator.executeTask = vi.fn(async () => ({ success: true }));
+    const completion = vi.fn();
+
+    expect(orchestrator.enqueueTask(3, {
+      agentType: 'codex',
+      task: 'normal traffic',
+      onComplete: completion,
+    }).accepted).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(completion).toHaveBeenCalledWith({ success: true });
+    expect(orchestrator.retainedTaskCount).toBe(0);
+    expect(orchestrator.retainedTaskBytes).toBe(0);
+    expect(orchestrator.retainedTaskCountByPanel.size).toBe(0);
+    expect(orchestrator.retainedTaskBytesByPanel.size).toBe(0);
+  });
+
+  it('marks a capacity-rejected SEND failed and returns a failure ACK', () => {
+    const sourcePanel = mockTerminalPanel(0);
+    const targetPanel = mockTerminalPanel(1);
+    const layout = mockLayout({ 0: sourcePanel, 1: targetPanel });
+    const agents = mockAgentManager({ 0: 'codex', 1: 'claude' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    orchestrator.executeTask = vi.fn(() => new Promise(() => {}));
+    for (let index = 0; index < ROUTED_QUEUE_MAX_TASKS_PER_PANEL; index++) {
+      orchestrator.enqueueTask(1, { agentType: 'claude', task: `held-${index}` });
+    }
+
+    orchestrator.handleAgentMessage({
+      type: 'send',
+      sourcePanel: 0,
+      sourceAgent: 'Codex CLI',
+      targetAgent: 'claude',
+      targetPanel: 1,
+      content: 'overflow route',
+    } satisfies CommanderMessage);
+
+    expect(orchestrator.getRecentActivity(1)[0]).toMatchObject({
+      kind: 'send',
+      status: 'failed',
+      error: `Panel 2 routing queue is full (${ROUTED_QUEUE_MAX_TASKS_PER_PANEL} retained tasks)`,
+    });
+    expect(sourcePanel.sendInput).toHaveBeenCalledTimes(1);
+    expect(sourcePanel.sendInput.mock.calls[0][0]).toContain('status=failed');
+    expect(sourcePanel.sendInput.mock.calls[0][0]).toContain('routing queue is full');
+    expect(orchestrator.retainedTaskCount).toBe(ROUTED_QUEUE_MAX_TASKS_PER_PANEL);
+  });
 
   it('awaits managed process termination before launching its replacement', async () => {
     const panel = mockTerminalPanel(0, true);
@@ -591,7 +819,12 @@ describe('Orchestrator', () => {
     const termination = new Promise<void>((resolve) => {
       releaseTermination = resolve;
     });
-    agents.killAgent.mockReturnValue(termination);
+    agents.killAgent.mockImplementation(() => {
+      delete agents._agentTypes[0];
+      delete agents._profileIds[0];
+      delete agents._sessionIds[0];
+      return termination;
+    });
     const orchestrator = new Orchestrator(layout as any, agents as any) as any;
     orchestrator.delay = vi.fn(async () => undefined);
     orchestrator.sendTextToAgent = vi.fn(async () => undefined);
@@ -606,6 +839,147 @@ describe('Orchestrator', () => {
     releaseTermination();
     await expect(execution).resolves.toEqual({ success: true });
     expect(agents.launchAgent).toHaveBeenCalledWith('codex', panel);
+  });
+
+  it('does not launch a replacement after the target is removed during termination', async () => {
+    const panel = mockTerminalPanel(0, true);
+    const panels = { 0: panel } as Record<number, ReturnType<typeof mockTerminalPanel>>;
+    const layout = mockLayout(panels);
+    const agents = mockAgentManager({ 0: 'claude' });
+    let releaseTermination!: () => void;
+    const termination = new Promise<void>((resolve) => {
+      releaseTermination = resolve;
+    });
+    agents.killAgent.mockImplementation(() => {
+      delete agents._agentTypes[0];
+      delete agents._profileIds[0];
+      delete agents._sessionIds[0];
+      return termination;
+    });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+
+    const execution = orchestrator.executeTask('codex', 0, 'replacement task');
+    await Promise.resolve();
+    delete panels[0];
+    releaseTermination();
+
+    await expect(execution).resolves.toEqual({
+      success: false,
+      error: 'Panel 1 is no longer available',
+    });
+    expect(agents.launchAgent).not.toHaveBeenCalled();
+    expect(panel.sendInput).not.toHaveBeenCalled();
+    expect(layout.setActivePanel).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite a same-panel replacement launched during termination', async () => {
+    const panel = mockTerminalPanel(0, true);
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager({ 0: 'claude' });
+    let releaseTermination!: () => void;
+    const termination = new Promise<void>((resolve) => {
+      releaseTermination = resolve;
+    });
+    agents.killAgent.mockImplementation(() => {
+      delete agents._agentTypes[0];
+      delete agents._profileIds[0];
+      delete agents._sessionIds[0];
+      return termination;
+    });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+
+    const execution = orchestrator.executeTask('codex', 0, 'stale replacement task');
+    await Promise.resolve();
+    agents._agentTypes[0] = 'gemini';
+    agents._profileIds[0] = 'gemini';
+    agents._sessionIds[0] = 'gemini-user-replacement';
+    releaseTermination();
+
+    await expect(execution).resolves.toEqual({
+      success: false,
+      error: 'Panel 1 managed session changed before delivery',
+    });
+    expect(agents.launchAgent).not.toHaveBeenCalled();
+    expect(panel.sendInput).not.toHaveBeenCalled();
+    expect(layout.setActivePanel).not.toHaveBeenCalled();
+  });
+
+  it('stops a launched task when the target is removed during its init delay', async () => {
+    const panel = mockTerminalPanel(0, false);
+    const panels = { 0: panel } as Record<number, ReturnType<typeof mockTerminalPanel>>;
+    const layout = mockLayout(panels);
+    const agents = mockAgentManager();
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    let releaseInit!: () => void;
+    orchestrator.delay = vi.fn(() => new Promise<void>((resolve) => {
+      releaseInit = resolve;
+    }));
+    orchestrator.connectPanel = vi.fn();
+
+    const execution = orchestrator.executeTask('codex', 0, 'new task');
+    await Promise.resolve();
+    expect(agents.launchAgent).toHaveBeenCalledWith('codex', panel);
+    expect(orchestrator.connectPanel).toHaveBeenCalledTimes(1);
+
+    delete panels[0];
+    releaseInit();
+
+    await expect(execution).resolves.toEqual({
+      success: false,
+      error: 'Panel 1 is no longer available',
+    });
+    expect(orchestrator.connectPanel).toHaveBeenCalledTimes(1);
+    expect(panel.sendInput).not.toHaveBeenCalled();
+    expect(layout.setActivePanel).not.toHaveBeenCalled();
+  });
+
+  it('stops a launched task when its managed session is replaced during init', async () => {
+    const panel = mockTerminalPanel(0, false);
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager();
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    let releaseInit!: () => void;
+    orchestrator.delay = vi.fn(() => new Promise<void>((resolve) => {
+      releaseInit = resolve;
+    }));
+
+    const execution = orchestrator.executeTask('codex', 0, 'belongs to the first launch');
+    await Promise.resolve();
+    expect(agents._sessionIds[0]).toMatch(/^codex-session-0-launch-/);
+    agents._sessionIds[0] = 'codex-session-0-user-replacement';
+    releaseInit();
+
+    await expect(execution).resolves.toEqual({
+      success: false,
+      error: 'Panel 1 managed session changed before delivery',
+    });
+    expect(panel.sendInput).not.toHaveBeenCalled();
+    expect(layout.setActivePanel).not.toHaveBeenCalled();
+  });
+
+  it('does not submit or focus stale work after the active profile changes', async () => {
+    const panel = mockTerminalPanel(0, true);
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager({ 0: 'claude' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    let releaseSubmit!: () => void;
+    orchestrator.delay = vi.fn(() => new Promise<void>((resolve) => {
+      releaseSubmit = resolve;
+    }));
+
+    const execution = orchestrator.executeTask('claude', 0, 'stale short task', true);
+    await Promise.resolve();
+    expect(panel.sendInput).toHaveBeenCalledWith('stale short task');
+    agents._profileIds[0] = 'replacement-profile';
+    releaseSubmit();
+
+    await expect(execution).resolves.toEqual({
+      success: false,
+      error: 'Panel 1 managed session changed before delivery',
+    });
+    expect(panel.sendInput).not.toHaveBeenCalledWith('\r');
+    expect(panel.showCommanderActivity).not.toHaveBeenCalled();
+    expect(layout.setActivePanel).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid profile before replacing or converting the target panel', async () => {
@@ -630,6 +1004,24 @@ describe('Orchestrator', () => {
     expect(agents.killAgent).not.toHaveBeenCalled();
     expect(layout.convertToTerminal).not.toHaveBeenCalled();
     expect(launchProfile).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing stable panel ID without creating or converting panels', async () => {
+    const panel = mockTerminalPanel(2, true);
+    const layout = mockLayout({ 2: panel });
+    const agents = mockAgentManager({ 2: 'codex' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+
+    await expect(
+      orchestrator.executeTask('codex', 1, 'do not retarget this task'),
+    ).resolves.toEqual({
+      success: false,
+      error: 'Panel 2 is not available',
+    });
+
+    expect(layout.addPanel).not.toHaveBeenCalled();
+    expect(layout.convertToTerminal).not.toHaveBeenCalled();
+    expect(panel.sendInput).not.toHaveBeenCalled();
   });
 
   it('reuses a running named profile without requiring its unused canonical default', async () => {
@@ -685,12 +1077,15 @@ describe('Orchestrator', () => {
     const orchestrator = new Orchestrator({} as never, {} as never) as any;
     orchestrator.cancelQueuedTask = vi.fn(() => true);
     orchestrator.enqueueTask = vi.fn(() => ({
-      id: 1,
-      agentType: 'codex',
-      task: 'Do work',
-      started: false,
-      cancelled: false,
-      queuedAt: Date.now(),
+      accepted: true,
+      task: {
+        id: 1,
+        agentType: 'codex',
+        task: 'Do work',
+        started: false,
+        cancelled: false,
+        queuedAt: Date.now(),
+      },
     }));
 
     const promise = orchestrator.sendTask('codex', 0, 'Do work');
@@ -756,6 +1151,7 @@ describe('Orchestrator', () => {
     const orchestrator = new Orchestrator({} as never, {} as never) as any;
     orchestrator.enqueueTask = vi.fn((_panelIndex: number, task: any) => {
       task.onComplete?.({ success: false, error: 'launch failed' });
+      return { accepted: false, error: 'launch failed' };
     });
 
     await expect(orchestrator.sendTask('codex', 0, 'Do work')).resolves.toEqual({
@@ -769,6 +1165,7 @@ describe('Orchestrator', () => {
     orchestrator.executeTask = vi.fn();
     orchestrator.enqueueTask = vi.fn((_panelIndex: number, queuedTask: any) => {
       queuedTask.onComplete?.({ success: true });
+      return { accepted: true, task: {} };
     });
 
     await expect(orchestrator.sendTask('codex', 1, 'Do work')).resolves.toEqual({ success: true });
@@ -779,9 +1176,9 @@ describe('Orchestrator', () => {
     expect(orchestrator.executeTask).not.toHaveBeenCalled();
   });
 
-  it('reindexes routing state after a panel is removed', () => {
+  it('removes only the deleted panel routing state and preserves stable IDs', () => {
     const agents = mockAgentManager({ 0: 'claude', 2: 'gemini', 3: 'codex' });
-    const orchestrator = new Orchestrator({} as never, agents as any) as any;
+    const orchestrator = new Orchestrator({ getTerminalPanel: vi.fn(() => null) } as never, agents as any) as any;
     orchestrator.connectedPanels = new Set([0, 1, 2, 3]);
     orchestrator.protocolInjected = new Set([1, 2, 3]);
     orchestrator.panelQueues = new Map([
@@ -825,27 +1222,81 @@ describe('Orchestrator', () => {
     orchestrator.panelProcessing = new Set([2]);
     orchestrator.injectionGrace = new Map([[1, 10], [3, 20]]);
 
-    orchestrator.reindexAfterPanelRemoval(1);
+    orchestrator.handlePanelRemoval(1);
 
-    expect([...orchestrator.connectedPanels]).toEqual([0, 1, 2]);
-    expect([...orchestrator.protocolInjected]).toEqual([1, 2]);
-    expect([...orchestrator.panelProcessing]).toEqual([1]);
-    expect(orchestrator.panelQueues.has(1)).toBe(true);
-    expect(orchestrator.panelQueues.get(1)).toMatchObject({
+    expect([...orchestrator.connectedPanels]).toEqual([0, 2, 3]);
+    expect([...orchestrator.protocolInjected]).toEqual([2, 3]);
+    expect([...orchestrator.panelProcessing]).toEqual([2]);
+    expect(orchestrator.panelQueues.has(1)).toBe(false);
+    expect(orchestrator.panelQueues.get(2)).toMatchObject({
       tasks: [
         {
           agentType: 'gemini',
           task: 'keep me',
-          source: { panel: 2, sessionId: 'codex-session-3', agent: 'Codex CLI', agentType: 'codex' },
+          source: { panel: 3, sessionId: 'codex-session-3', agent: 'Codex CLI', agentType: 'codex' },
         },
       ],
       processing: true,
       currentTask: {
         task: 'running',
-        source: { panel: 2, sessionId: 'codex-session-3', agent: 'Codex CLI', agentType: 'codex' },
+        source: { panel: 3, sessionId: 'codex-session-3', agent: 'Codex CLI', agentType: 'codex' },
       },
     });
-    expect([...orchestrator.injectionGrace.entries()]).toEqual([[2, 20]]);
+    expect([...orchestrator.injectionGrace.entries()]).toEqual([[3, 20]]);
+  });
+
+  it('does not restore an in-flight reply route after its source panel is removed', () => {
+    const agents = mockAgentManager({ 1: 'codex', 2: 'claude' });
+    const orchestrator = new Orchestrator(
+      { getTerminalPanel: vi.fn(() => null) } as never,
+      agents as any,
+    ) as any;
+    const completion = vi.fn();
+    const claimedReplyRoute = {
+      threadId: 'thr_removed_source',
+      replyToMessageId: 'msg_original',
+      waitingOnSessionId: 'codex-session-1',
+      returnToSessionId: 'claude-session-2',
+      returnToAgentName: 'Claude Code',
+      returnToAgentType: 'claude',
+    };
+    orchestrator.panelQueues = new Map([[2, {
+      tasks: [{
+        id: 1,
+        agentType: 'claude',
+        task: 'queued reply',
+        source: { panel: 1, sessionId: 'codex-session-1', agent: 'Codex CLI', agentType: 'codex' },
+        claimedReplyRoute: { ...claimedReplyRoute },
+        onComplete: completion,
+        started: false,
+        cancelled: false,
+        queuedAt: 0,
+      }],
+      processing: true,
+      currentTask: {
+        id: 2,
+        agentType: 'claude',
+        task: 'in-flight reply',
+        source: { panel: 1, sessionId: 'codex-session-1', agent: 'Codex CLI', agentType: 'codex' },
+        claimedReplyRoute: { ...claimedReplyRoute },
+        started: true,
+        cancelled: false,
+        queuedAt: 0,
+      },
+      detachedReason: null,
+    }]]);
+    const restoreReplyWindow = vi.spyOn(orchestrator.ledger, 'restoreReplyWindow');
+
+    orchestrator.handlePanelRemoval(1);
+
+    expect(orchestrator.panelQueues.get(2).tasks).toEqual([]);
+    expect(orchestrator.panelQueues.get(2).currentTask.source).toBeUndefined();
+    expect(orchestrator.panelQueues.get(2).currentTask.claimedReplyRoute).toBeUndefined();
+    expect(completion).toHaveBeenCalledWith({
+      success: false,
+      error: 'Source panel 2 is no longer available',
+    });
+    expect(restoreReplyWindow).not.toHaveBeenCalled();
   });
 
   it('continues processing queued tasks after one task throws', async () => {
@@ -895,7 +1346,11 @@ describe('Orchestrator', () => {
     });
 
     expect(tp.reserveProtocolTextForEcho).toHaveBeenCalledWith('Short routed reply');
-    expect(orchestrator.sendTextChunked).toHaveBeenCalledWith(tp, 'Short routed reply');
+    expect(orchestrator.sendTextChunked).toHaveBeenCalledWith(
+      tp,
+      'Short routed reply',
+      expect.any(Function),
+    );
     expect(orchestrator.delay).toHaveBeenCalled();
     expect(tp.sendInput).toHaveBeenCalledWith('\r');
     expect(tp.showCommanderActivity).toHaveBeenCalledWith('Commander task received');
@@ -918,10 +1373,30 @@ describe('Orchestrator', () => {
     });
 
     expect(tp.reserveProtocolTextForEcho).toHaveBeenCalledWith(longReply);
-    expect(orchestrator.sendTextToAgent).toHaveBeenCalledWith(tp, longReply);
-    expect(orchestrator.submitInput).toHaveBeenCalledWith(tp);
+    expect(orchestrator.sendTextToAgent).toHaveBeenCalledWith(
+      tp,
+      longReply,
+      expect.any(Function),
+    );
+    expect(orchestrator.submitInput).toHaveBeenCalledWith(tp, expect.any(Function));
     expect(tp.showCommanderActivity).toHaveBeenCalledWith('Commander task received');
     expect(orchestrator.sendTextChunked).not.toHaveBeenCalled();
+  });
+
+  it('fails delivery when the current terminal stops accepting input', async () => {
+    const tp = mockTerminalPanel(0);
+    tp.sendInput.mockReturnValue(false as never);
+    const layout = mockLayout({ 0: tp });
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+
+    await expect(orchestrator.executeTask('codex', 0, 'Do not drop this task')).resolves.toEqual({
+      success: false,
+      error: 'Panel 1 terminal is not accepting input',
+    });
+
+    expect(tp.showCommanderActivity).not.toHaveBeenCalled();
+    expect(layout.setActivePanel).not.toHaveBeenCalled();
   });
 
   // ── sendTextToAgent ──────────────────────────────────────────────
@@ -959,5 +1434,22 @@ describe('Orchestrator', () => {
     expect(tp.sendInput.mock.calls[2][0]).toHaveLength(1024);
     expect(tp.sendInput.mock.calls[3][0]).toHaveLength(952);
     expect(tp.sendInput.mock.calls[4][0]).toBe('\x1b[201~');
+  });
+
+  it('stops chunking when its target becomes invalid during a pacing delay', async () => {
+    vi.useFakeTimers();
+
+    const tp = mockTerminalPanel(0);
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator({} as never, agents as any) as any;
+    let valid = true;
+
+    const promise = orchestrator.sendTextChunked(tp, 'X'.repeat(2048), () => valid);
+    await Promise.resolve();
+    valid = false;
+    await vi.advanceTimersByTimeAsync(15);
+
+    await expect(promise).resolves.toBe(false);
+    expect(tp.sendInput).toHaveBeenCalledTimes(1);
   });
 });

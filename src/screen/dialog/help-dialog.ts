@@ -72,11 +72,12 @@ Multi-panel AI Agent Manager & File Browser
 {bold}{yellow-fg}SUPPORTED ADAPTERS{/yellow-fg}{/bold}
 
   {green-fg}Claude Code{/green-fg}   Anthropic      {green-fg}Codex CLI{/green-fg}  OpenAI
-  {green-fg}Gemini CLI{/green-fg}    Google         {green-fg}Shell{/green-fg}      Local/configured
+  {green-fg}Gemini CLI{/green-fg}    Google         {green-fg}OpenCode{/green-fg}   Multi-provider
+  {green-fg}Shell{/green-fg}         Local/configured
 
 {bold}{yellow-fg}CATALOGUED FUTURE PRESETS{/yellow-fg}{/bold}
 
-  Aider · Cline · OpenCode · Goose · Kiro · Amp
+  Aider · Cline · Goose · Kiro · Amp
   Listed in the selector, but not launchable yet.
 `.trim();
 

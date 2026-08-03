@@ -3,7 +3,7 @@ import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import type { AppConfig } from '../config/types.js';
 import { loadConfig } from '../config/loader.js';
-import { KNOWN_AGENTS } from '../agents/types.js';
+import { discoverAgentsWithResolver } from '../agents/agent-registry.js';
 import { resolveExecutablePath } from '../utils/command-resolution.js';
 import {
   listBuiltinTemplateFiles,
@@ -239,30 +239,51 @@ export async function runDoctor(options: RunDoctorOptions): Promise<DoctorReport
     ? row('demo-agent', 'Offline demo agent', 'pass', demoAgentPath)
     : row('demo-agent', 'Offline demo agent', 'warn', 'Demo asset is not installed yet'));
 
-  for (const knownAgent of KNOWN_AGENTS) {
-    const configured = config.agents[knownAgent.type];
-    const command = configured?.command ?? knownAgent.command;
-    const executable = resolveExecutable(command);
-    const label = knownAgent.supported
-      ? knownAgent.name
-      : `${knownAgent.name} (catalogued)`;
-    rows.push(executable
-      ? knownAgent.supported
-        ? row(`agent-${knownAgent.type}`, label, 'pass', executable)
-        : row(
-          `agent-${knownAgent.type}`,
+  const agentProfiles = discoverAgentsWithResolver(
+    config.agents,
+    config.agentProfiles,
+    resolveExecutable,
+  );
+  for (const agent of agentProfiles) {
+    const id = `agent-${agent.profileId}`;
+    const safeProfileLabel = plainDetail(agent.profileLabel, 120);
+    const label = agent.supported
+      ? safeProfileLabel
+      : `${safeProfileLabel} (catalogued)`;
+    if (agent.configurationError) {
+      rows.push(row(id, label, 'warn', 'Invalid profile configuration', agent.configurationError));
+      continue;
+    }
+
+    if (agent.type === 'opencode' && agent.env.OPENCODE_CONFIG) {
+      const configuredPath = path.isAbsolute(agent.env.OPENCODE_CONFIG)
+        ? agent.env.OPENCODE_CONFIG
+        : path.resolve(workingDirectory, agent.env.OPENCODE_CONFIG);
+      try {
+        await fs.access(configuredPath, fsConstants.R_OK);
+      } catch {
+        rows.push(row(id, label, 'warn', 'Configured OpenCode file is not readable'));
+        continue;
+      }
+    }
+
+    rows.push(agent.installed
+      ? agent.supported
+        ? row(
+          id,
           label,
           'pass',
-          'Found; not launchable yet',
-          executable,
+          agent.command,
+          agent.model ? `Model: ${agent.model}` : undefined,
         )
+        : row(id, label, 'pass', 'Found; not launchable yet', agent.command)
       : row(
-        `agent-${knownAgent.type}`,
+        id,
         label,
         'warn',
-        knownAgent.supported
-          ? `Not found (${command})`
-          : `Not found; not launchable yet (${command})`,
+        agent.supported
+          ? `Not found (${agent.command})`
+          : `Not found; not launchable yet (${agent.command})`,
       ));
   }
 
@@ -276,7 +297,9 @@ export function doctorExitCode(report: DoctorReport): number {
 export function formatDoctorReport(report: DoctorReport): string {
   const lines = ['Agents Commander Doctor', ''];
   for (const entry of report.rows) {
-    lines.push(`[${entry.status.toUpperCase()}] ${entry.label}: ${plainDetail(entry.summary)}`);
+    lines.push(
+      `[${entry.status.toUpperCase()}] ${plainDetail(entry.label, 120)}: ${plainDetail(entry.summary)}`,
+    );
     if (entry.detail) lines.push(`       ${plainDetail(entry.detail)}`);
   }
   lines.push('');

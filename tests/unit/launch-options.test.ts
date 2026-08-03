@@ -149,6 +149,17 @@ describe('resolveLaunchOptions', () => {
     expect(result.config.orchestration).not.toBe(saved.orchestration);
   });
 
+  it('supplies default profiles for pre-profile runtime configuration objects', () => {
+    const legacy = savedConfig() as Record<string, unknown>;
+    delete legacy.agentProfiles;
+
+    const result = resolveLaunchOptions(legacy as never);
+
+    expect(result.config.agentProfiles.map((profile) => profile.id)).toEqual(
+      defaultConfig.agentProfiles.map((profile) => profile.id),
+    );
+  });
+
   it('exposes an immutable conference preset with presentation-safe defaults', () => {
     expect(CONFERENCE_PRESET).toEqual({
       theme: 'midnight',

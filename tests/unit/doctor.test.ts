@@ -101,10 +101,9 @@ describe('Agents Commander Doctor', () => {
       summary: layout.helperPath,
     });
     expect(report.rows.find((entry) => entry.id === 'agent-opencode')).toMatchObject({
-      label: 'OpenCode (catalogued)',
+      label: 'OpenCode',
       status: 'pass',
-      summary: 'Found; not launchable yet',
-      detail: process.execPath,
+      summary: process.execPath,
     });
     expect(probe).toHaveBeenCalledTimes(2);
     expect(probe.mock.calls[0]?.[1]).toEqual(['--version']);
@@ -178,6 +177,52 @@ describe('Agents Commander Doctor', () => {
     expect(report.rows.find((entry) => entry.id === 'templates')?.status).toBe('fail');
     expect(report.rows.find((entry) => entry.id === 'demo-agent')?.status).toBe('warn');
     expect(doctorExitCode(report)).toBe(1);
+  });
+
+  it('validates OpenCode profiles without executing the OpenCode CLI', async () => {
+    const root = temporaryDirectory();
+    createInstalledLayout(root);
+    const config = structuredClone(defaultConfig);
+    config.agentProfiles = [{
+      id: 'broken-opencode',
+      label: 'Broken OpenCode',
+      adapter: 'opencode',
+      model: 'missing-provider-prefix',
+      command: process.execPath,
+    }];
+    const probe = vi.fn(async (
+      _command: string,
+      args: readonly string[],
+    ): Promise<ProcessProbeResult> => (
+      args[0] === '--version'
+        ? successfulProbe('Python 3.12.4')
+        : successfulProbe('pty-ok')
+    ));
+
+    const report = await runDoctor({
+      workingDirectory: root,
+      environment: {
+        nodeVersion: '22.19.0',
+        platform: 'linux',
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        columns: 120,
+        rows: 30,
+      },
+      config,
+      assetLookup: { mode: 'installed', packageRoot: root },
+      resolveExecutable: () => process.execPath,
+      probe,
+    });
+
+    expect(report.rows.find((entry) => entry.id === 'agent-broken-opencode'))
+      .toMatchObject({
+        label: 'Broken OpenCode',
+        status: 'warn',
+        summary: 'Invalid profile configuration',
+        detail: expect.stringContaining('provider/model'),
+      });
+    expect(probe).toHaveBeenCalledTimes(2);
   });
 
   it('formats deterministic plain output and sanitizes control characters', () => {

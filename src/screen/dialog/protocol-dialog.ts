@@ -102,9 +102,10 @@ with another agent running in a different panel.
   {cyan-fg}claude{/cyan-fg}      Claude Code  (Anthropic)
   {cyan-fg}codex{/cyan-fg}       Codex CLI    (OpenAI)
   {cyan-fg}gemini{/cyan-fg}      Gemini CLI   (Google)
+  {cyan-fg}opencode{/cyan-fg}    OpenCode     (multi-provider)
   {cyan-fg}generic{/cyan-fg}     Generic      (any CLI tool)
 
-  Aider, Cline, OpenCode, Goose, Kiro, and Amp are
+  Aider, Cline, Goose, Kiro, and Amp are
   catalogued future presets, not valid SEND targets yet.
 
   Panels are numbered {cyan-fg}1{/cyan-fg} to {cyan-fg}4{/cyan-fg}.

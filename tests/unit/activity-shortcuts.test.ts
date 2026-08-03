@@ -113,9 +113,10 @@ describe('Activity and protocol shortcuts', () => {
     expect(HELP_TEXT).toContain('Claude Code');
     expect(HELP_TEXT).toContain('Codex CLI');
     expect(HELP_TEXT).toContain('Gemini CLI');
+    expect(HELP_TEXT).toContain('OpenCode');
     expect(HELP_TEXT).toContain('Shell');
     expect(HELP_TEXT).toContain('CATALOGUED FUTURE PRESETS');
-    expect(HELP_TEXT).toContain('Aider · Cline · OpenCode · Goose · Kiro · Amp');
+    expect(HELP_TEXT).toContain('Aider · Cline · Goose · Kiro · Amp');
     expect(HELP_TEXT).toContain('not launchable yet');
     expect(HELP_TEXT).not.toContain('TESTED ADAPTERS');
   });
@@ -123,6 +124,7 @@ describe('Activity and protocol shortcuts', () => {
   it('keeps the protocol guide limited to launchable SEND targets', () => {
     expect(GUIDE_TEXT).toContain('SUPPORTED SEND TARGETS');
     expect(GUIDE_TEXT).toContain('{cyan-fg}generic{/cyan-fg}');
+    expect(GUIDE_TEXT).toContain('{cyan-fg}opencode{/cyan-fg}');
     expect(GUIDE_TEXT).toContain('not valid SEND targets yet');
     expect(GUIDE_TEXT).not.toContain('{cyan-fg}aider{/cyan-fg}');
     expect(GUIDE_TEXT).toContain('Reset to 2-panel view (from a file panel)');

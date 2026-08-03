@@ -1,3 +1,5 @@
+import type { AgentProfile } from '../agents/types.js';
+
 export interface Theme {
   name: string;
   panel: {
@@ -43,5 +45,7 @@ export interface AppConfig {
   watchDebounce: number;
   editor: { tabSize: number; wordWrap: boolean };
   agents: Record<string, AgentCommandConfig>;
+  /** Named launch profiles. Legacy `agents` entries remain adapter-level defaults. */
+  agentProfiles: AgentProfile[];
   orchestration?: Partial<OrchestrationConfig>;
 }

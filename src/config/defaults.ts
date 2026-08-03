@@ -1,5 +1,5 @@
 import type { AppConfig } from './types.js';
-import { KNOWN_AGENTS } from '../agents/types.js';
+import { DEFAULT_AGENT_PROFILES, KNOWN_AGENTS } from '../agents/types.js';
 
 const defaultAgents = Object.fromEntries(
   KNOWN_AGENTS.map((agent) => [
@@ -24,6 +24,11 @@ export const defaultConfig: AppConfig = {
     wordWrap: true,
   },
   agents: defaultAgents,
+  agentProfiles: DEFAULT_AGENT_PROFILES.map((profile) => ({
+    ...profile,
+    args: profile.args ? [...profile.args] : undefined,
+    env: profile.env ? { ...profile.env } : undefined,
+  })),
   orchestration: {
     gridScanDelay: 200,
     injectionGrace: 2500,

@@ -24,6 +24,7 @@ interface TaskSourceRef {
 interface QueuedTask {
   id: number;
   agentType: AgentType;
+  profileId?: string;
   task: string;
   source?: TaskSourceRef;
   /** When true, type directly to Claude (no bracketed paste = no bypass prompt). */
@@ -788,7 +789,13 @@ export class Orchestrator {
         queueState.currentTask = task;
         let result: { success: boolean; error?: string };
         try {
-          result = await this.executeTask(task.agentType, panelIndex, task.task, task.directType);
+          result = await this.executeTask(
+            task.agentType,
+            panelIndex,
+            task.task,
+            task.directType,
+            task.profileId,
+          );
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
           result = { success: false, error };
@@ -903,6 +910,7 @@ export class Orchestrator {
     agentType: AgentType,
     panelIndex: number,
     task: string,
+    profileId?: string,
   ): Promise<{ success: boolean; error?: string }> {
     return new Promise((resolve) => {
       let settled = false;
@@ -918,6 +926,7 @@ export class Orchestrator {
 
       queuedTask = this.enqueueTask(panelIndex, {
         agentType,
+        ...(profileId ? { profileId } : {}),
         task,
         onComplete: (result) => {
           if (settled) return;
@@ -936,7 +945,27 @@ export class Orchestrator {
     panelIndex: number,
     task: string,
     directType?: boolean,
+    profileId?: string,
   ): Promise<{ success: boolean; error?: string }> {
+    const existingTerminal = this.layout.getTerminalPanel(panelIndex);
+    const existingAgent = this.agentManager.getAgentType(panelIndex);
+    const existingProfile = typeof this.agentManager.getAgentProfileId === 'function'
+      ? this.agentManager.getAgentProfileId(panelIndex)
+      : existingAgent;
+    const reusesExisting = Boolean(
+      existingTerminal?.isRunning &&
+      existingAgent === agentType &&
+      (profileId === undefined || existingProfile === profileId),
+    );
+    const launchError = reusesExisting
+      ? null
+      : profileId !== undefined
+        ? this.agentManager.getProfileLaunchError?.(profileId, agentType)
+        : this.agentManager.getAgentLaunchError?.(agentType);
+    if (launchError) {
+      return { success: false, error: launchError };
+    }
+
     // 1. Ensure we have enough panels
     while (this.layout.panelCount <= panelIndex) {
       const added = await this.layout.addPanel();
@@ -953,7 +982,12 @@ export class Orchestrator {
 
     // 3. Launch agent if not running or different agent
     const currentAgent = this.agentManager.getAgentType(panelIndex);
-    const needsLaunch = !tp.isRunning || currentAgent !== agentType;
+    const currentProfile = typeof this.agentManager.getAgentProfileId === 'function'
+      ? this.agentManager.getAgentProfileId(panelIndex)
+      : currentAgent;
+    const needsLaunch = !tp.isRunning || currentAgent !== agentType || (
+      profileId !== undefined && currentProfile !== profileId
+    );
 
     if (needsLaunch) {
       if (tp.isRunning) {
@@ -966,7 +1000,9 @@ export class Orchestrator {
       }
 
       this.protocolInjected.delete(panelIndex);
-      const ok = this.agentManager.launchAgent(agentType, tp);
+      const ok = profileId !== undefined && typeof this.agentManager.launchProfile === 'function'
+        ? this.agentManager.launchProfile(profileId, tp)
+        : this.agentManager.launchAgent(agentType, tp);
       if (!ok) {
         return { success: false, error: `Failed to launch ${agentType}` };
       }

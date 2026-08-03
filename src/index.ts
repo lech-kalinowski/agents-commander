@@ -6,7 +6,11 @@ export {
   CONFERENCE_PRESET,
   resolveLaunchOptions,
 } from './config/launch-options.js';
-export { discoverAgents, getInstalledAgents } from './agents/agent-registry.js';
+export {
+  discoverAgents,
+  getAgentProfileInfo,
+  getInstalledAgents,
+} from './agents/agent-registry.js';
 export { AgentManager } from './agents/agent-manager.js';
 export {
   createDemoAgentLaunchSpec,
@@ -22,7 +26,13 @@ export { ProtocolScanner, buildProtocolInstructions } from './orchestration/prot
 export { TerminalPanel } from './panels/terminal-panel.js';
 export { VTerm } from './panels/vterm.js';
 export { loadTemplates } from './templates/loader.js';
-export type { AgentInfo, AgentType, AgentStatus } from './agents/types.js';
+export type {
+  AgentInfo,
+  AgentProfile,
+  AgentStatus,
+  AgentType,
+  OpenCodeAgentProfile,
+} from './agents/types.js';
 export type { InternalAgentLaunchSpec } from './agents/agent-manager.js';
 export type {
   ExplicitLaunchOptions,

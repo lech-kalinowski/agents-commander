@@ -1,14 +1,21 @@
 import blessed from 'blessed';
 import type { AgentCommandConfig, Theme } from '../../config/types.js';
-import type { AgentType } from '../../agents/types.js';
+import type { AgentProfile, AgentType } from '../../agents/types.js';
 import { discoverAgents } from '../../agents/agent-registry.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
 import { isValidPanelNumber, renderPanelBoxes } from './panel-picker.js';
 import { showErrorToast } from '../toast.js';
 import { bindOverlayResize, screenGeometry } from './geometry.js';
+import { sanitizeUserText } from '../../utils/user-facing-errors.js';
+
+function escapeTaggedText(value: unknown, maxLength: number): string {
+  const escape = (blessed as unknown as { escape(text: string): string }).escape;
+  return escape(sanitizeUserText(value, maxLength));
+}
 
 export interface OrchestrateChoice {
   agentType: AgentType;
+  profileId: string;
   panelIndex: number;
   task: string;
 }
@@ -17,8 +24,11 @@ let dialogOpen = false;
 
 export function getAvailableOrchestrationAgents(
   agentOverrides?: Record<string, AgentCommandConfig>,
+  agentProfiles?: readonly AgentProfile[],
 ) {
-  return discoverAgents(agentOverrides).filter((agent) => agent.installed && agent.supported);
+  return discoverAgents(agentOverrides, agentProfiles).filter(
+    (agent) => agent.installed && agent.supported && !agent.configurationError,
+  );
 }
 
 export function showOrchestrateDialog(
@@ -27,13 +37,14 @@ export function showOrchestrateDialog(
   panelCount: number,
   activePanelIndex: number,
   agentOverrides?: Record<string, AgentCommandConfig>,
+  agentProfiles?: readonly AgentProfile[],
 ): Promise<OrchestrateChoice | null> {
   if (dialogOpen) return Promise.resolve(null);
   dialogOpen = true;
   enterDialog();
 
   return new Promise((resolve) => {
-    const agents = getAvailableOrchestrationAgents(agentOverrides);
+    const agents = getAvailableOrchestrationAgents(agentOverrides, agentProfiles);
 
     if (agents.length === 0) {
       dialogOpen = false;
@@ -72,7 +83,11 @@ export function showOrchestrateDialog(
     });
 
     // ── Agent list ──
-    const agentItems = agents.map((a) => `  ${a.name.padEnd(20)} ${a.description}`);
+    const agentItems = agents.map((a) => {
+      const model = a.model ? ` · ${escapeTaggedText(a.model, 180)}` : '';
+      return `  ${escapeTaggedText(a.profileLabel, 120).padEnd(20)} ` +
+        `${escapeTaggedText(a.description, 180)}${model}`;
+    });
     const agentList = blessed.list({
       parent: dialog,
       top: 3,
@@ -199,7 +214,10 @@ export function showOrchestrateDialog(
     function showStep2() {
       currentStep = 2;
       agentList.hide();
-      stepBox.setContent(`{bold}Step 2/3:{/bold} Select target panel for {cyan-fg}${selectedAgent!.name}{/cyan-fg}`);
+      stepBox.setContent(
+        `{bold}Step 2/3:{/bold} Select target panel for {cyan-fg}` +
+        `${escapeTaggedText(selectedAgent!.profileLabel, 120)}{/cyan-fg}`,
+      );
 
       renderPanelContent();
       panelBox.show();
@@ -239,7 +257,8 @@ export function showOrchestrateDialog(
       currentStep = 3;
       panelBox.hide();
       stepBox.setContent(
-        `{bold}Step 3/3:{/bold} Type task for {cyan-fg}${selectedAgent!.name}{/cyan-fg} in Panel ${selectedPanel + 1}`,
+        `{bold}Step 3/3:{/bold} Type task for {cyan-fg}` +
+        `${escapeTaggedText(selectedAgent!.profileLabel, 120)}{/cyan-fg} in Panel ${selectedPanel + 1}`,
       );
       taskLabel.setContent(`{bold}Task:{/bold}`);
       taskLabel.show();
@@ -253,6 +272,7 @@ export function showOrchestrateDialog(
           cleanup();
           resolve({
             agentType: selectedAgent!.type,
+            profileId: selectedAgent!.profileId,
             panelIndex: selectedPanel,
             task: value.trim(),
           });

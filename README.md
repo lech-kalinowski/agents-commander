@@ -111,9 +111,10 @@ Supported adapters:
 - **Claude Code** (Anthropic)
 - **Codex CLI** (OpenAI)
 - **Gemini CLI** (Google)
+- **OpenCode** (multi-provider, including custom `provider/model` profiles)
 - **Shell** (a generic local shell or configured command)
 
-The selector also catalogues six future presets that are not launchable yet: Aider, Cline, OpenCode, Goose, Kiro, and Amp.
+The selector also catalogues five future presets that are not launchable yet: Aider, Cline, Goose, Kiro, and Amp.
 
 ### Dual-Panel File Manager
 
@@ -378,9 +379,21 @@ Create `~/.agents-commander/config.json`:
       "args": [],
       "env": {}
     }
-  }
+  },
+  "agentProfiles": [
+    {
+      "id": "local-reviewer",
+      "label": "Local Reviewer",
+      "adapter": "opencode",
+      "model": "provider/model-name",
+      "agent": "reviewer",
+      "configPath": "/absolute/path/to/opencode.json"
+    }
+  ]
 }
 ```
+
+`agentProfiles` adds named launch choices without removing the built-in profiles. OpenCode models use the full `provider/model` form; `agent` is optional, and `configPath` must be absolute. Keep provider credentials in your normal OpenCode authentication or environment setup rather than committing them to the repository.
 
 ### Themes
 
@@ -456,9 +469,9 @@ Agents Commander combines several local workflows in one TUI:
 
 ## Roadmap
 
-- [x] Supported Claude Code, Codex CLI, Gemini CLI, and Shell adapters
+- [x] Supported Claude Code, Codex CLI, Gemini CLI, OpenCode, and Shell adapters
 - [x] Prompt template library (`Ctrl+B`)
-- [ ] Aider, Cline, OpenCode, Goose, Kiro, Amp support
+- [ ] Aider, Cline, Goose, Kiro, Amp support
 - [ ] Task queue -- chain agent tasks in sequence
 - [ ] Agent memory -- persistent context across sessions
 - [ ] Plugin system for custom agents

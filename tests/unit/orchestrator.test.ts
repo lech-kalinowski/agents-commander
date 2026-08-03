@@ -608,6 +608,77 @@ describe('Orchestrator', () => {
     expect(agents.launchAgent).toHaveBeenCalledWith('codex', panel);
   });
 
+  it('rejects an invalid profile before replacing or converting the target panel', async () => {
+    const panel = mockTerminalPanel(0, true);
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager({ 0: 'claude' });
+    const launchProfile = vi.fn(() => true);
+    Object.assign(agents, {
+      getAgentProfileId: vi.fn(() => 'claude'),
+      getProfileLaunchError: vi.fn(() => 'Invalid agent profile "broken": command must be a string'),
+      launchProfile,
+    });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+
+    await expect(
+      orchestrator.executeTask('opencode', 0, 'replacement task', undefined, 'broken'),
+    ).resolves.toEqual({
+      success: false,
+      error: 'Invalid agent profile "broken": command must be a string',
+    });
+
+    expect(agents.killAgent).not.toHaveBeenCalled();
+    expect(layout.convertToTerminal).not.toHaveBeenCalled();
+    expect(launchProfile).not.toHaveBeenCalled();
+  });
+
+  it('reuses a running named profile without requiring its unused canonical default', async () => {
+    const panel = mockTerminalPanel(0, true);
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager({ 0: 'opencode' });
+    const getAgentLaunchError = vi.fn(() => 'Default OpenCode is not installed');
+    Object.assign(agents, {
+      getAgentProfileId: vi.fn(() => 'local-reviewer'),
+      getAgentLaunchError,
+    });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    orchestrator.sendTextToAgent = vi.fn(async () => undefined);
+    orchestrator.submitInput = vi.fn(async () => undefined);
+
+    await expect(
+      orchestrator.executeTask('opencode', 0, 'continue the review'),
+    ).resolves.toEqual({ success: true });
+
+    expect(getAgentLaunchError).not.toHaveBeenCalled();
+    expect(agents.killAgent).not.toHaveBeenCalled();
+    expect(agents.launchAgent).not.toHaveBeenCalled();
+  });
+
+  it('passes the claimed adapter into profile validation before replacing a panel', async () => {
+    const panel = mockTerminalPanel(0, true);
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager({ 0: 'claude' });
+    const getProfileLaunchError = vi.fn(() => (
+      'Agent profile local-reviewer uses opencode, not codex'
+    ));
+    Object.assign(agents, {
+      getAgentProfileId: vi.fn(() => 'claude'),
+      getProfileLaunchError,
+      launchProfile: vi.fn(() => true),
+    });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+
+    await expect(
+      orchestrator.executeTask('codex', 0, 'replacement task', undefined, 'local-reviewer'),
+    ).resolves.toEqual({
+      success: false,
+      error: 'Agent profile local-reviewer uses opencode, not codex',
+    });
+
+    expect(getProfileLaunchError).toHaveBeenCalledWith('local-reviewer', 'codex');
+    expect(agents.killAgent).not.toHaveBeenCalled();
+  });
+
   it('times out queued tasks after 60 seconds', async () => {
     vi.useFakeTimers();
 

@@ -1,4 +1,5 @@
 import type { AppConfig } from './types.js';
+import { defaultConfig } from './defaults.js';
 
 export type LaunchPanelCount = 2 | 3 | 4;
 
@@ -44,6 +45,11 @@ function cloneConfig(config: AppConfig): AppConfig {
         },
       ]),
     ),
+    agentProfiles: (config.agentProfiles ?? defaultConfig.agentProfiles).map((profile) => ({
+      ...profile,
+      args: profile.args ? [...profile.args] : undefined,
+      env: profile.env ? { ...profile.env } : undefined,
+    })),
     orchestration: config.orchestration === undefined
       ? undefined
       : { ...config.orchestration },

@@ -1,5 +1,5 @@
-import type { AgentType, AgentInfo } from './types.js';
-import { getAgentInfo } from './agent-registry.js';
+import type { AgentType, AgentInfo, AgentProfile } from './types.js';
+import { getAgentInfo, getAgentProfileInfo } from './agent-registry.js';
 import {
   TerminalPanel,
   type TerminalProcessExitReason,
@@ -29,6 +29,9 @@ export interface RunningAgentInfo {
   panelIndex: number;
   sessionId: string;
   type: AgentType;
+  profileId: string;
+  profileLabel: string;
+  model?: string;
   name: string;
   status: string;
   uptime: number;
@@ -40,6 +43,8 @@ interface AgentLifecycleEventBase {
   previousSessionId?: string;
   agentType: AgentType;
   agentName: string;
+  profileId: string;
+  profileLabel: string;
 }
 
 export type AgentExitReason =
@@ -70,35 +75,78 @@ export class AgentManager {
   private lifecycleListeners = new Set<(event: AgentLifecycleEvent) => void>();
   private shutdownStarted = false;
 
-  constructor(private agentOverrides?: Record<string, AgentCommandConfig>) {}
+  constructor(
+    private agentOverrides?: Record<string, AgentCommandConfig>,
+    private agentProfiles?: readonly AgentProfile[],
+  ) {}
 
   launchAgent(agentType: AgentType, panel: TerminalPanel): boolean {
     if (this.shutdownStarted) {
       logger.warn(`Agent manager: refusing to launch ${agentType}; shutdown has begun`);
       return false;
     }
-    const info = getAgentInfo(agentType, this.agentOverrides);
+    const info = getAgentInfo(agentType, this.agentOverrides, this.agentProfiles);
     if (!info) {
       logger.error(`Unknown agent type: ${agentType}`);
       return false;
     }
 
-    if (!info.installed) {
-      logger.error(`Agent not installed: ${info.name}. Run: ${info.installCommand}`);
+    return this.launchResolvedAgent(info, panel);
+  }
+
+  launchProfile(profileId: string, panel: TerminalPanel): boolean {
+    if (this.shutdownStarted) {
+      logger.warn(`Agent manager: refusing to launch profile ${profileId}; shutdown has begun`);
       return false;
     }
+    const info = getAgentProfileInfo(profileId, this.agentOverrides, this.agentProfiles);
+    if (!info) {
+      logger.error(`Unknown agent profile: ${profileId}`);
+      return false;
+    }
+    return this.launchResolvedAgent(info, panel);
+  }
 
-    if (!info.supported) {
-      logger.error(`Agent not yet supported: ${info.name}`);
+  getAgentLaunchError(agentType: AgentType): string | null {
+    return this.getResolvedLaunchError(
+      getAgentInfo(agentType, this.agentOverrides, this.agentProfiles),
+      `Unknown or ambiguous default profile for ${agentType}`,
+    );
+  }
+
+  getProfileLaunchError(profileId: string, expectedType?: AgentType): string | null {
+    const info = getAgentProfileInfo(profileId, this.agentOverrides, this.agentProfiles);
+    if (info && expectedType !== undefined && info.type !== expectedType) {
+      return `Agent profile ${profileId} uses ${info.type}, not ${expectedType}`;
+    }
+    return this.getResolvedLaunchError(info, `Unknown agent profile: ${profileId}`);
+  }
+
+  private getResolvedLaunchError(info: AgentInfo | undefined, missingMessage: string): string | null {
+    if (!info) return missingMessage;
+    if (info.configurationError) {
+      return `Invalid agent profile ${info.profileId}: ${info.configurationError}`;
+    }
+    if (!info.installed) {
+      return `Agent not installed: ${info.name}. Run: ${info.installCommand}`;
+    }
+    if (!info.supported) return `Agent not yet supported: ${info.name}`;
+    return null;
+  }
+
+  private launchResolvedAgent(info: AgentInfo, panel: TerminalPanel): boolean {
+    const launchError = this.getResolvedLaunchError(info, `Unknown agent profile: ${info.profileId}`);
+    if (launchError) {
+      logger.error(launchError);
       return false;
     }
 
     this.prepareManagedPanel(panel);
 
-    const launched = this.performLaunch(agentType, info, panel);
+    const launched = this.performLaunch(info.type, info, panel);
     if (!launched) return false;
 
-    this.registerManagedAgent(agentType, info, panel, true);
+    this.registerManagedAgent(info.type, info, panel, true);
     return true;
   }
 
@@ -119,6 +167,8 @@ export class AgentManager {
 
     const info: AgentInfo = {
       type: 'generic',
+      profileId: 'internal',
+      profileLabel: spec.name,
       name: spec.name,
       command: spec.command,
       args: [...(spec.args ?? [])],
@@ -191,6 +241,8 @@ export class AgentManager {
         sessionId: managed.sessionId,
         agentType: managed.type,
         agentName: managed.info.name,
+        profileId: managed.info.profileId,
+        profileLabel: managed.info.profileLabel,
         exitCode: code,
         signal,
         reason,
@@ -226,6 +278,8 @@ export class AgentManager {
               sessionId: previousSessionId,
               agentType: managed.type,
               agentName: managed.info.name,
+              profileId: managed.info.profileId,
+              profileLabel: managed.info.profileLabel,
               exitCode: code,
               signal,
               reason,
@@ -236,7 +290,11 @@ export class AgentManager {
             return;
           }
 
-          managed.sessionId = this.makeSessionId(managed.type, currentPanelIndex);
+          managed.sessionId = this.makeSessionId(
+            managed.type,
+            managed.info.profileId,
+            currentPanelIndex,
+          );
           managed.launchedAt = new Date();
           this.emitLifecycle({
             type: 'restarted',
@@ -245,6 +303,8 @@ export class AgentManager {
             previousSessionId,
             agentType: managed.type,
             agentName: managed.info.name,
+            profileId: managed.info.profileId,
+            profileLabel: managed.info.profileLabel,
           });
         }, 1000);
         return;
@@ -260,6 +320,8 @@ export class AgentManager {
       sessionId: managed.sessionId,
       agentType: managed.type,
       agentName: managed.info.name,
+      profileId: managed.info.profileId,
+      profileLabel: managed.info.profileLabel,
       exitCode: code,
       signal,
       reason,
@@ -278,6 +340,8 @@ export class AgentManager {
         sessionId: managed.sessionId,
         agentType: managed.type,
         agentName: managed.info.name,
+        profileId: managed.info.profileId,
+        profileLabel: managed.info.profileLabel,
         exitCode: null,
         signal: null,
         reason: 'requested',
@@ -300,6 +364,8 @@ export class AgentManager {
         sessionId: managed.sessionId,
         agentType: managed.type,
         agentName: managed.info.name,
+        profileId: managed.info.profileId,
+        profileLabel: managed.info.profileLabel,
         exitCode: null,
         signal: null,
         reason: 'requested',
@@ -327,6 +393,8 @@ export class AgentManager {
         sessionId: managed.sessionId,
         agentType: managed.type,
         agentName: managed.info.name,
+        profileId: managed.info.profileId,
+        profileLabel: managed.info.profileLabel,
         exitCode: null,
         signal: null,
         reason: 'shutdown',
@@ -364,6 +432,9 @@ export class AgentManager {
         panelIndex: idx,
         sessionId: managed.sessionId,
         type: managed.type,
+        profileId: managed.info.profileId,
+        profileLabel: managed.info.profileLabel,
+        ...(managed.info.model ? { model: managed.info.model } : {}),
         name: managed.info.name,
         status: managed.restartTimer ? 'restarting' : managed.panel.status,
         uptime: Math.floor((now - managed.launchedAt.getTime()) / 1000),
@@ -385,6 +456,12 @@ export class AgentManager {
     const managed = this.agents.get(panelIndex);
     if (!managed || !managed.panel.isRunning) return null;
     return managed.type;
+  }
+
+  getAgentProfileId(panelIndex: number): string | null {
+    const managed = this.agents.get(panelIndex);
+    if (!managed || !managed.panel.isRunning) return null;
+    return managed.info.profileId;
   }
 
   getAgentSessionId(panelIndex: number): string | null {
@@ -429,6 +506,8 @@ export class AgentManager {
         sessionId: previous.sessionId,
         agentType: previous.type,
         agentName: previous.info.name,
+        profileId: previous.info.profileId,
+        profileLabel: previous.info.profileLabel,
         exitCode: null,
         signal: null,
         reason: 'replaced',
@@ -447,7 +526,7 @@ export class AgentManager {
     panel: TerminalPanel,
     autoRestart: boolean,
   ): void {
-    const sessionId = this.makeSessionId(agentType, panel.panelIndex);
+    const sessionId = this.makeSessionId(agentType, info.profileId, panel.panelIndex);
     this.agents.set(panel.panelIndex, {
       type: agentType,
       info,
@@ -464,6 +543,8 @@ export class AgentManager {
       sessionId,
       agentType,
       agentName: info.name,
+      profileId: info.profileId,
+      profileLabel: info.profileLabel,
     });
   }
 
@@ -480,8 +561,17 @@ export class AgentManager {
     return null;
   }
 
-  private makeSessionId(agentType: AgentType, panelIndex: number): string {
+  private makeSessionId(
+    agentType: AgentType,
+    profileId: string | undefined,
+    panelIndex: number,
+  ): string {
     const seq = this.sessionSeq++;
-    return `${agentType}_${(panelIndex + 1).toString(36)}_${Date.now().toString(36)}_${seq.toString(36)}`;
+    const safeProfileId = (profileId ?? agentType)
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/gu, '-')
+      .slice(0, 32)
+      || agentType;
+    return `${agentType}-${safeProfileId}_${(panelIndex + 1).toString(36)}_${Date.now().toString(36)}_${seq.toString(36)}`;
   }
 }

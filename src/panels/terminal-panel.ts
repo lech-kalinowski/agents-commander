@@ -25,6 +25,7 @@ import {
   resolvePtyHelperPath,
   runtimeAssetLookupForModule,
 } from '../utils/runtime-assets.js';
+import { sanitizeUserText } from '../utils/user-facing-errors.js';
 
 /**
  * Keys reserved for the UI — never forwarded to the agent process.
@@ -922,7 +923,9 @@ export class TerminalPanel {
     const activity = this.commanderActivityLabel
       ? `  |  {yellow-fg}${this.commanderActivityLabel}{/yellow-fg}`
       : '  |  Type directly  ^C=Int';
-    this.headerBox.setContent(` ${icon} ${this.agentName}  [${this._status}]${pid}${activity}`);
+    const escape = (blessed as unknown as { escape(text: string): string }).escape;
+    const safeAgentName = escape(sanitizeUserText(this.agentName, 120));
+    this.headerBox.setContent(` ${icon} ${safeAgentName}  [${this._status}]${pid}${activity}`);
   }
 
   private static boundedGracePeriod(value: number | undefined, fallback: number): number {

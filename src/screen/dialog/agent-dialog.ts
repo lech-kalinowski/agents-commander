@@ -1,14 +1,21 @@
 import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
-import type { AgentType } from '../../agents/types.js';
+import type { AgentProfile, AgentType } from '../../agents/types.js';
 import { discoverAgents } from '../../agents/agent-registry.js';
 import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
 import { renderPanelBoxes } from './panel-picker.js';
 import type { AgentCommandConfig } from '../../config/types.js';
 import { bindOverlayResize, screenGeometry } from './geometry.js';
+import { sanitizeUserText } from '../../utils/user-facing-errors.js';
+
+function escapeTaggedText(value: unknown, maxLength: number): string {
+  const escape = (blessed as unknown as { escape(text: string): string }).escape;
+  return escape(sanitizeUserText(value, maxLength));
+}
 
 export interface AgentLaunchChoice {
   agentType: AgentType;
+  profileId: string;
   panelIndex: number;
 }
 
@@ -20,13 +27,14 @@ export function showAgentDialog(
   panelCount: number,
   activePanelIndex: number,
   agentOverrides?: Record<string, AgentCommandConfig>,
+  agentProfiles?: readonly AgentProfile[],
 ): Promise<AgentLaunchChoice | null> {
   if (agentDialogOpen) return Promise.resolve(null);
   agentDialogOpen = true;
   enterDialog();
 
   return new Promise((resolve) => {
-    const agents = discoverAgents(agentOverrides);
+    const agents = discoverAgents(agentOverrides, agentProfiles);
     const preferredHeight = agents.length + 14;
     const geometry = screenGeometry(screen, 64, preferredHeight);
     const listHeight = Math.max(3, Math.min(agents.length, geometry.height - 13));
@@ -58,11 +66,19 @@ export function showAgentDialog(
     });
 
     const items = agents.map((a) => {
-      const status = a.installed
+      const status = a.configurationError
+        ? '{red-fg}[!!]{/red-fg}'
+        : a.installed
         ? (a.supported ? '{green-fg}[OK]{/green-fg}' : '{yellow-fg}[..]{/yellow-fg}')
         : '{red-fg}[--]{/red-fg}';
       const tag = !a.supported ? ' {yellow-fg}(future){/yellow-fg}' : '';
-      return `${status} ${a.name.padEnd(18)} ${a.description}${tag}`;
+      const safeLabel = escapeTaggedText(a.profileLabel, 120);
+      const safeDescription = escapeTaggedText(a.description, 180);
+      const model = a.model
+        ? ` {cyan-fg}${escapeTaggedText(a.model, 180)}{/cyan-fg}`
+        : '';
+      const invalid = a.configurationError ? ' {red-fg}(invalid profile){/red-fg}' : '';
+      return `${status} ${safeLabel.padEnd(18)} ${safeDescription}${model}${tag}${invalid}`;
     });
 
     const list = blessed.list({
@@ -149,8 +165,12 @@ export function showAgentDialog(
     const handleSelect = (index: number) => {
       const agent = agents[index];
       cleanup();
-      if (agent && agent.installed && agent.supported) {
-        resolve({ agentType: agent.type, panelIndex: selectedPanel });
+      if (agent && agent.installed && agent.supported && !agent.configurationError) {
+        resolve({
+          agentType: agent.type,
+          profileId: agent.profileId,
+          panelIndex: selectedPanel,
+        });
       } else if (agent && !agent.installed) {
         const messageGeometry = screenGeometry(screen, 50, 5, { minWidth: 20, minHeight: 5 });
         const msg = blessed.message({
@@ -166,6 +186,27 @@ export function showAgentDialog(
         msg.display(`Not installed. Run:\n${agent.installCommand}`, 4, () => {
           screen.render();
         });
+        resolve(null);
+      } else if (agent?.configurationError) {
+        const messageGeometry = screenGeometry(screen, 58, 6, { minWidth: 24, minHeight: 5 });
+        const msg = blessed.message({
+          parent: screen,
+          top: 'center',
+          left: 'center',
+          width: messageGeometry.width,
+          height: messageGeometry.height,
+          border: { type: 'line' },
+          style: { bg: theme.dialog.bg, fg: theme.dialog.fg, border: theme.dialog.border },
+          tags: true,
+        });
+        msg.display(
+          `Invalid profile “${escapeTaggedText(agent.profileLabel, 120)}”:\n` +
+          escapeTaggedText(agent.configurationError, 280),
+          5,
+          () => {
+          screen.render();
+          },
+        );
         resolve(null);
       } else {
         resolve(null);

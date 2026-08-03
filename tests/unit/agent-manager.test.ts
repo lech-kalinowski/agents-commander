@@ -176,7 +176,7 @@ describe('AgentManager', () => {
       name: 'Demo Reviewer',
       status: 'running',
     });
-    expect(running[0].sessionId).toMatch(/^generic_2_/);
+    expect(running[0].sessionId).toMatch(/^generic-internal_2_/);
     expect(manager.getAgentType(1)).toBe('generic');
     expect(manager.getAgentSessionId(1)).toBe(running[0].sessionId);
     expect(manager.findPanelBySessionId(running[0].sessionId)).toBe(1);

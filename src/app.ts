@@ -124,7 +124,7 @@ export class App {
     this.workingDir = workingDir || process.cwd();
     this.onShutdown = options.onShutdown;
     this.onSignalOwnership = options.onSignalOwnership;
-    this.agentManager = new AgentManager(this.config.agents);
+    this.agentManager = new AgentManager(this.config.agents, this.config.agentProfiles);
   }
 
   async run(): Promise<void> {
@@ -587,11 +587,14 @@ export class App {
     agentType: AgentType,
     panelIndex: number,
     nextAction: string,
+    profileId?: string,
   ): Promise<boolean> {
     const terminal = this.layout.getTerminalPanel(panelIndex);
     const managed = this.getManagedSession(panelIndex);
     const reusesRunningAgent = Boolean(
-      terminal?.isRunning && managed?.type === agentType,
+      terminal?.isRunning &&
+      managed?.type === agentType &&
+      (profileId === undefined || managed.profileId === profileId),
     );
 
     if (reusesRunningAgent || (!terminal?.isRunning && !managed)) return true;
@@ -875,11 +878,13 @@ export class App {
       this.layout.panelCount,
       this.layout.allPanels.indexOf(this.layout.activePanel),
       this.config.agents,
+      this.config.agentProfiles,
     );
 
     if (this.disposalStarted) return;
     if (choice) {
       const { agentType, panelIndex } = choice;
+      const profileId = choice.profileId ?? agentType;
       let tp = this.layout.getTerminalPanel(panelIndex);
       if (this.hasLiveTerminalSession(panelIndex)) {
         const confirmed = await this.confirmSessionReplacement(panelIndex, `launch ${agentType}`);
@@ -890,7 +895,7 @@ export class App {
       if (!tp) {
         tp = this.layout.convertToTerminal(panelIndex);
       }
-      const ok = this.agentManager.launchAgent(agentType, tp);
+      const ok = this.agentManager.launchProfile(profileId, tp);
       if (ok) {
         this.orchestrator.connectPanel(tp);
         this.layout.setActivePanel(panelIndex);
@@ -942,6 +947,7 @@ export class App {
         this.layout.panelCount,
         panelIndex,
         this.config.agents,
+        this.config.agentProfiles,
       );
       if (this.disposalStarted) return;
       if (agentChoice) {
@@ -950,6 +956,7 @@ export class App {
           agentChoice.agentType,
           targetPanel,
           `launch ${agentChoice.agentType} and send the template`,
+          agentChoice.profileId,
         );
         if (!confirmed) return;
         if (this.disposalStarted) return;
@@ -957,6 +964,7 @@ export class App {
           agentChoice.agentType,
           targetPanel,
           content,
+          agentChoice.profileId,
         );
         if (this.disposalStarted) return;
         if (!result.success) {
@@ -979,6 +987,7 @@ export class App {
       this.layout.panelCount,
       this.layout.allPanels.indexOf(this.layout.activePanel),
       this.config.agents,
+      this.config.agentProfiles,
     );
 
     if (this.disposalStarted) return;
@@ -988,6 +997,7 @@ export class App {
       choice.agentType,
       choice.panelIndex,
       `launch ${choice.agentType} and send the task`,
+      choice.profileId,
     );
     if (!confirmed) return;
     if (this.disposalStarted) return;
@@ -996,6 +1006,7 @@ export class App {
       choice.agentType,
       choice.panelIndex,
       choice.task,
+      choice.profileId,
     );
     if (this.disposalStarted) return;
     if (!result.success) {

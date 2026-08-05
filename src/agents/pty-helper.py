@@ -15,9 +15,12 @@ import errno
 import fcntl
 import struct
 import termios
+import time
 
 CONTROL_FD = 3
 MAX_TERMINAL_DIMENSION = 10000
+PROCESS_GROUP_TERM_GRACE_SECONDS = 0.5
+PROCESS_GROUP_KILL_GRACE_SECONDS = 0.5
 CONTROL_SIGNALS = {
     'INT': signal.SIGINT,
     'TERM': signal.SIGTERM,
@@ -57,21 +60,98 @@ def apply_resize(master_fd, cols, rows):
     # process group. Sending another signal here would trigger duplicate redraws.
     fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
 
-def signal_child_process_group(child_pid, signum):
+def signal_child_process_group(child_pid, signum, allow_pid_fallback=True):
     """Signal the PTY child's whole process group, including descendants."""
     try:
         # forkpty(3) makes the child a session/process-group leader, so its PID
         # is also the stable process-group id until it has been reaped.
         os.killpg(child_pid, signum)
     except ProcessLookupError:
-        pass
-    except OSError:
-        # Retain a narrow fallback for platforms where killpg is unavailable
-        # or the child has not completed session setup yet.
+        if not allow_pid_fallback:
+            return
         try:
             os.kill(child_pid, signum)
         except OSError:
             pass
+    except OSError:
+        # Retain a narrow fallback for platforms where killpg is unavailable
+        # or the child has not completed session setup yet.
+        if not allow_pid_fallback:
+            return
+        try:
+            os.kill(child_pid, signum)
+        except OSError:
+            pass
+
+def child_process_group_exists(child_pid):
+    try:
+        os.killpg(child_pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError as exc:
+        return exc.errno != errno.ESRCH
+
+def poll_child(child_pid):
+    """Return (reaped, status), without ever blocking the helper."""
+    try:
+        result = os.waitpid(child_pid, os.WNOHANG)
+    except ChildProcessError:
+        return True, None
+    except OSError as exc:
+        if exc.errno == errno.ECHILD:
+            return True, None
+        return False, None
+    if result[0] == 0:
+        return False, None
+    return True, result[1]
+
+def cleanup_child_process_group(child_pid, child_reaped, child_status):
+    """Bounded TERM/KILL cleanup for the PTY leader and all descendants."""
+    if not child_reaped:
+        child_reaped, status = poll_child(child_pid)
+        if status is not None:
+            child_status = status
+    if child_reaped and not child_process_group_exists(child_pid):
+        return child_reaped, child_status
+
+    signal_child_process_group(
+        child_pid,
+        signal.SIGTERM,
+        allow_pid_fallback=not child_reaped,
+    )
+    deadline = time.monotonic() + PROCESS_GROUP_TERM_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        if not child_reaped:
+            child_reaped, status = poll_child(child_pid)
+            if status is not None:
+                child_status = status
+        if child_reaped and not child_process_group_exists(child_pid):
+            return child_reaped, child_status
+        time.sleep(0.02)
+
+    signal_child_process_group(
+        child_pid,
+        signal.SIGKILL,
+        allow_pid_fallback=not child_reaped,
+    )
+    deadline = time.monotonic() + PROCESS_GROUP_KILL_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        if not child_reaped:
+            child_reaped, status = poll_child(child_pid)
+            if status is not None:
+                child_status = status
+        if child_reaped and not child_process_group_exists(child_pid):
+            break
+        time.sleep(0.02)
+
+    if not child_reaped:
+        child_reaped, status = poll_child(child_pid)
+        if status is not None:
+            child_status = status
+    return child_reaped, child_status
 
 def process_control_data(buffer, data, master_fd, child_pid):
     buffer += data
@@ -119,6 +199,7 @@ def main():
 
     cwd, cmd = parse_args(sys.argv[1:])
     control_fd = available_control_fd()
+    original_parent_pid = os.getppid()
 
     # Fork with a PTY
     pid, master_fd = pty.fork()
@@ -173,10 +254,13 @@ def main():
         pass
 
     control_buffer = b''
+    child_reaped = False
+    child_status = None
     try:
         while True:
-            # Check if parent is still alive. If parent dies, ppid becomes 1 (init/systemd)
-            if os.getppid() == 1:
+            # Reparenting is the reliable cross-platform signal that the Node
+            # owner disappeared. It may be PID 1 or a subreaper on Linux.
+            if os.getppid() != original_parent_pid:
                 break
 
             try:
@@ -241,6 +325,8 @@ def main():
             try:
                 result = os.waitpid(pid, os.WNOHANG)
                 if result[0] != 0:
+                    child_reaped = True
+                    child_status = result[1]
                     # Child exited, drain remaining output
                     while True:
                         try:
@@ -253,13 +339,19 @@ def main():
                             os.write(sys.stdout.fileno(), data)
                         except OSError:
                             break
-                    sys.exit(os.WEXITSTATUS(result[1]) if os.WIFEXITED(result[1]) else 1)
+                    break
             except ChildProcessError:
+                child_reaped = True
                 break
 
     except Exception:
         pass
     finally:
+        child_reaped, child_status = cleanup_child_process_group(
+            pid,
+            child_reaped,
+            child_status,
+        )
         if control_fd is not None:
             try:
                 os.close(control_fd)
@@ -270,12 +362,9 @@ def main():
         except Exception:
             pass
 
-    # Wait for child
-    try:
-        _, status = os.waitpid(pid, 0)
-        sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1)
-    except ChildProcessError:
-        sys.exit(0)
+    if child_status is None:
+        return 0 if child_reaped else 1
+    return os.WEXITSTATUS(child_status) if os.WIFEXITED(child_status) else 1
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

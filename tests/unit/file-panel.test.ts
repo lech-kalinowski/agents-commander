@@ -25,6 +25,11 @@ vi.mock('../../src/utils/logger.js', () => ({
 }));
 
 import { FilePanel } from '../../src/panels/file-panel.js';
+import {
+  enterDialog,
+  isDialogActive,
+  leaveDialog,
+} from '../../src/utils/dialog-state.js';
 
 const screens: blessed.Widgets.Screen[] = [];
 
@@ -93,6 +98,7 @@ function pressEnter(panel: FilePanel): void {
 }
 
 afterEach(() => {
+  while (isDialogActive()) leaveDialog();
   for (const screen of screens.splice(0)) {
     screen.destroy();
   }
@@ -101,6 +107,23 @@ afterEach(() => {
 });
 
 describe('FilePanel navigation', () => {
+  it('does not focus the background panel while a modal dialog is active', () => {
+    const panel = createPanel();
+    const screen = (panel as any).screen as blessed.Widgets.Screen;
+    panel.onMouseClick = vi.fn();
+
+    panel.box.emit('click');
+    expect(panel.onMouseClick).toHaveBeenCalledOnce();
+
+    enterDialog(screen);
+    panel.box.emit('click');
+    expect(panel.onMouseClick).toHaveBeenCalledOnce();
+
+    leaveDialog(screen);
+    panel.box.emit('click');
+    expect(panel.onMouseClick).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the stable public panel number in its label as the path changes', async () => {
     mocks.readDirectory.mockResolvedValueOnce([]);
     const panel = createPanel('/workspace/current', 99);

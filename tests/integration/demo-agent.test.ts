@@ -11,8 +11,15 @@ import {
 const scriptPath = path.resolve('src/demo/demo-agent.js');
 const children = new Set<ReturnType<typeof spawn>>();
 
-function startRole(role: 'coordinator' | 'reviewer') {
-  const child = spawn(process.execPath, [scriptPath, '--role', role, '--delay', '0'], {
+function startRole(role: 'coordinator' | 'reviewer', capability?: string) {
+  const child = spawn(process.execPath, [
+    scriptPath,
+    '--role',
+    role,
+    '--delay',
+    '0',
+    ...(capability ? ['--protocol-capability', capability] : []),
+  ], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       PATH: process.env.PATH,
@@ -69,6 +76,19 @@ afterEach(async () => {
 });
 
 describe('offline demo agent', () => {
+  it('carries the supplied session capability on every production marker', async () => {
+    const capability = 'a'.repeat(43);
+    const coordinator = startRole('coordinator', capability);
+    await waitForOutput(coordinator.stdout, 'Type START');
+    coordinator.child.stdin.write('START\n');
+    await waitForOutput(coordinator.stdout, `===COMMANDER:END:${capability}===`);
+
+    expect(coordinator.stdout()).toContain(
+      `===COMMANDER:SEND:generic:2:${capability}===`,
+    );
+    expect(coordinator.stdout()).not.toContain('===COMMANDER:END===');
+  });
+
   it('emits no protocol before an explicit START and then emits one fixed SEND', async () => {
     const coordinator = startRole('coordinator');
     await waitForOutput(coordinator.stdout, 'Type START');

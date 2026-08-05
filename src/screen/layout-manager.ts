@@ -27,6 +27,11 @@ interface PanelPosition {
   height: number | string;
 }
 
+interface FilePanelLoad {
+  generation: number;
+  promise: Promise<void>;
+}
+
 export interface LayoutViewport {
   density: LayoutMode;
   /** Zero-based page containing the active panel. */
@@ -70,7 +75,8 @@ export class LayoutManager {
   private nextPanelId = 0;
   private currentPageIndex = 0;
   private loadedFilePanelIds = new Set<number>();
-  private filePanelLoads = new Map<number, Promise<void>>();
+  private filePanelGenerations = new Map<number, number>();
+  private filePanelLoads = new Map<number, FilePanelLoad>();
   private currentViewport: LayoutViewport = {
     density: 'auto',
     pageIndex: 0,
@@ -313,6 +319,7 @@ export class LayoutManager {
     const cwd = old.currentPath;
     old.destroy();
     this.loadedFilePanelIds.delete(panelId);
+    this.filePanelGenerations.delete(panelId);
     this.filePanelLoads.delete(panelId);
 
     const terminal = new TerminalPanel(
@@ -399,6 +406,7 @@ export class LayoutManager {
     removed.destroy();
     this.panels.splice(workspaceIndex, 1);
     this.loadedFilePanelIds.delete(panelId);
+    this.filePanelGenerations.delete(panelId);
     this.filePanelLoads.delete(panelId);
 
     if (removedWasActive) {
@@ -429,6 +437,7 @@ export class LayoutManager {
     for (const panel of this.panels) panel.destroy();
     this.panels = [];
     this.loadedFilePanelIds.clear();
+    this.filePanelGenerations.clear();
     this.filePanelLoads.clear();
     this.nextPanelId = 0;
     this.currentPageIndex = 0;
@@ -455,10 +464,9 @@ export class LayoutManager {
 
     for (const panel of this.panels) {
       if (!(panel instanceof FilePanel)) continue;
+      this.invalidateFilePanel(panel.panelIndex);
       if (visibleIds.has(panel.panelIndex)) {
-        loads.push(this.loadFilePanel(panel, true));
-      } else {
-        this.loadedFilePanelIds.delete(panel.panelIndex);
+        loads.push(this.loadFilePanel(panel));
       }
     }
 
@@ -621,27 +629,57 @@ export class LayoutManager {
     panel.resize(position);
   }
 
-  private async loadFilePanel(panel: FilePanel, force = false): Promise<void> {
+  private invalidateFilePanel(panelId: number): void {
+    this.loadedFilePanelIds.delete(panelId);
+    this.filePanelGenerations.set(
+      panelId,
+      (this.filePanelGenerations.get(panelId) ?? 0) + 1,
+    );
+  }
+
+  private async loadFilePanel(panel: FilePanel): Promise<void> {
     const panelId = panel.panelIndex;
-    if (!force && this.loadedFilePanelIds.has(panelId)) return;
+    if (this.loadedFilePanelIds.has(panelId)) return;
+    const generation = this.filePanelGenerations.get(panelId) ?? 0;
 
     const existing = this.filePanelLoads.get(panelId);
-    if (existing) return existing;
+    if (existing) {
+      await existing.promise;
+      if (
+        existing.generation !== (this.filePanelGenerations.get(panelId) ?? 0)
+        && this.findPanel(panelId) === panel
+        && this.currentViewport.visiblePanelIds.includes(panelId)
+      ) {
+        await this.loadFilePanel(panel);
+      }
+      return;
+    }
 
     let pending!: Promise<void>;
     pending = panel.loadDirectory()
       .then((loaded) => {
-        if (loaded !== false && this.findPanel(panelId) === panel) {
+        if (
+          loaded !== false
+          && this.findPanel(panelId) === panel
+          && (this.filePanelGenerations.get(panelId) ?? 0) === generation
+        ) {
           this.loadedFilePanelIds.add(panelId);
         }
       })
       .finally(() => {
-        if (this.filePanelLoads.get(panelId) === pending) {
+        if (this.filePanelLoads.get(panelId)?.promise === pending) {
           this.filePanelLoads.delete(panelId);
         }
       });
-    this.filePanelLoads.set(panelId, pending);
-    return pending;
+    this.filePanelLoads.set(panelId, { generation, promise: pending });
+    await pending;
+    if (
+      generation !== (this.filePanelGenerations.get(panelId) ?? 0)
+      && this.findPanel(panelId) === panel
+      && this.currentViewport.visiblePanelIds.includes(panelId)
+    ) {
+      await this.loadFilePanel(panel);
+    }
   }
 
   private async loadVisibleFilePanels(): Promise<void> {

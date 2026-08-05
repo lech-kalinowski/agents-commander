@@ -80,6 +80,7 @@ agents-commander --demo
 ```
 
 Demo Mode creates a temporary seeded workspace, applies the Conference Mode defaults, and offers to launch two bundled local demo roles. The workspace is cleaned up when Commander exits.
+The compact sketch below omits the demo session's capability suffix from protocol markers.
 
 ```
 +---------------------------+---------------------------+
@@ -166,44 +167,44 @@ to fix every vulnerability you find."
 
 ### The Protocol
 
-Five commands, one shared end marker. A connected agent session emits the text markers and Commander scans and routes them locally.
+Five commands, one session-bound routing capability. `Ctrl+P` generates a fresh private capability for that agent session and teaches the agent the exact marker format. Static or copied markers without the current capability are inert. In the examples below, `<session-key>` stands for the value injected into the agent.
 
 **SEND** -- direct message to a specific agent:
 ```
-===COMMANDER:SEND:codex:2===
+===COMMANDER:SEND:codex:2:<session-key>===
 Please write unit tests for the auth module.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 **REPLY** -- respond to whoever last messaged you (no panel number needed):
 ```
-===COMMANDER:REPLY===
+===COMMANDER:REPLY:<session-key>===
 Tests written. 12 passing, 0 failing.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 **BROADCAST** -- send to every other connected agent at once:
 ```
-===COMMANDER:BROADCAST===
+===COMMANDER:BROADCAST:<session-key>===
 Phase 1 complete. All agents: begin phase 2.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 **STATUS** -- report progress (shown as a toast in Commander UI, not sent to agents):
 ```
-===COMMANDER:STATUS===
+===COMMANDER:STATUS:<session-key>===
 Analyzing file 5 of 10...
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 **QUERY** -- ask Commander what agents are running:
 ```
-===COMMANDER:QUERY===
+===COMMANDER:QUERY:<session-key>===
 agents
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
-Commander's `ProtocolScanner` watches all agent output in real-time, strips ANSI codes, detects these markers across streaming chunks, and routes the message. The target agent sees:
+Commander's `ProtocolScanner` watches agent output in real-time, strips ANSI codes, detects these markers across streaming chunks, and routes a message only when its capability matches the currently armed session. The target agent sees:
 
 ```
 [From Claude Code in Panel 1 | thread=t1 | msg=m1]: Please write unit tests for the auth module...
@@ -230,7 +231,7 @@ Don't want to wait for agents to figure it out? Press `Ctrl+O` to manually send 
 2. Browse categories with `Up/Down` arrows -- the preview pane on the right shows full details
 3. Press `Enter` to select a template
 4. Pick a live target panel by its stable panel number and press `Enter` to confirm
-5. If an agent is already running on that panel, the template is sent directly. If not, you'll be asked to pick an agent first -- Commander launches it and sends the template automatically.
+5. Ordinary templates can launch an agent automatically. Collaboration templates first require a running agent armed with `Ctrl+P`; Commander then binds their protocol examples to that session before sending.
 
 #### Categories
 

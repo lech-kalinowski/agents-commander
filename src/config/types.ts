@@ -29,6 +29,7 @@ export interface OrchestrationConfig {
   ackTimeout: number;
   dedupWindow: number;
   maxContentLines: number;
+  maxContentBytes: number;
 }
 
 export interface AgentCommandConfig {

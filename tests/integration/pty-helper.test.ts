@@ -1,8 +1,18 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import type { Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+
+const processStateProbe = process.platform === 'win32'
+  ? null
+  : spawnSync('ps', ['-o', 'stat=', '-p', String(process.pid)], { encoding: 'utf8' });
+const canInspectProcessState = processStateProbe !== null
+  && processStateProbe.error === undefined
+  && processStateProbe.status === 0
+  && typeof processStateProbe.stdout === 'string';
 
 function processIsLive(pid: number): boolean {
   try {
@@ -10,9 +20,13 @@ function processIsLive(pid: number): boolean {
   } catch {
     return false;
   }
-  const status = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+  const result = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], {
     encoding: 'utf8',
-  }).stdout.trim();
+  });
+  if (result.error || result.status !== 0 || typeof result.stdout !== 'string') {
+    return true;
+  }
+  const status = result.stdout.trim();
   return status.length > 0 && !status.startsWith('Z');
 }
 
@@ -113,6 +127,119 @@ describe('PTY helper resize control', () => {
   }, 7000);
 
   it.skipIf(process.platform === 'win32')(
+    'terminates the resistant PTY process group when its owning parent disappears',
+    async () => {
+      const helperPath = path.resolve('src/agents/pty-helper.py');
+      const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'agents-commander-parent-loss-'));
+      const heartbeatPath = path.join(fixtureRoot, 'worker-heartbeat');
+      const worker = [
+        'import signal',
+        'import time',
+        'signal.signal(signal.SIGHUP, signal.SIG_IGN)',
+        'signal.signal(signal.SIGINT, signal.SIG_IGN)',
+        'signal.signal(signal.SIGTERM, signal.SIG_IGN)',
+        `heartbeat = ${JSON.stringify(heartbeatPath)}`,
+        'while True:',
+        '    with open(heartbeat, "a", encoding="utf-8") as stream:',
+        '        stream.write("x")',
+        '    time.sleep(0.03)',
+      ].join('\n');
+      const agent = [
+        'import os',
+        'import signal',
+        'import subprocess',
+        'import sys',
+        'import time',
+        'signal.signal(signal.SIGHUP, signal.SIG_IGN)',
+        'signal.signal(signal.SIGINT, signal.SIG_IGN)',
+        'signal.signal(signal.SIGTERM, signal.SIG_IGN)',
+        `worker = subprocess.Popen([sys.executable, "-c", ${JSON.stringify(worker)}])`,
+        `heartbeat = ${JSON.stringify(heartbeatPath)}`,
+        'while not os.path.exists(heartbeat): time.sleep(0.01)',
+        'print(f"READY {os.getpid()} {worker.pid}", flush=True)',
+        'while True: signal.pause()',
+      ].join('\n');
+      const launcherCode = [
+        'import os',
+        'import subprocess',
+        'import sys',
+        'import time',
+        `helper = subprocess.Popen([sys.executable, ${JSON.stringify(helperPath)}, "--", sys.executable, "-c", ${JSON.stringify(agent)}], stdin=subprocess.PIPE, stdout=sys.stdout, stderr=sys.stderr, env={**os.environ, "PYTHONUNBUFFERED": "1"})`,
+        'print(f"HELPER {helper.pid}", flush=True)',
+        'time.sleep(0.6)',
+        'os._exit(0)',
+      ].join('\n');
+      const launcher = spawn('python3', ['-c', launcherCode], {
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const closePromise = once(launcher, 'close');
+      let output = '';
+      let helperPid = 0;
+      let agentPid = 0;
+      let cleanupCompleted = false;
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`Timed out waiting for orphan probe; output=${JSON.stringify(output)}`)),
+            3000,
+          );
+          launcher.once('error', (error) => {
+            clearTimeout(timer);
+            reject(error);
+          });
+          launcher.stdout?.on('data', (data: Buffer) => {
+            output += data.toString('utf8');
+            const helperMatch = output.match(/HELPER (\d+)/u);
+            if (helperMatch) helperPid = Number(helperMatch[1]);
+            const match = output.match(/READY (\d+) \d+/u);
+            if (!match) return;
+            clearTimeout(timer);
+            agentPid = Number(match[1]);
+            resolve();
+          });
+        });
+
+        const [code, signal] = await Promise.race([
+          closePromise,
+          new Promise<never>((_, reject) => setTimeout(
+            () => reject(new Error(`Orphaned PTY helper did not clean up; output=${JSON.stringify(output)}`)),
+            4000,
+          )),
+        ]);
+        expect(code).toBe(0);
+        expect(signal).toBeNull();
+        cleanupCompleted = true;
+
+        const heartbeatSize = (await fs.stat(heartbeatPath)).size;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect((await fs.stat(heartbeatPath)).size).toBe(heartbeatSize);
+      } finally {
+        if (agentPid > 0) {
+          try {
+            process.kill(-agentPid, 'SIGKILL');
+          } catch {
+            // The expected parent-loss cleanup already removed the group.
+          }
+        }
+        if (!cleanupCompleted && helperPid > 0) {
+          try {
+            process.kill(helperPid, 'SIGKILL');
+          } catch {
+            // The helper may have finished while the failure was propagating.
+          }
+        }
+        if (launcher.exitCode === null && launcher.signalCode === null) {
+          launcher.kill('SIGKILL');
+        }
+        await fs.rm(fixtureRoot, { recursive: true, force: true });
+      }
+    },
+    8000,
+  );
+
+  it.skipIf(process.platform === 'win32' || !canInspectProcessState)(
     'force-kills the actual PTY agent process group after INT and TERM are ignored',
     async () => {
       const helperPath = path.resolve('src/agents/pty-helper.py');

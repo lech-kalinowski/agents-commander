@@ -23,7 +23,10 @@ import {
   showActivityDialog,
   type ActivityDialogHandle,
 } from './screen/dialog/activity-dialog.js';
-import { Orchestrator } from './orchestration/orchestrator.js';
+import {
+  Orchestrator,
+  type TaskTargetExpectation,
+} from './orchestration/orchestrator.js';
 import { PreviewPanel } from './panels/preview-panel.js';
 import { FilePanel } from './panels/file-panel.js';
 import { TerminalPanel } from './panels/terminal-panel.js';
@@ -52,7 +55,7 @@ import { startWatching, stopWatching } from './file-manager/file-watcher.js';
 import { appEvents } from './utils/events.js';
 import { formatDate } from './utils/format.js';
 import { logger } from './utils/logger.js';
-import { isDialogActive } from './utils/dialog-state.js';
+import { closeDialogsForScreen, isDialogActive } from './utils/dialog-state.js';
 import { showToast, showErrorToast } from './screen/toast.js';
 import { showWelcomeDialog } from './screen/dialog/welcome-dialog.js';
 import {
@@ -369,8 +372,9 @@ export class App {
         // Register the role before launch so even an immediately failing child
         // is attributed to the demo rather than treated as a generic session.
         this.demoPanelRoles.set(panelId, role);
+        const protocolCapability = this.orchestrator.createProtocolCapability();
         const launched = this.agentManager.launchInternalAgent(
-          createDemoAgentLaunchSpec(role),
+          createDemoAgentLaunchSpec(role, undefined, protocolCapability),
           terminal,
         );
         if (!launched) {
@@ -380,6 +384,9 @@ export class App {
         launchedPanels.push(panelId);
         terminals.push(terminal);
         this.orchestrator.connectPanel(terminal);
+        if (!this.orchestrator.armInternalProtocol(terminal, protocolCapability)) {
+          throw new Error(`Unable to arm Commander protocol for the ${role} role`);
+        }
       }
 
       this.layout.setActivePanel(demoPanelIds[0]);
@@ -390,7 +397,7 @@ export class App {
       // start token is sent, so the first SEND marker cannot outrun routing.
       await new Promise<void>((resolve) => setTimeout(resolve, 150));
       this.assertLaunchAllowed('send the offline demo START token');
-      if (!terminals[0].sendInput('START\r')) {
+      if (!await this.orchestrator.sendProgrammaticInput(terminals[0], 'START', true)) {
         throw new Error('Coordinator session closed before the START token was sent');
       }
       showToast(this.screen, 'Offline demo started — press F12 for routed activity');
@@ -599,7 +606,9 @@ export class App {
     panelIndex: number,
     nextAction: string,
     profileId?: string,
-  ): Promise<boolean> {
+  ): Promise<TaskTargetExpectation | null> {
+    const targetExpectation = this.orchestrator.captureTaskTarget(panelIndex);
+    if (!targetExpectation) return null;
     const terminal = this.layout.getTerminalPanel(panelIndex);
     const managed = this.getManagedSession(panelIndex);
     const reusesRunningAgent = Boolean(
@@ -608,8 +617,12 @@ export class App {
       (profileId === undefined || managed.profileId === profileId),
     );
 
-    if (reusesRunningAgent || (!terminal?.isRunning && !managed)) return true;
-    return this.confirmSessionReplacement(panelIndex, nextAction);
+    if (reusesRunningAgent || (!terminal?.isRunning && !managed)) {
+      return targetExpectation;
+    }
+    return await this.confirmSessionReplacement(panelIndex, nextAction)
+      ? targetExpectation
+      : null;
   }
 
   private async stopTerminalSession(panelIndex: number): Promise<void> {
@@ -659,6 +672,7 @@ export class App {
       // Keep the guard active until every listener for the closing key has run.
       queueMicrotask(() => {
         this.fullScreenOverlayActive = false;
+        if (this.disposalStarted) return;
         this.layout.activePanel.setFocus(true);
       });
     };
@@ -862,6 +876,28 @@ export class App {
       showErrorToast(this.screen, 'Select a file to delete');
       return;
     }
+    const deleteTargets = entries.map((entry) => {
+      if (
+        typeof entry.deviceId !== 'string'
+        || !/^(?:0|[1-9]\d*)$/u.test(entry.deviceId)
+        || typeof entry.inode !== 'string'
+        || !/^(?:0|[1-9]\d*)$/u.test(entry.inode)
+        || !Number.isFinite(entry.identityMode)
+        || typeof entry.ctimeNs !== 'string'
+        || !/^(?:0|[1-9]\d*)$/u.test(entry.ctimeNs)
+      ) return null;
+      return {
+        path: entry.fullPath,
+        deviceId: entry.deviceId,
+        inode: entry.inode,
+        mode: entry.identityMode as number,
+        ctimeNs: entry.ctimeNs,
+      };
+    });
+    if (deleteTargets.some((target) => target === null)) {
+      showErrorToast(this.screen, 'Refresh the panel before deleting these items');
+      return;
+    }
 
     const names = entries.map((e) => e.name).join(', ');
     const confirmed = await showConfirmDialog(
@@ -870,7 +906,7 @@ export class App {
     );
     if (confirmed) {
       try {
-        await deleteFiles(entries.map((e) => e.fullPath));
+        await deleteFiles(deleteTargets.filter((target) => target !== null));
         await fp.loadDirectory();
         showToast(this.screen, `Deleted ${entries.length} item(s)`);
       } catch (err) {
@@ -937,25 +973,39 @@ export class App {
     if (this.disposalStarted) return;
     if (!choice) return;
 
-    const { content, panelIndex, templateName } = choice;
+    const { content, panelIndex, templateName, requiresProtocol } = choice;
     if (!this.layout.hasPanel(panelIndex)) {
       showErrorToast(screen, `Panel ${panelIndex + 1} is no longer available`);
       return;
     }
-
+    const preparedTemplate = this.orchestrator.prepareTemplateTask(
+      panelIndex,
+      content,
+      requiresProtocol,
+    );
+    if (!preparedTemplate.success) {
+      showErrorToast(screen, preparedTemplate.error);
+      return;
+    }
     // Check if a managed agent is running on the target panel
     const managedAgent = this.getManagedSession(panelIndex)?.type ?? null;
 
     if (managedAgent) {
       // Managed agent already running — send content directly via orchestrator
-      const confirmed = await this.confirmTaskTarget(
+      const targetExpectation = await this.confirmTaskTarget(
         managedAgent,
         panelIndex,
         `send template “${sanitizeUserText(templateName, 60)}”`,
       );
-      if (!confirmed) return;
+      if (!targetExpectation) return;
       if (this.disposalStarted || !this.layout.hasPanel(panelIndex)) return;
-      const result = await this.orchestrator.sendTask(managedAgent, panelIndex, content);
+      const result = await this.orchestrator.sendTemplateTask(
+        managedAgent,
+        panelIndex,
+        preparedTemplate,
+        undefined,
+        targetExpectation,
+      );
       if (this.disposalStarted) return;
       if (!result.success) {
         logger.error(`Template send failed: ${result.error}`);
@@ -980,19 +1030,20 @@ export class App {
           showErrorToast(screen, `Panel ${targetPanel + 1} is no longer available`);
           return;
         }
-        const confirmed = await this.confirmTaskTarget(
+        const targetExpectation = await this.confirmTaskTarget(
           agentChoice.agentType,
           targetPanel,
           `launch ${agentChoice.agentType} and send the template`,
           agentChoice.profileId,
         );
-        if (!confirmed) return;
+        if (!targetExpectation) return;
         if (this.disposalStarted || !this.layout.hasPanel(targetPanel)) return;
-        const result = await this.orchestrator.sendTask(
+        const result = await this.orchestrator.sendTemplateTask(
           agentChoice.agentType,
           targetPanel,
-          content,
+          preparedTemplate,
           agentChoice.profileId,
+          targetExpectation,
         );
         if (this.disposalStarted) return;
         if (!result.success) {
@@ -1025,13 +1076,13 @@ export class App {
       return;
     }
 
-    const confirmed = await this.confirmTaskTarget(
+    const targetExpectation = await this.confirmTaskTarget(
       choice.agentType,
       choice.panelIndex,
       `launch ${choice.agentType} and send the task`,
       choice.profileId,
     );
-    if (!confirmed) return;
+    if (!targetExpectation) return;
     if (this.disposalStarted || !this.layout.hasPanel(choice.panelIndex)) return;
 
     const result = await this.orchestrator.sendTask(
@@ -1039,6 +1090,7 @@ export class App {
       choice.panelIndex,
       choice.task,
       choice.profileId,
+      targetExpectation,
     );
     if (this.disposalStarted) return;
     if (!result.success) {
@@ -1390,6 +1442,7 @@ export class App {
       released = true;
       queueMicrotask(() => {
         this.fullScreenOverlayActive = false;
+        if (this.disposalStarted) return;
         void this.layout.refreshAll();
         this.layout.activePanel.setFocus(true);
       });
@@ -1427,6 +1480,12 @@ export class App {
 
     const performDispose = async (): Promise<void> => {
       const failures: unknown[] = [];
+      try {
+        if (this.screen) closeDialogsForScreen(this.screen);
+      } catch (error) {
+        failures.push(error);
+        logger.error('Failed to close active dialogs during disposal', error);
+      }
       try {
         this.unsubscribeAgentLifecycle?.();
       } catch (error) {

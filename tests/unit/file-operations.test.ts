@@ -9,6 +9,7 @@ import {
   copyFiles,
   createDirectory,
   deleteFile,
+  deleteFiles,
   FileConflictError,
   FileOperationError,
   InvalidEntryNameError,
@@ -30,6 +31,7 @@ vi.mock('node:fs/promises', () => ({
     lstat: vi.fn(),
     mkdtemp: vi.fn(),
     mkdir: vi.fn(),
+    open: vi.fn(),
     readlink: vi.fn(),
     rename: vi.fn(),
     rmdir: vi.fn(),
@@ -47,6 +49,7 @@ const fileStat = {
   dev: 1,
   ino: 1,
   mode: 0o100644,
+  ctimeNs: 1n,
   isDirectory: () => false,
   isFile: () => true,
   isSymbolicLink: () => false,
@@ -56,6 +59,7 @@ const directoryStat = {
   dev: 1,
   ino: 2,
   mode: 0o40750,
+  ctimeNs: 2n,
   isDirectory: () => true,
   isFile: () => false,
   isSymbolicLink: () => false,
@@ -65,6 +69,7 @@ const symlinkStat = {
   dev: 1,
   ino: 3,
   mode: 0o120777,
+  ctimeNs: 3n,
   isDirectory: () => false,
   isFile: () => false,
   isSymbolicLink: () => true,
@@ -84,7 +89,10 @@ function mockFilesystem(
     const source = Object.entries(sources)
       .find(([candidate]) => path.resolve(candidate) === resolved);
     if (source) return source[1];
-    if (resolved.includes(`${path.sep}.agents-commander-move-`)) {
+    if (
+      resolved.includes(`${path.sep}.agents-commander-move-`)
+      || resolved.includes(`${path.sep}.agents-commander-delete-`)
+    ) {
       const stagedSource = Object.entries(sources)
         .find(([candidate]) => path.basename(candidate) === path.basename(resolved));
       if (stagedSource) return stagedSource[1];
@@ -240,6 +248,9 @@ function useRealFilesystem(): void {
   vi.mocked(fs.mkdir).mockImplementation((directoryPath, options) => (
     realFs.mkdir(directoryPath, options)
   ) as ReturnType<typeof fs.mkdir>);
+  vi.mocked(fs.open).mockImplementation((filePath, flags, mode) => (
+    realFs.open(filePath, flags, mode)
+  ));
   vi.mocked(fs.readlink).mockImplementation((filePath, options) => (
     realFs.readlink(filePath, options)
   ) as ReturnType<typeof fs.readlink>);
@@ -1299,6 +1310,7 @@ describe('file operations', () => {
     });
 
     it('wraps delete failures with operation context', async () => {
+      mockFilesystem({ 'target-path': fileStat });
       vi.mocked(fs.rm).mockRejectedValue(errno('EACCES', 'permission denied'));
 
       await expect(deleteFile('target-path')).rejects.toMatchObject({
@@ -1309,6 +1321,359 @@ describe('file operations', () => {
         completed: 0,
         total: 1,
       });
+    });
+
+    it('preserves a replacement when the selected inode changes before deletion', async () => {
+      const replacementStat = {
+        ...fileStat,
+        ino: 99,
+      } as MockStat;
+      vi.mocked(fs.lstat).mockResolvedValue(replacementStat);
+
+      await expect(deleteFiles([{
+        path: 'target-path',
+        deviceId: String(fileStat.dev),
+        inode: String(fileStat.ino),
+        mode: fileStat.mode,
+      }])).rejects.toMatchObject({
+        name: 'FileOperationError',
+        code: 'ESTALE',
+        source: 'target-path',
+      });
+
+      expect(fs.rm).not.toHaveBeenCalled();
+      expect(fs.rename).not.toHaveBeenCalled();
+    });
+
+    it('compares delete identities without losing 64-bit inode precision', async () => {
+      const selectedInode = 9_007_199_254_740_993n;
+      const replacementInode = 9_007_199_254_740_992n;
+      const stagedStat = {
+        ...fileStat,
+        dev: 9_007_199_254_740_990n,
+        ino: replacementInode,
+        mode: BigInt(fileStat.mode),
+      };
+      vi.mocked(fs.lstat).mockResolvedValue(stagedStat as never);
+
+      await expect(deleteFiles([{
+        path: 'target-path',
+        deviceId: '9007199254740990',
+        inode: selectedInode.toString(),
+        mode: fileStat.mode,
+      }])).rejects.toMatchObject({
+        name: 'FileOperationError',
+        code: 'ESTALE',
+      });
+
+      expect(fs.rm).not.toHaveBeenCalled();
+    });
+
+    it('preserves a same-inode replacement when exact ctime differs above 2^53', async () => {
+      const selectedCtimeNs = 9_007_199_254_740_993n;
+      const replacementStat = {
+        ...fileStat,
+        dev: 9_007_199_254_740_990n,
+        ino: 9_007_199_254_740_991n,
+        mode: BigInt(fileStat.mode),
+        ctimeNs: selectedCtimeNs - 1n,
+      };
+      vi.mocked(fs.lstat).mockResolvedValue(replacementStat as never);
+
+      await expect(deleteFiles([{
+        path: 'target-path',
+        deviceId: replacementStat.dev.toString(),
+        inode: replacementStat.ino.toString(),
+        mode: fileStat.mode,
+        ctimeNs: selectedCtimeNs.toString(),
+      }])).rejects.toMatchObject({
+        name: 'FileOperationError',
+        code: 'ESTALE',
+      });
+
+      expect(fs.rename).not.toHaveBeenCalled();
+      expect(fs.rm).not.toHaveBeenCalled();
+    });
+
+    it('does not compare ctime again after the staging rename changes it', async () => {
+      const beforeRename = {
+        ...fileStat,
+        dev: 11n,
+        ino: 12n,
+        mode: BigInt(fileStat.mode),
+        ctimeNs: 13n,
+      };
+      const afterRename = {
+        ...beforeRename,
+        ctimeNs: 14n,
+      };
+      vi.mocked(fs.lstat)
+        .mockResolvedValueOnce(beforeRename as never)
+        .mockResolvedValueOnce(afterRename as never);
+
+      await expect(deleteFiles([{
+        path: 'target-path',
+        deviceId: beforeRename.dev.toString(),
+        inode: beforeRename.ino.toString(),
+        mode: fileStat.mode,
+        ctimeNs: beforeRename.ctimeNs.toString(),
+      }])).resolves.toBeUndefined();
+
+      expect(fs.rename).toHaveBeenCalledOnce();
+      expect(fs.rm).toHaveBeenCalledWith(
+        expect.stringContaining('.agents-commander-delete-'),
+        { recursive: true, force: false },
+      );
+    });
+
+    it('keeps a verified FileHandle open across unlink and hard-link generation refresh', async () => {
+      const events: string[] = [];
+      const beforeRename = {
+        ...fileStat,
+        dev: 21n,
+        ino: 22n,
+        mode: BigInt(fileStat.mode),
+        ctimeNs: 23n,
+      };
+      const afterFirstUnlink = { ...beforeRename, ctimeNs: 24n };
+      const afterSecondRename = { ...beforeRename, ctimeNs: 25n };
+      let handleStatCalls = 0;
+      const handle = {
+        stat: vi.fn(async () => {
+          handleStatCalls += 1;
+          events.push(`handle-stat-${handleStatCalls}`);
+          return afterFirstUnlink;
+        }),
+        close: vi.fn(async () => { events.push('handle-close'); }),
+      };
+      vi.mocked(fs.open).mockImplementation(async () => {
+        events.push('handle-open');
+        return handle as never;
+      });
+      vi.mocked(fs.lstat).mockImplementation(async (filePath) => {
+        const value = String(filePath);
+        if (value.includes('.agents-commander-delete-')) {
+          events.push(`lstat-staged-${path.basename(value)}`);
+          return (path.basename(value) === 'first.txt'
+            ? afterFirstUnlink
+            : afterSecondRename) as never;
+        }
+        if (value === 'first.txt') {
+          events.push('lstat-first');
+          return beforeRename as never;
+        }
+        events.push('lstat-second');
+        return afterFirstUnlink as never;
+      });
+      vi.mocked(fs.rm).mockImplementation(async (filePath) => {
+        events.push(`rm-${path.basename(String(filePath))}`);
+      });
+      const targets = ['first.txt', 'second.txt'].map((filePath) => ({
+        path: filePath,
+        deviceId: beforeRename.dev.toString(),
+        inode: beforeRename.ino.toString(),
+        mode: Number(beforeRename.mode),
+        ctimeNs: beforeRename.ctimeNs.toString(),
+      }));
+
+      await expect(deleteFiles(targets)).resolves.toBeUndefined();
+
+      expect(fs.open).toHaveBeenCalledOnce();
+      expect(handle.stat).toHaveBeenCalledTimes(2);
+      expect(handle.close).toHaveBeenCalledOnce();
+      expect(events.indexOf('handle-open')).toBeLessThan(events.indexOf('rm-first.txt'));
+      expect(events.indexOf('rm-first.txt')).toBeLessThan(events.indexOf('handle-stat-2'));
+      expect(events.indexOf('handle-stat-2')).toBeLessThan(events.indexOf('lstat-second'));
+      expect(events.indexOf('lstat-second')).toBeLessThan(events.indexOf('handle-close'));
+      expect(events.indexOf('handle-close')).toBeLessThan(events.lastIndexOf('lstat-second'));
+    });
+
+    it('closes the generation guard before restoring a staged item that failed verification', async () => {
+      const selected = {
+        ...fileStat,
+        dev: 31n,
+        ino: 32n,
+        mode: BigInt(fileStat.mode),
+        ctimeNs: 33n,
+      };
+      const wrongHandleIdentity = { ...selected, ino: 99n };
+      const handle = {
+        stat: vi.fn(async () => wrongHandleIdentity),
+        close: vi.fn(async () => undefined),
+      };
+      vi.mocked(fs.lstat).mockResolvedValue(selected as never);
+      vi.mocked(fs.open).mockResolvedValue(handle as never);
+      const targets = ['first.txt', 'second.txt'].map((filePath) => ({
+        path: filePath,
+        deviceId: selected.dev.toString(),
+        inode: selected.ino.toString(),
+        mode: Number(selected.mode),
+        ctimeNs: selected.ctimeNs.toString(),
+      }));
+
+      await expect(deleteFiles(targets)).rejects.toMatchObject({
+        code: 'ESTALE',
+        source: 'first.txt',
+      });
+
+      expect(handle.close).toHaveBeenCalledOnce();
+      expect(handle.close.mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(execFile).mock.invocationCallOrder.at(-1) ?? 0,
+      );
+      expect(fs.rm).not.toHaveBeenCalled();
+      expect(fs.rmdir).toHaveBeenCalled();
+    });
+
+    it('closes the generation guard when the staged unlink fails', async () => {
+      const selected = {
+        ...fileStat,
+        dev: 41n,
+        ino: 42n,
+        mode: BigInt(fileStat.mode),
+        ctimeNs: 43n,
+      };
+      const handle = {
+        stat: vi.fn(async () => selected),
+        close: vi.fn(async () => undefined),
+      };
+      vi.mocked(fs.lstat).mockResolvedValue(selected as never);
+      vi.mocked(fs.open).mockResolvedValue(handle as never);
+      vi.mocked(fs.rm).mockRejectedValue(errno('EACCES', 'unlink denied'));
+      const targets = ['first.txt', 'second.txt'].map((filePath) => ({
+        path: filePath,
+        deviceId: selected.dev.toString(),
+        inode: selected.ino.toString(),
+        mode: Number(selected.mode),
+        ctimeNs: selected.ctimeNs.toString(),
+      }));
+
+      await expect(deleteFiles(targets)).rejects.toMatchObject({
+        code: 'EACCES',
+        source: 'first.txt',
+        recoveryPath: expect.stringContaining('.agents-commander-delete-'),
+      });
+
+      expect(handle.close).toHaveBeenCalledOnce();
+    });
+
+    it('preserves a real same-inode file whose ctime changed after selection', async () => {
+      useRealFilesystem();
+      const root = await realFs.mkdtemp(path.join(os.tmpdir(), 'agents-commander-delete-stale-'));
+      const source = path.join(root, 'selected.txt');
+      await realFs.writeFile(source, 'preserve me');
+      const selected = await realFs.lstat(source, { bigint: true });
+      await realFs.chmod(source, 0o600);
+      const replacement = await realFs.lstat(source, { bigint: true });
+
+      try {
+        expect(replacement.dev).toBe(selected.dev);
+        expect(replacement.ino).toBe(selected.ino);
+        expect(Number(replacement.mode) & 0o170000).toBe(Number(selected.mode) & 0o170000);
+        expect(replacement.ctimeNs).not.toBe(selected.ctimeNs);
+
+        await expect(deleteFiles([{
+          path: source,
+          deviceId: selected.dev.toString(),
+          inode: selected.ino.toString(),
+          mode: Number(selected.mode),
+          ctimeNs: selected.ctimeNs.toString(),
+        }])).rejects.toMatchObject({ code: 'ESTALE' });
+
+        await expect(realFs.readFile(source, 'utf8')).resolves.toBe('preserve me');
+        expect(await realFs.readdir(root)).toEqual(['selected.txt']);
+      } finally {
+        await realFs.rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('deletes a real unchanged file even though staging updates ctime', async () => {
+      useRealFilesystem();
+      const root = await realFs.mkdtemp(path.join(os.tmpdir(), 'agents-commander-delete-valid-'));
+      const source = path.join(root, 'selected.txt');
+      await realFs.writeFile(source, 'delete me');
+      const selected = await realFs.lstat(source, { bigint: true });
+
+      try {
+        await expect(deleteFiles([{
+          path: source,
+          deviceId: selected.dev.toString(),
+          inode: selected.ino.toString(),
+          mode: Number(selected.mode),
+          ctimeNs: selected.ctimeNs.toString(),
+        }])).resolves.toBeUndefined();
+
+        await expect(realFs.lstat(source)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(await realFs.readdir(root)).toEqual([]);
+      } finally {
+        await realFs.rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('deletes two selected hard-link names after the first unlink updates ctime', async () => {
+      useRealFilesystem();
+      const root = await realFs.mkdtemp(path.join(os.tmpdir(), 'agents-commander-delete-links-'));
+      const first = path.join(root, 'first.txt');
+      const second = path.join(root, 'second.txt');
+      await realFs.writeFile(first, 'shared inode');
+      await realFs.link(first, second);
+      const selected = await realFs.lstat(first, { bigint: true });
+
+      try {
+        await expect(deleteFiles([first, second].map((filePath) => ({
+          path: filePath,
+          deviceId: selected.dev.toString(),
+          inode: selected.ino.toString(),
+          mode: Number(selected.mode),
+          ctimeNs: selected.ctimeNs.toString(),
+        })))).resolves.toBeUndefined();
+
+        expect(await realFs.readdir(root)).toEqual([]);
+      } finally {
+        await realFs.rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('does not bless a replacement raced into a remaining hard-link path', async () => {
+      useRealFilesystem();
+      const root = await realFs.mkdtemp(path.join(os.tmpdir(), 'agents-commander-delete-link-race-'));
+      const first = path.join(root, 'first.txt');
+      const second = path.join(root, 'second.txt');
+      await realFs.writeFile(first, 'selected inode');
+      await realFs.link(first, second);
+      const selected = await realFs.lstat(first, { bigint: true });
+      let replacementInode: bigint | null = null;
+      let replacementCreated = false;
+
+      vi.mocked(fs.rm).mockImplementation(async (filePath, options) => {
+        await realFs.rm(filePath, options);
+        if (
+          !replacementCreated
+          && String(filePath).includes('.agents-commander-delete-')
+          && path.basename(String(filePath)) === path.basename(first)
+        ) {
+          replacementCreated = true;
+          await realFs.rm(second, { force: true });
+          await realFs.writeFile(second, 'replacement must survive');
+          replacementInode = (await realFs.lstat(second, { bigint: true })).ino;
+        }
+      });
+
+      try {
+        await expect(deleteFiles([first, second].map((filePath) => ({
+          path: filePath,
+          deviceId: selected.dev.toString(),
+          inode: selected.ino.toString(),
+          mode: Number(selected.mode),
+          ctimeNs: selected.ctimeNs.toString(),
+        })))).rejects.toMatchObject({ code: 'ESTALE', source: second });
+
+        expect(replacementCreated).toBe(true);
+        expect(replacementInode).not.toBe(selected.ino);
+        await expect(realFs.readFile(second, 'utf8')).resolves.toBe('replacement must survive');
+        expect(await realFs.readdir(root)).toEqual(['second.txt']);
+      } finally {
+        await realFs.rm(root, { recursive: true, force: true });
+      }
     });
   });
 });

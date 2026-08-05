@@ -1,10 +1,23 @@
 import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
-import fs from 'node:fs/promises';
+import { constants, type BigIntStats } from 'node:fs';
+import fs, { type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
+import { logger } from '../utils/logger.js';
 
 export type ProgressCallback = (current: number, total: number, name: string) => void;
 export type FileOperationKind = 'copy' | 'move' | 'delete' | 'mkdir';
+
+export interface DeleteTarget {
+  path: string;
+  deviceId: string;
+  inode: string;
+  mode: number;
+  /**
+   * Exact lstat ctime captured when the user selected the entry. Optional for
+   * compatibility with callers that pin an entry immediately via deleteFile().
+   */
+  ctimeNs?: string;
+}
 
 export interface FileOperationContext {
   operation: FileOperationKind;
@@ -83,6 +96,14 @@ interface NativeRenameRuntime {
   filesystemProbes: Map<string, Promise<void>>;
 }
 
+interface DeleteGenerationGuard {
+  handle: FileHandle;
+}
+
+const DELETE_GUARD_OPEN_FLAGS = constants.O_RDONLY
+  | (constants.O_NOFOLLOW ?? 0)
+  | (constants.O_NONBLOCK ?? 0);
+
 function errnoCode(error: unknown): string | undefined {
   if (!error || typeof error !== 'object' || !('code' in error)) return undefined;
   return typeof error.code === 'string' ? error.code : undefined;
@@ -129,6 +150,23 @@ function sameFileIdentity(left: FileStat, right: FileStat): boolean {
     && left.ino === right.ino
     && left.isDirectory() === right.isDirectory()
     && left.isSymbolicLink() === right.isSymbolicLink();
+}
+
+function matchesDeleteEntryIdentity(stat: BigIntStats, target: DeleteTarget): boolean {
+  return stat.dev.toString() === target.deviceId
+    && stat.ino.toString() === target.inode
+    && (Number(stat.mode) & 0o170000) === (target.mode & 0o170000);
+}
+
+function matchesDeleteSelection(stat: BigIntStats, target: DeleteTarget): boolean {
+  return matchesDeleteEntryIdentity(stat, target)
+    && (target.ctimeNs === undefined || stat.ctimeNs.toString() === target.ctimeNs);
+}
+
+function samePlannedDeleteIdentity(left: DeleteTarget, right: DeleteTarget): boolean {
+  return left.deviceId === right.deviceId
+    && left.inode === right.inode
+    && (left.mode & 0o170000) === (right.mode & 0o170000);
 }
 
 const NO_REPLACE_RENAME_SCRIPT = String.raw`
@@ -554,16 +592,15 @@ async function removeStagedSource(
 
 async function removeEmptyStagingDirectory(
   staged: StagedSource,
-  context: FileOperationContext,
+  _context: FileOperationContext,
 ): Promise<void> {
   try {
     await fs.rmdir(staged.directory);
   } catch (error) {
-    throw operationError(
-      `Move completed, but its empty staging directory could not be removed: ${staged.directory}`,
-      context,
-      error,
-    );
+    // The data has already been published or restored. Treat an empty private
+    // directory cleanup failure as housekeeping, never as a false recovery
+    // path pointing at a staged item that no longer exists.
+    logger.warn(`Unable to remove empty move staging directory: ${staged.directory}`, error);
   }
 }
 
@@ -912,18 +949,224 @@ export async function moveFile(source: string, destination: string): Promise<voi
   await performMove(planned, 0, 1);
 }
 
-export async function deleteFile(filePath: string): Promise<void> {
+async function pinDeleteTarget(
+  source: string,
+  completed: number,
+  total: number,
+): Promise<DeleteTarget> {
+  const context: FileOperationContext = { operation: 'delete', source, completed, total };
+  try {
+    const stat = await fs.lstat(source, { bigint: true });
+    return {
+      path: source,
+      deviceId: stat.dev.toString(),
+      inode: stat.ino.toString(),
+      mode: Number(stat.mode),
+      ctimeNs: stat.ctimeNs.toString(),
+    };
+  } catch (error) {
+    throw operationError(`Unable to identify ${source} before deletion`, context, error);
+  }
+}
+
+async function performPinnedDelete(
+  runtime: NativeRenameRuntime,
+  target: DeleteTarget,
+  remaining: DeleteTarget[],
+  completed: number,
+  total: number,
+): Promise<DeleteGenerationGuard | null> {
   const context: FileOperationContext = {
     operation: 'delete',
-    source: filePath,
-    completed: 0,
-    total: 1,
+    source: target.path,
+    completed,
+    total,
   };
+  let stagingDirectory: string;
   try {
-    await fs.rm(filePath, { recursive: true, force: true });
+    stagingDirectory = await fs.mkdtemp(
+      path.join(path.dirname(target.path), '.agents-commander-delete-'),
+    );
+    await fs.chmod(stagingDirectory, 0o700);
   } catch (error) {
-    throw operationError(`Failed to delete ${filePath}`, context, error);
+    throw operationError(`Unable to prepare a private deletion for ${target.path}`, context, error);
   }
+
+  const stagedSource = path.join(stagingDirectory, path.basename(target.path));
+  let sourceStat: BigIntStats;
+  try {
+    // ctime changes on rename on supported filesystems, so compare the exact
+    // selection generation immediately before staging rather than afterward.
+    sourceStat = await fs.lstat(target.path, { bigint: true });
+  } catch (error) {
+    try { await fs.rmdir(stagingDirectory); } catch { /* best-effort empty cleanup */ }
+    throw operationError(`Unable to verify ${target.path} before deletion`, context, error);
+  }
+  if (!matchesDeleteSelection(sourceStat, target)) {
+    try { await fs.rmdir(stagingDirectory); } catch { /* best-effort empty cleanup */ }
+    throw new FileOperationError(
+      `The selected item changed before deletion and was preserved: ${target.path}`,
+      context,
+      { code: 'ESTALE' },
+    );
+  }
+
+  try {
+    await fs.rename(target.path, stagedSource);
+  } catch (error) {
+    try { await fs.rmdir(stagingDirectory); } catch { /* best-effort empty cleanup */ }
+    throw operationError(`Unable to stage ${target.path} for deletion`, context, error);
+  }
+
+  let stagedStat: BigIntStats;
+  try {
+    stagedStat = await fs.lstat(stagedSource, { bigint: true });
+  } catch (error) {
+    throw new FileOperationError(
+      `Unable to verify the staged item; it may be recovered from ${stagedSource}`,
+      context,
+      { code: errnoCode(error), cause: error, recoveryPath: stagedSource },
+    );
+  }
+
+  // Keep verifying the rename-stable identity after staging. Do not compare
+  // ctime here: rename itself updates ctime on macOS and Linux filesystems.
+  if (!matchesDeleteEntryIdentity(stagedStat, target)) {
+    try {
+      await renameNoReplace(runtime, stagedSource, target.path, context);
+    } catch (error) {
+      throw new FileOperationError(
+        `The selected item changed before deletion; its replacement remains safely staged at ${stagedSource}`,
+        context,
+        { code: 'ESTALE', cause: error, recoveryPath: stagedSource },
+      );
+    }
+    try {
+      await fs.rmdir(stagingDirectory);
+    } catch (error) {
+      logger.warn(`Unable to remove empty delete staging directory: ${stagingDirectory}`, error);
+    }
+    throw new FileOperationError(
+      `The selected item changed before deletion and was preserved: ${target.path}`,
+      context,
+      { code: 'ESTALE' },
+    );
+  }
+
+  const needsGenerationGuard = target.ctimeNs !== undefined
+    && (target.mode & 0o170000) === 0o100000
+    && remaining.some((candidate) => (
+      candidate.ctimeNs === target.ctimeNs
+      && samePlannedDeleteIdentity(target, candidate)
+    ));
+  let generationGuard: DeleteGenerationGuard | null = null;
+  if (needsGenerationGuard) {
+    let handle: FileHandle | null = null;
+    try {
+      handle = await fs.open(stagedSource, DELETE_GUARD_OPEN_FLAGS);
+      const handleStat = await handle.stat({ bigint: true });
+      if (!matchesDeleteEntryIdentity(handleStat, target)) {
+        throw new FileOperationError(
+          `The staged item changed while its hard links were being secured: ${target.path}`,
+          context,
+          { code: 'ESTALE' },
+        );
+      }
+      generationGuard = { handle };
+    } catch (error) {
+      if (handle) {
+        try { await handle.close(); } catch { /* best-effort descriptor cleanup */ }
+      }
+      try {
+        await renameNoReplace(runtime, stagedSource, target.path, context);
+      } catch (restoreError) {
+        throw new FileOperationError(
+          `Unable to secure the selected hard links; the item remains at ${stagedSource}`,
+          context,
+          { code: errnoCode(error) ?? 'ESTALE', cause: restoreError, recoveryPath: stagedSource },
+        );
+      }
+      try {
+        await fs.rmdir(stagingDirectory);
+      } catch (cleanupError) {
+        logger.warn(`Unable to remove empty delete staging directory: ${stagingDirectory}`, cleanupError);
+      }
+      throw new FileOperationError(
+        `Unable to secure the selected hard links; the item was preserved: ${target.path}`,
+        context,
+        { code: errnoCode(error) ?? 'ESTALE', cause: error },
+      );
+    }
+  }
+
+  try {
+    await fs.rm(stagedSource, { recursive: true, force: false });
+  } catch (error) {
+    if (generationGuard) {
+      try { await generationGuard.handle.close(); } catch { /* preserve the primary failure */ }
+    }
+    throw new FileOperationError(
+      `Unable to delete the staged item; it may be recovered from ${stagedSource}`,
+      context,
+      { code: errnoCode(error), cause: error, recoveryPath: stagedSource },
+    );
+  }
+
+  try {
+    await fs.rmdir(stagingDirectory);
+  } catch (error) {
+    logger.warn(`Unable to remove empty delete staging directory: ${stagingDirectory}`, error);
+  }
+  return generationGuard;
+}
+
+async function refreshRemainingHardLinkGenerations(
+  deleted: DeleteTarget,
+  remaining: DeleteTarget[],
+  guard: DeleteGenerationGuard | null,
+): Promise<void> {
+  if (deleted.ctimeNs === undefined || !guard) return;
+  const pinnedStat = await guard.handle.stat({ bigint: true });
+  if (!matchesDeleteEntryIdentity(pinnedStat, deleted)) {
+    throw new FileOperationError(
+      `Unable to prove the deleted hard-link identity for ${deleted.path}`,
+      {
+        operation: 'delete',
+        source: deleted.path,
+        completed: 0,
+        total: remaining.length + 1,
+      },
+      { code: 'ESTALE' },
+    );
+  }
+  for (const target of remaining) {
+    // Unlinking one selected name legitimately advances ctime for every other
+    // hard link to that inode. Refresh only targets captured at the same
+    // generation. While another link exists, the inode cannot be recycled.
+    if (
+      target.ctimeNs !== deleted.ctimeNs
+      || !samePlannedDeleteIdentity(deleted, target)
+    ) continue;
+    try {
+      const stat = await fs.lstat(target.path, { bigint: true });
+      if (
+        matchesDeleteEntryIdentity(pinnedStat, target)
+        && matchesDeleteEntryIdentity(stat, target)
+      ) {
+        target.ctimeNs = stat.ctimeNs.toString();
+      }
+    } catch {
+      // Preserve the original generation so the normal verification reports
+      // a missing or replaced entry if this target is reached.
+    }
+  }
+}
+
+export async function deleteFile(
+  filePath: string,
+  expectedIdentity?: Omit<DeleteTarget, 'path'>,
+): Promise<void> {
+  await deleteFiles([expectedIdentity ? { path: filePath, ...expectedIdentity } : filePath]);
 }
 
 export async function createDirectory(directoryPath: string): Promise<void> {
@@ -991,21 +1234,44 @@ export async function moveFiles(
 }
 
 export async function deleteFiles(
-  sources: string[],
+  sources: Array<string | DeleteTarget>,
   onProgress?: ProgressCallback,
 ): Promise<void> {
-  for (let index = 0; index < sources.length; index++) {
-    const context: FileOperationContext = {
+  if (sources.length === 0) return;
+  const targets = await Promise.all(sources.map((source, index) => (
+    typeof source === 'string'
+      ? pinDeleteTarget(source, index, sources.length)
+      : Promise.resolve({ ...source })
+  )));
+  const first = targets[0];
+  const runtime = await prepareNativeRenameRuntime({
+    operation: 'delete',
+    source: first.path,
+    completed: 0,
+    total: targets.length,
+  });
+  for (const target of targets) {
+    await ensureSourceFilesystemSupportsNoReplace(runtime, target.path, {
       operation: 'delete',
-      source: sources[index],
-      completed: index,
-      total: sources.length,
-    };
+      source: target.path,
+      completed: 0,
+      total: targets.length,
+    });
+  }
+  for (let index = 0; index < targets.length; index++) {
+    const remaining = targets.slice(index + 1);
+    const guard = await performPinnedDelete(
+      runtime,
+      targets[index],
+      remaining,
+      index,
+      targets.length,
+    );
     try {
-      await fs.rm(sources[index], { recursive: true, force: true });
-    } catch (error) {
-      throw operationError(`Failed to delete ${sources[index]}`, context, error);
+      await refreshRemainingHardLinkGenerations(targets[index], remaining, guard);
+    } finally {
+      if (guard) await guard.handle.close();
     }
-    onProgress?.(index + 1, sources.length, path.basename(sources[index]));
+    onProgress?.(index + 1, targets.length, path.basename(targets[index].path));
   }
 }

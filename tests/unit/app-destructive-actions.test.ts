@@ -33,7 +33,7 @@ vi.mock('../../src/file-manager/file-operations.js', async (importOriginal) => (
 
 import { App } from '../../src/app.js';
 import { TerminalPanel } from '../../src/panels/terminal-panel.js';
-import { copyFiles, createDirectory, moveFile } from '../../src/file-manager/file-operations.js';
+import { copyFiles, createDirectory, deleteFiles, moveFile } from '../../src/file-manager/file-operations.js';
 import { showConfirmDialog } from '../../src/screen/dialog/confirm-dialog.js';
 import { showInputDialog } from '../../src/screen/dialog/input-dialog.js';
 import { showAgentDialog } from '../../src/screen/dialog/agent-dialog.js';
@@ -55,11 +55,13 @@ function createHarness(options: {
 } = {}) {
   const livePanels = (options.livePanels ?? []).map((panel) => ({
     killAgent: vi.fn(async () => undefined),
+    sessionGeneration: 1,
     ...panel,
   }));
   const managedSessions = (options.managedSessions ?? []).map((session) => ({
     ...session,
     sessionId: `${session.type}-${session.panelIndex}`,
+    profileId: session.type,
     uptime: 1,
   }));
   const activePanel = livePanels[0] ?? { panelIndex: 0, sessionName: null, isRunning: false };
@@ -112,7 +114,41 @@ function createHarness(options: {
     disconnectPanel: vi.fn(),
     handlePanelRemoval: vi.fn(),
     reindexAfterPanelRemoval: vi.fn(),
+    prepareTemplateTask: vi.fn((_panelIndex: number, content: string) => ({
+      success: true as const,
+      content,
+      bindProtocolCapability: false,
+    })),
+    captureTaskTarget: vi.fn((panelIndex: number) => {
+      const managed = managedSessions.find((session) => session.panelIndex === panelIndex);
+      const terminal = livePanels.find((panel) => panel.panelIndex === panelIndex) ?? null;
+      if (managed) {
+        return {
+          panelIndex,
+          state: 'managed' as const,
+          terminal,
+          sessionId: managed.sessionId,
+          agentType: managed.type,
+          profileId: managed.profileId,
+        };
+      }
+      if (terminal?.isRunning) {
+        return {
+          panelIndex,
+          state: 'unmanaged' as const,
+          terminal,
+          sessionName: terminal.sessionName,
+          sessionGeneration: terminal.sessionGeneration,
+        };
+      }
+      return {
+        panelIndex,
+        state: 'idle' as const,
+        panel: allPanels.find((panel) => panel.panelIndex === panelIndex),
+      };
+    }),
     sendTask: vi.fn(async () => ({ success: true })),
+    sendTemplateTask: vi.fn(async () => ({ success: true })),
   };
   const app: any = Object.create(App.prototype);
   Object.assign(app, {
@@ -142,6 +178,32 @@ function createHarness(options: {
 describe('App destructive layout actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('deletes only the filesystem identities captured before confirmation', async () => {
+    vi.mocked(showConfirmDialog).mockResolvedValue(true);
+    const { app, layout } = createHarness();
+    layout.activeFilePanel = {
+      selectedEntries: [{
+        name: 'report.md',
+        fullPath: '/workspace/report.md',
+        deviceId: '12',
+        inode: '34',
+        identityMode: 0o100644,
+        ctimeNs: '9007199254740993',
+      }],
+      loadDirectory: vi.fn(async () => undefined),
+    };
+
+    await app.actionDelete();
+
+    expect(deleteFiles).toHaveBeenCalledWith([{
+      path: '/workspace/report.md',
+      deviceId: '12',
+      inode: '34',
+      mode: 0o100644,
+      ctimeNs: '9007199254740993',
+    }]);
   });
 
   it('does nothing for a same-mode request, even with live sessions', async () => {
@@ -422,11 +484,46 @@ describe('App destructive layout actions', () => {
     expect(orchestrator.sendTask).not.toHaveBeenCalled();
   });
 
+  it('binds manual replacement consent to the exact session snapshot', async () => {
+    vi.mocked(showOrchestrateDialog).mockResolvedValue({
+      agentType: 'codex',
+      panelIndex: 1,
+      task: 'Review the patch',
+    });
+    vi.mocked(showConfirmDialog).mockResolvedValue(true);
+    const { app, orchestrator } = createHarness({
+      livePanels: [{ panelIndex: 1, sessionName: 'Claude', isRunning: true }],
+      managedSessions: [{
+        panelIndex: 1,
+        type: 'claude',
+        name: 'Claude',
+        status: 'running',
+      }],
+    });
+
+    await app.actionOrchestrate();
+
+    const snapshot = vi.mocked(orchestrator.captureTaskTarget).mock.results[0].value;
+    expect(snapshot).toMatchObject({
+      state: 'managed',
+      sessionId: 'claude-1',
+      agentType: 'claude',
+    });
+    expect(orchestrator.sendTask).toHaveBeenCalledWith(
+      'codex',
+      1,
+      'Review the patch',
+      undefined,
+      snapshot,
+    );
+  });
+
   it('does not replace a mismatched managed agent selected by the template picker', async () => {
     vi.mocked(showTemplateDialog).mockResolvedValue({
       content: 'Use the collaboration template',
       panelIndex: 0,
       templateName: 'Conference Review',
+      requiresProtocol: false,
     });
     vi.mocked(showAgentDialog).mockResolvedValue({
       agentType: 'codex',
@@ -446,7 +543,46 @@ describe('App destructive layout actions', () => {
     await app.actionBrowseTemplates();
 
     expect(showConfirmDialog).toHaveBeenCalledOnce();
-    expect(orchestrator.sendTask).not.toHaveBeenCalled();
+    expect(orchestrator.sendTemplateTask).not.toHaveBeenCalled();
+  });
+
+  it('binds ordinary-template replacement consent to the exact session snapshot', async () => {
+    vi.mocked(showTemplateDialog).mockResolvedValue({
+      content: 'Use the ordinary review template',
+      panelIndex: 0,
+      templateName: 'Conference Review',
+      requiresProtocol: false,
+    });
+    vi.mocked(showAgentDialog).mockResolvedValue({
+      agentType: 'codex',
+      panelIndex: 1,
+    });
+    vi.mocked(showConfirmDialog).mockResolvedValue(true);
+    const { app, orchestrator } = createHarness({
+      livePanels: [{ panelIndex: 1, sessionName: 'Claude', isRunning: true }],
+      managedSessions: [{
+        panelIndex: 1,
+        type: 'claude',
+        name: 'Claude',
+        status: 'running',
+      }],
+    });
+
+    await app.actionBrowseTemplates();
+
+    const snapshot = vi.mocked(orchestrator.captureTaskTarget).mock.results[0].value;
+    expect(snapshot).toMatchObject({
+      state: 'managed',
+      sessionId: 'claude-1',
+      agentType: 'claude',
+    });
+    expect(orchestrator.sendTemplateTask).toHaveBeenCalledWith(
+      'codex',
+      1,
+      expect.objectContaining({ content: 'Use the ordinary review template' }),
+      undefined,
+      snapshot,
+    );
   });
 
   it('warns that an unmanaged terminal session will close on quit', async () => {

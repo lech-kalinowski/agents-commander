@@ -1,6 +1,10 @@
 import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
-import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../../utils/dialog-state.js';
 
 export const GUIDE_TEXT = `
 {bold}{cyan-fg}INTER-AGENT COMMUNICATION GUIDE{/cyan-fg}{/bold}
@@ -18,7 +22,8 @@ with another agent running in a different panel.
 
   {bold}2.{/bold} Inject the protocol
      Focus a terminal panel and press {cyan-fg}Ctrl+P{/cyan-fg}.
-     This teaches the agent it can talk to other agents.
+     This teaches the agent how to talk to other agents and
+     gives this one session a private routing capability.
      Do this for each agent you want to participate.
 
   {bold}3.{/bold} Give a collaborative task
@@ -38,44 +43,46 @@ with another agent running in a different panel.
 
 {bold}{yellow-fg}PROTOCOL COMMANDS{/yellow-fg}{/bold}
 
-  All commands use {cyan-fg}===COMMANDER:END==={/cyan-fg} to close the block.
+  Ctrl+P supplies the real {white-fg}<session-key>{/white-fg} to the agent.
+  Static markers without that key are intentionally inert.
+  All headers and footers must use the same session key.
 
   {bold}1. SEND{/bold} — direct message to a specific agent:
 
-    {cyan-fg}===COMMANDER:SEND:{/cyan-fg}{white-fg}agent_type{/white-fg}{cyan-fg}:{/cyan-fg}{white-fg}panel_number{/white-fg}{cyan-fg}==={/cyan-fg}
+    {cyan-fg}===COMMANDER:SEND:{/cyan-fg}{white-fg}agent_type{/white-fg}{cyan-fg}:{/cyan-fg}{white-fg}panel_number{/white-fg}{cyan-fg}:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
     {white-fg}your message or task{/white-fg}
-    {cyan-fg}===COMMANDER:END==={/cyan-fg}
+    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
 
   {bold}2. REPLY{/bold} — respond to whoever last messaged you:
 
-    {cyan-fg}===COMMANDER:REPLY==={/cyan-fg}
+    {cyan-fg}===COMMANDER:REPLY:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
     {white-fg}your response{/white-fg}
-    {cyan-fg}===COMMANDER:END==={/cyan-fg}
+    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
 
     No need to know the sender's panel number.
     Commander routes it back automatically.
 
   {bold}3. BROADCAST{/bold} — send to all other connected agents:
 
-    {cyan-fg}===COMMANDER:BROADCAST==={/cyan-fg}
+    {cyan-fg}===COMMANDER:BROADCAST:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
     {white-fg}message for everyone{/white-fg}
-    {cyan-fg}===COMMANDER:END==={/cyan-fg}
+    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
 
     Delivered to every panel except the sender.
 
   {bold}4. STATUS{/bold} — report progress (shown in UI and acknowledged in your panel):
 
-    {cyan-fg}===COMMANDER:STATUS==={/cyan-fg}
+    {cyan-fg}===COMMANDER:STATUS:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
     {white-fg}Processing file 5 of 10...{/white-fg}
-    {cyan-fg}===COMMANDER:END==={/cyan-fg}
+    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
 
     Shows a toast notification in Commander and returns a local ACK.
 
   {bold}5. QUERY{/bold} — ask Commander for environment info:
 
-    {cyan-fg}===COMMANDER:QUERY==={/cyan-fg}
+    {cyan-fg}===COMMANDER:QUERY:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
     {white-fg}agents{/white-fg}
-    {cyan-fg}===COMMANDER:END==={/cyan-fg}
+    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
 
     Queries: {cyan-fg}agents{/cyan-fg} (list running agents),
     {cyan-fg}panels{/cyan-fg} (panel layout info),
@@ -108,7 +115,7 @@ with another agent running in a different panel.
   Aider, Cline, Goose, Kiro, and Amp are
   catalogued future presets, not valid SEND targets yet.
 
-  Panels are numbered {cyan-fg}1{/cyan-fg} to {cyan-fg}4{/cyan-fg}.
+  Use the stable panel number shown in Commander.
 
 
 {bold}{yellow-fg}EXAMPLE WORKFLOWS{/yellow-fg}{/bold}
@@ -163,7 +170,7 @@ let guideOpen = false;
 export function showProtocolGuide(screen: blessed.Widgets.Screen, theme: Theme): void {
   if (guideOpen) return;
   guideOpen = true;
-  enterDialog();
+  enterDialog(screen);
 
   const dialog = blessed.box({
     parent: screen,
@@ -203,15 +210,18 @@ export function showProtocolGuide(screen: blessed.Widgets.Screen, theme: Theme):
   dialog.key(['pagedown'], () => { dialog.scroll((dialog.height as number) - 4); screen.render(); });
 
   let closed = false;
+  let unregisterCancellation = () => {};
   const close = () => {
     if (closed) return;
     closed = true;
     guideOpen = false;
-    leaveDialog();
+    unregisterCancellation();
+    leaveDialog(screen);
     screen.removeListener('keypress', onScreenKey);
     dialog.destroy();
     screen.render();
   };
+  unregisterCancellation = registerDialogCancellation(screen, close);
 
   // Close on dialog-level keys
   dialog.key(['escape', 'enter', 'q', 'S-f12', 'C-g'], close);

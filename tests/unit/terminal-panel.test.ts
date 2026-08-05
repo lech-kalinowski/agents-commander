@@ -1,4 +1,5 @@
 import { StringDecoder } from 'node:string_decoder';
+import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ProtocolScanner,
@@ -7,6 +8,11 @@ import {
 import { TerminalPanel } from '../../src/panels/terminal-panel.js';
 import { VTerm } from '../../src/panels/vterm.js';
 import { MAX_PANEL_NUMBER } from '../../src/panel-limits.js';
+import {
+  enterDialog,
+  isDialogActive,
+  leaveDialog,
+} from '../../src/utils/dialog-state.js';
 
 function createPanelHarness() {
   const emitted: CommanderMessage[] = [];
@@ -20,7 +26,11 @@ function createPanelHarness() {
       dedupWindow: 15000,
     },
     recentEmissions: new Map<string, number>(),
-    protocolReservations: new Map<string, { remaining: number; expiresAt: number }>(),
+    protocolReservations: new Map<string, {
+      expectedOccurrences: number;
+      suppressedByOrigin: Map<'scrollback' | 'grid' | 'tail', number>;
+      expiresAt: number;
+    }>(),
     pendingReplyEmissions: new Map<string, { msg: CommanderMessage; timer: ReturnType<typeof setTimeout> }>(),
     instructionEchoGuardUntil: 0,
     scannerEnabled: true,
@@ -53,6 +63,62 @@ function createPanelHarness() {
 
   return { panel, emitted };
 }
+
+describe('TerminalPanel input isolation', () => {
+  afterEach(() => {
+    while (isDialogActive()) leaveDialog();
+  });
+
+  function createInputHarness() {
+    const outputBox = new EventEmitter() as any;
+    outputBox.height = 10;
+    outputBox.aleft = 0;
+    outputBox.atop = 0;
+    outputBox.key = vi.fn();
+    outputBox.scroll = vi.fn();
+    outputBox.getScrollHeight = vi.fn(() => 10);
+    outputBox.getScroll = vi.fn(() => 0);
+    const box = new EventEmitter() as any;
+    const stdin = { writable: true, write: vi.fn() };
+    const panel: any = {
+      outputBox,
+      box,
+      proc: { stdin },
+      screen: { render: vi.fn() },
+      vterm: { mouseEnabled: true },
+      userScrolled: false,
+      onMouseClick: vi.fn(),
+      onUserInput: vi.fn(),
+    };
+    panel.keyToAnsi = TerminalPanel.prototype['keyToAnsi'];
+    TerminalPanel.prototype['setupKeys'].call(panel);
+    TerminalPanel.prototype['setupMouse'].call(panel);
+    return { panel, box, outputBox, stdin };
+  }
+
+  it('forwards Ctrl+Q to the agent and blocks background input while a dialog is active', () => {
+    const { panel, box, outputBox, stdin } = createInputHarness();
+
+    outputBox.emit('keypress', undefined, { name: 'q', full: 'C-q', ctrl: true });
+    box.emit('click');
+    expect(stdin.write).toHaveBeenCalledWith('\x11');
+    expect(panel.onUserInput).toHaveBeenCalledOnce();
+    expect(panel.onMouseClick).toHaveBeenCalledOnce();
+
+    enterDialog();
+    outputBox.emit('keypress', 'x', { name: 'x', full: 'x' });
+    outputBox.emit('mouse', { action: 'mousedown', button: 'left', x: 2, y: 2 });
+    box.emit('click');
+
+    expect(stdin.write).toHaveBeenCalledOnce();
+    expect(panel.onUserInput).toHaveBeenCalledOnce();
+    expect(panel.onMouseClick).toHaveBeenCalledOnce();
+
+    leaveDialog();
+    outputBox.emit('mouse', { action: 'mousedown', button: 'left', x: 2, y: 2 });
+    expect(stdin.write).toHaveBeenLastCalledWith('\x1b[<0;3;3M');
+  });
+});
 
 describe('TerminalPanel reply transport', () => {
   afterEach(() => {
@@ -106,25 +172,78 @@ describe('TerminalPanel reply transport', () => {
     expect(emitted).toEqual([]);
   });
 
-  it('allows the first reserved outgoing protocol block through, then suppresses repeats', () => {
+  it('does not deduplicate distinct same-length messages with a shared prefix', () => {
     const { panel, emitted } = createPanelHarness();
-    const query: CommanderMessage = {
-      type: 'query',
+    const prefix = 'x'.repeat(160);
+    const first: CommanderMessage = {
+      type: 'send',
+      sourcePanel: 2,
+      sourceAgent: 'Codex CLI',
+      targetAgent: 'claude',
+      targetPanel: 0,
+      content: `${prefix}A`,
+    };
+    const second = { ...first, content: `${prefix}B` };
+
+    panel.emitDeduped(first, 'grid');
+    panel.emitDeduped(second, 'grid');
+
+    expect(emitted).toEqual([first, second]);
+  });
+
+  it('preserves indentation and line structure in deduplication identity', () => {
+    const { panel, emitted } = createPanelHarness();
+    const first: CommanderMessage = {
+      type: 'send',
+      sourcePanel: 2,
+      sourceAgent: 'Codex CLI',
+      targetAgent: 'claude',
+      targetPanel: 0,
+      content: 'if ready:\n  approve()',
+    };
+    const second = { ...first, content: 'if ready:\napprove()  ' };
+
+    panel.emitDeduped(first, 'grid');
+    panel.emitDeduped(second, 'grid');
+
+    expect(emitted).toEqual([first, second]);
+  });
+
+  it('suppresses one prompt echo across scanner paths, then routes identical authored output once', () => {
+    const { panel, emitted } = createPanelHarness();
+    const capability = 'a'.repeat(43);
+    const reply: CommanderMessage = {
+      type: 'reply',
       sourcePanel: 0,
       sourceAgent: 'Claude Code',
       targetAgent: 'generic',
       targetPanel: -1,
-      content: 'agents',
+      content: 'review complete',
+      capability,
     };
 
     panel.reserveProtocolTextForEcho(
-      'Output exactly this 3-line Commander block and nothing else:\n===COMMANDER:QUERY===\nagents\n===COMMANDER:END===',
+      'Output exactly this 3-line Commander block and nothing else:\n'
+      + `===COMMANDER:REPLY:${capability}===\n`
+      + 'review complete\n'
+      + `===COMMANDER:END:${capability}===`,
     );
 
-    panel.emitDeduped(query);
-    panel.emitDeduped(query);
+    // The same physical paste/render echo can be observed by every scanner.
+    panel.emitDeduped(reply, 'grid');
+    panel.emitDeduped(reply, 'scrollback');
+    panel.emitDeduped(reply, 'tail');
+    expect(emitted).toEqual([]);
 
-    expect(emitted).toEqual([query]);
+    // The N+1 identical occurrence on an origin is authored by the agent.
+    panel.emitDeduped(reply, 'grid');
+    expect(emitted).toEqual([reply]);
+
+    // Normal shared dedup suppresses that authored occurrence's other paths.
+    panel.emitDeduped(reply, 'scrollback');
+    panel.emitDeduped(reply, 'tail');
+
+    expect(emitted).toEqual([reply]);
   });
 
   it('detects a reply from the rendered tail when grid and scrollback miss it', () => {
@@ -242,8 +361,10 @@ describe('TerminalPanel reply transport', () => {
       content: 'reserved Panel 5',
     };
 
-    reservationHarness.panel.emitDeduped(message);
-    reservationHarness.panel.emitDeduped(message);
+    reservationHarness.panel.emitDeduped(message, 'grid');
+    expect(reservationHarness.emitted).toEqual([]);
+
+    reservationHarness.panel.emitDeduped(message, 'grid');
 
     expect(reservationHarness.emitted).toEqual([message]);
   });
@@ -349,6 +470,59 @@ describe('TerminalPanel reply transport', () => {
         content,
       }),
     ]);
+  });
+
+  it('continues scanning after scrollback rollover and CSI 3J clear', () => {
+    const emitted: CommanderMessage[] = [];
+    const vterm = new VTerm(40, 2, 3);
+    const panel: any = {
+      scannerEnabled: true,
+      scanner: new ProtocolScanner(0, 'Rollover Agent', (message) => {
+        emitted.push(message);
+      }),
+      vterm,
+      lastScrollbackIndex: 0,
+      scheduleGridScan: vi.fn(),
+    };
+    panel.feedScannerFromVTerm = TerminalPanel.prototype['feedScannerFromVTerm'];
+
+    vterm.write('padding-1\r\npadding-2\r\npadding-3\r\npadding-4');
+    panel.feedScannerFromVTerm();
+    vterm.write([
+      '\x1b[3J',
+      '===COMMANDER:SEND:generic:2===',
+      'after-clear',
+      '===COMMANDER:END===',
+      'padding-5',
+      'padding-6',
+    ].join('\r\n'));
+    panel.feedScannerFromVTerm();
+
+    expect(emitted).toEqual([
+      expect.objectContaining({ type: 'send', content: 'after-clear' }),
+    ]);
+  });
+});
+
+describe('TerminalPanel process isolation', () => {
+  it('drops late output from a replaced child process', () => {
+    const activeChild = {} as any;
+    const staleChild = {} as any;
+    const panel: any = {
+      proc: activeChild,
+      vterm: { write: vi.fn() },
+      feedScannerFromVTerm: vi.fn(),
+      scheduleRender: vi.fn(),
+    };
+    panel.decodePtyChunk = TerminalPanel.prototype['decodePtyChunk'];
+    panel.handleProcessData = TerminalPanel.prototype['handleProcessData'];
+
+    panel.handleProcessData(staleChild, new StringDecoder('utf8'), Buffer.from('stale'));
+    expect(panel.vterm.write).not.toHaveBeenCalled();
+
+    panel.handleProcessData(activeChild, new StringDecoder('utf8'), Buffer.from('current'));
+    expect(panel.vterm.write).toHaveBeenCalledWith('current');
+    expect(panel.feedScannerFromVTerm).toHaveBeenCalledWith(true);
   });
 });
 

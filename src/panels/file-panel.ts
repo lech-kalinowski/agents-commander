@@ -8,6 +8,7 @@ import { showErrorToast } from '../screen/toast.js';
 import { formatFileSize, formatDate, truncate } from '../utils/format.js';
 import { logger } from '../utils/logger.js';
 import { isPanelId } from '../panel-limits.js';
+import { isDialogActive } from '../utils/dialog-state.js';
 
 interface FilePanelOptions {
   showHidden?: boolean;
@@ -160,6 +161,7 @@ export class FilePanel {
 
     // Click to focus — notify parent layout
     this.box.on('click', () => {
+      if (isDialogActive()) return;
       if (this.onMouseClick) this.onMouseClick();
     });
   }

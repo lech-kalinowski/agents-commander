@@ -2,7 +2,11 @@ import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
 import type { PromptTemplate } from '../../templates/types.js';
 import { getTemplatesByCategory, refreshTemplates } from '../../templates/loader.js';
-import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../../utils/dialog-state.js';
 import {
   adjacentPanelId,
   initialPanelId,
@@ -18,6 +22,7 @@ export interface TemplateChoice {
   content: string;
   panelIndex: number;
   templateName: string;
+  requiresProtocol: boolean;
 }
 
 type ListEntry =
@@ -37,7 +42,7 @@ export function showTemplateDialog(
   const firstPanelId = initialPanelId(panelIds, activePanelIndex);
   if (firstPanelId === null) return Promise.resolve(null);
   dialogOpen = true;
-  enterDialog();
+  enterDialog(screen);
 
   return new Promise((resolve) => {
     refreshTemplates();
@@ -69,7 +74,7 @@ export function showTemplateDialog(
 
     if (listMapping.length === 0) {
       dialogOpen = false;
-      leaveDialog();
+      leaveDialog(screen);
       showErrorToast(screen, 'Prompt templates could not be loaded');
       resolve(null);
       return;
@@ -184,6 +189,7 @@ export function showTemplateDialog(
     let onScreenKey: (ch: any, key: any) => void;
 
     let resolved = false;
+    let unregisterCancellation = () => {};
     const unbindResize = bindOverlayResize(screen, dialog, 80, 28, (nextGeometry) => {
       panelBox.height = Math.max(6, Math.min(10, nextGeometry.height - 6));
       pickerWidth = Math.max(12, nextGeometry.width - 10);
@@ -197,12 +203,20 @@ export function showTemplateDialog(
       resolved = true;
       dialogOpen = false;
       numberInput.dispose();
-      leaveDialog();
+      unregisterCancellation();
+      leaveDialog(screen);
       unbindResize();
       if (onScreenKey) screen.removeListener('keypress', onScreenKey);
       dialog.destroy();
       screen.render();
     };
+    unregisterCancellation = registerDialogCancellation(screen, () => {
+      try {
+        cleanup();
+      } finally {
+        resolve(null);
+      }
+    });
 
     // ── Preview update ──
     function updatePreview(index: number): void {
@@ -357,6 +371,7 @@ export function showTemplateDialog(
         content: selectedTemplate!.content,
         panelIndex: selectedPanel,
         templateName: selectedTemplate!.name,
+        requiresProtocol: selectedTemplate!.category === 'collaboration',
       });
     });
 

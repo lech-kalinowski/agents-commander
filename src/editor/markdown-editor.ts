@@ -2,7 +2,11 @@ import blessed from 'blessed';
 import path from 'node:path';
 import type { Theme } from '../config/types.js';
 import { logger } from '../utils/logger.js';
-import { enterDialog, leaveDialog } from '../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../utils/dialog-state.js';
 import { showErrorToast, showToast } from '../screen/toast.js';
 import {
   EditorFileIO,
@@ -125,6 +129,7 @@ export class MarkdownEditor {
   private closed = false;
   private inputSuspended = false;
   private dialogStateOwned = false;
+  private unregisterCancellation: (() => void) | null = null;
 
   private lines: string[] = [''];
   private cursorRow = 0;
@@ -207,18 +212,24 @@ export class MarkdownEditor {
       style: { bg: 'cyan', fg: 'black' },
     });
     this.updateStatusLine();
-    enterDialog();
+    enterDialog(screen);
     this.dialogStateOwned = true;
+    this.unregisterCancellation = registerDialogCancellation(
+      screen,
+      () => this.destroyAndRestoreFocus(),
+    );
   }
 
   async open(): Promise<boolean> {
     if (this.closed) return false;
     try {
       const loaded = await this.fileIO.load(this.filePath);
+      if (this.closed) return false;
       this.baseline = loaded.baseline;
       this.lines = loaded.content.split('\n');
       if (this.lines.length === 0) this.lines = [''];
     } catch (err) {
+      if (this.closed) return false;
       logger.error(`Failed to open file: ${this.filePath}`, err);
       this.destroyAndRestoreFocus();
       showErrorToast(
@@ -583,8 +594,10 @@ export class MarkdownEditor {
       logger.error('Failed to destroy editor overlay', err);
     }
     if (this.dialogStateOwned) {
+      this.unregisterCancellation?.();
+      this.unregisterCancellation = null;
       this.dialogStateOwned = false;
-      leaveDialog();
+      leaveDialog(this.screen);
     }
     try {
       this.onClose();

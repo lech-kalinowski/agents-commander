@@ -2,7 +2,11 @@ import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
 import type { AgentProfile, AgentType } from '../../agents/types.js';
 import { discoverAgents } from '../../agents/agent-registry.js';
-import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../../utils/dialog-state.js';
 import {
   adjacentPanelId,
   initialPanelId,
@@ -41,7 +45,7 @@ export function showAgentDialog(
   const firstPanelId = initialPanelId(panelIds, activePanelIndex);
   if (firstPanelId === null) return Promise.resolve(null);
   agentDialogOpen = true;
-  enterDialog();
+  enterDialog(screen);
 
   return new Promise((resolve) => {
     const agents = discoverAgents(agentOverrides, agentProfiles);
@@ -149,6 +153,9 @@ export function showAgentDialog(
     });
 
     let resolved = false;
+    let unregisterCancellation = () => {};
+    let notice: blessed.Widgets.BoxElement | null = null;
+    let noticeTimer: NodeJS.Timeout | null = null;
     const unbindResize = bindOverlayResize(
       screen,
       dialog,
@@ -167,9 +174,62 @@ export function showAgentDialog(
       resolved = true;
       agentDialogOpen = false;
       numberInput.dispose();
-      leaveDialog();
+      if (noticeTimer) clearTimeout(noticeTimer);
+      noticeTimer = null;
+      notice?.destroy();
+      notice = null;
+      unregisterCancellation();
+      leaveDialog(screen);
       unbindResize();
       dialog.destroy();
+      screen.render();
+    };
+    unregisterCancellation = registerDialogCancellation(screen, () => {
+      try {
+        cleanup();
+      } finally {
+        resolve(null);
+      }
+    });
+
+    const finishNotice = () => {
+      if (resolved) return;
+      cleanup();
+      resolve(null);
+    };
+
+    const showNotice = (
+      content: string,
+      preferredWidth: number,
+      preferredHeight: number,
+      timeoutMs: number,
+    ) => {
+      if (notice || resolved) return;
+      const noticeGeometry = screenGeometry(
+        screen,
+        preferredWidth,
+        preferredHeight,
+        { minWidth: 20, minHeight: 5 },
+      );
+      dialog.hide();
+      notice = blessed.box({
+        parent: screen,
+        top: 'center',
+        left: 'center',
+        width: noticeGeometry.width,
+        height: noticeGeometry.height,
+        border: { type: 'line' },
+        style: { bg: theme.dialog.bg, fg: theme.dialog.fg, border: theme.dialog.border },
+        tags: true,
+        keys: true,
+        mouse: true,
+        content,
+        label: ' Agent unavailable ',
+      });
+      notice.key(['escape', 'enter', 'q'], finishNotice);
+      notice.focus();
+      noticeTimer = setTimeout(finishNotice, timeoutMs);
+      noticeTimer.unref?.();
       screen.render();
     };
 
@@ -198,51 +258,30 @@ export function showAgentDialog(
         return;
       }
       const agent = agents[index];
-      cleanup();
       if (agent && agent.installed && agent.supported && !agent.configurationError) {
+        cleanup();
         resolve({
           agentType: agent.type,
           profileId: agent.profileId,
           panelIndex: selectedPanel,
         });
       } else if (agent && !agent.installed) {
-        const messageGeometry = screenGeometry(screen, 50, 5, { minWidth: 20, minHeight: 5 });
-        const msg = blessed.message({
-          parent: screen,
-          top: 'center',
-          left: 'center',
-          width: messageGeometry.width,
-          height: messageGeometry.height,
-          border: { type: 'line' },
-          style: { bg: theme.dialog.bg, fg: theme.dialog.fg, border: theme.dialog.border },
-          tags: true,
-        });
-        msg.display(`Not installed. Run:\n${agent.installCommand}`, 4, () => {
-          screen.render();
-        });
-        resolve(null);
-      } else if (agent?.configurationError) {
-        const messageGeometry = screenGeometry(screen, 58, 6, { minWidth: 24, minHeight: 5 });
-        const msg = blessed.message({
-          parent: screen,
-          top: 'center',
-          left: 'center',
-          width: messageGeometry.width,
-          height: messageGeometry.height,
-          border: { type: 'line' },
-          style: { bg: theme.dialog.bg, fg: theme.dialog.fg, border: theme.dialog.border },
-          tags: true,
-        });
-        msg.display(
-          `Invalid profile “${escapeTaggedText(agent.profileLabel, 120)}”:\n` +
-          escapeTaggedText(agent.configurationError, 280),
-          5,
-          () => {
-          screen.render();
-          },
+        showNotice(
+          `Not installed. Run:\n${escapeTaggedText(agent.installCommand, 300)}\n\nPress Enter or Esc to close.`,
+          50,
+          7,
+          4000,
         );
-        resolve(null);
+      } else if (agent?.configurationError) {
+        showNotice(
+          `Invalid profile “${escapeTaggedText(agent.profileLabel, 120)}”:\n` +
+          `${escapeTaggedText(agent.configurationError, 280)}\n\nPress Enter or Esc to close.`,
+          58,
+          8,
+          5000,
+        );
       } else {
+        cleanup();
         resolve(null);
       }
     };

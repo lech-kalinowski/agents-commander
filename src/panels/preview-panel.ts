@@ -4,7 +4,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Theme } from '../config/types.js';
 import { logger } from '../utils/logger.js';
-import { enterDialog, leaveDialog } from '../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../utils/dialog-state.js';
 import { formatUserError, sanitizeUserText } from '../utils/user-facing-errors.js';
 
 const MAX_PREVIEW_BYTES = 1024 * 1024;
@@ -27,6 +31,7 @@ export class PreviewPanel {
   private onClose: (() => void) | null = null;
   private closed = false;
   private dialogEntered = false;
+  private unregisterCancellation: (() => void) | null = null;
   private loadGeneration = 0;
 
   constructor(
@@ -77,8 +82,9 @@ export class PreviewPanel {
       this.close();
     });
 
-    enterDialog();
+    enterDialog(screen);
     this.dialogEntered = true;
+    this.unregisterCancellation = registerDialogCancellation(screen, () => this.close());
   }
 
   async loadFile(filePath: string): Promise<void> {
@@ -152,8 +158,10 @@ export class PreviewPanel {
     if (this.closed) return;
     this.closed = true;
     this.loadGeneration++;
+    this.unregisterCancellation?.();
+    this.unregisterCancellation = null;
     if (this.dialogEntered) {
-      leaveDialog();
+      leaveDialog(this.screen);
       this.dialogEntered = false;
     }
     this.box.destroy();

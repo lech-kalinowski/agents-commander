@@ -1,6 +1,10 @@
 import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
-import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../../utils/dialog-state.js';
 import { bindOverlayResize, screenGeometry, truncateOverlayText } from './geometry.js';
 
 export function showInputDialog(
@@ -11,7 +15,7 @@ export function showInputDialog(
   defaultValue = '',
 ): Promise<string | null> {
   return new Promise((resolve) => {
-    enterDialog();
+    enterDialog(screen);
     const safePrompt = truncateOverlayText(prompt, 300);
     const geometry = screenGeometry(screen, 50, 8);
     const dialog = blessed.box({
@@ -66,21 +70,29 @@ export function showInputDialog(
 
     const unbindResize = bindOverlayResize(screen, dialog, 50, 8);
 
-    const cleanup = () => {
-      leaveDialog();
-      unbindResize();
-      dialog.destroy();
-      screen.render();
+    let resolved = false;
+    let unregisterCancellation = () => {};
+    const finish = (value: string | null) => {
+      if (resolved) return;
+      resolved = true;
+      try {
+        unregisterCancellation();
+        leaveDialog(screen);
+        unbindResize();
+        dialog.destroy();
+        screen.render();
+      } finally {
+        resolve(value);
+      }
     };
+    unregisterCancellation = registerDialogCancellation(screen, () => finish(null));
 
     input.on('submit', (value: string) => {
-      cleanup();
-      resolve(value || null);
+      finish(value || null);
     });
 
     input.on('cancel', () => {
-      cleanup();
-      resolve(null);
+      finish(null);
     });
 
     input.focus();

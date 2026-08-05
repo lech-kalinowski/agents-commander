@@ -183,6 +183,7 @@ function normalizeOrchestration(value: unknown): OrchestrationConfig {
     ackTimeout: asFiniteNumber(input.ackTimeout, defaults.ackTimeout, { min: 100, max: 3600000 }),
     dedupWindow: asFiniteNumber(input.dedupWindow, defaults.dedupWindow, { min: 0, max: 3600000 }),
     maxContentLines: asFiniteNumber(input.maxContentLines, defaults.maxContentLines, { min: 1, max: 100000, integer: true }),
+    maxContentBytes: asFiniteNumber(input.maxContentBytes, defaults.maxContentBytes, { min: 1024, max: 1048576, integer: true }),
   };
 }
 

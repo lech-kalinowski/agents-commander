@@ -7,6 +7,7 @@ import {
   ROUTED_QUEUE_MAX_TASKS_GLOBAL,
   ROUTED_QUEUE_MAX_TASKS_PER_PANEL,
 } from '../../src/orchestration/orchestrator.js';
+import { logger } from '../../src/utils/logger.js';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -16,6 +17,7 @@ function mockTerminalPanel(panelIndex: number, isRunning = true) {
   const panel = {
     panelIndex,
     isRunning,
+    sessionGeneration: 1,
     sendInput: vi.fn((text: string) => inputs.push(text)),
     muteScanner: vi.fn(),
     unmuteScanner: vi.fn(),
@@ -38,6 +40,7 @@ function mockLayout(panels: Record<number, ReturnType<typeof mockTerminalPanel>>
     panelCount: Object.keys(panels).length || 2,
     allPanels: Object.values(panels),
     hasPanel: vi.fn((idx: number) => Object.prototype.hasOwnProperty.call(panels, idx)),
+    getPanel: vi.fn((idx: number) => panels[idx] ?? null),
     getTerminalPanel: vi.fn((idx: number) => panels[idx] ?? null),
     convertToTerminal: vi.fn((idx: number) => panels[idx] ?? null),
     addPanel: vi.fn(async () => true),
@@ -104,6 +107,59 @@ describe('Orchestrator', () => {
 
   // ── SEND routing ────────────────────────────────────────────────
 
+  it('logs routed-message metadata without persisting payload prefixes', () => {
+    const tp0 = mockTerminalPanel(0);
+    const tp1 = mockTerminalPanel(1);
+    const layout = mockLayout({ 0: tp0, 1: tp1 });
+    const agents = mockAgentManager({ 0: 'codex', 1: 'claude' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    orchestrator.connectedPanels = new Set([0, 1]);
+    orchestrator.enqueueTask = vi.fn(() => ({ accepted: true, task: {} }));
+    orchestrator.ledger.openReplyWindow({
+      threadId: 'thr_private',
+      replyToMessageId: 'msg_private',
+      waitingOnSessionId: 'claude-session-1',
+      returnToSessionId: 'codex-session-0',
+      returnToAgentName: 'Codex CLI',
+      returnToAgentType: 'codex',
+    });
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const secrets = {
+      send: 'PRIVATE_SEND_PREFIX',
+      reply: 'PRIVATE_REPLY_PREFIX',
+      broadcast: 'PRIVATE_BROADCAST_PREFIX',
+      status: 'PRIVATE_STATUS_PREFIX',
+      query: 'PRIVATE_QUERY_PREFIX',
+    };
+
+    orchestrator.handleAgentMessage({
+      type: 'send', sourcePanel: 0, sourceAgent: 'Codex CLI',
+      targetAgent: 'claude', targetPanel: 1, content: secrets.send,
+    } satisfies CommanderMessage);
+    orchestrator.handleAgentMessage({
+      type: 'reply', sourcePanel: 1, sourceAgent: 'Claude Code',
+      targetAgent: 'generic', targetPanel: -1, content: secrets.reply,
+    } satisfies CommanderMessage);
+    orchestrator.handleAgentMessage({
+      type: 'broadcast', sourcePanel: 0, sourceAgent: 'Codex CLI',
+      targetAgent: 'generic', targetPanel: -1, content: secrets.broadcast,
+    } satisfies CommanderMessage);
+    orchestrator.handleAgentMessage({
+      type: 'status', sourcePanel: 0, sourceAgent: 'Codex CLI',
+      targetAgent: 'generic', targetPanel: -1, content: secrets.status,
+    } satisfies CommanderMessage);
+    orchestrator.handleAgentMessage({
+      type: 'query', sourcePanel: 0, sourceAgent: 'Codex CLI',
+      targetAgent: 'generic', targetPanel: -1, content: secrets.query,
+    } satisfies CommanderMessage);
+
+    const logged = info.mock.calls.flat().join(' ');
+    expect(info).toHaveBeenCalled();
+    for (const secret of Object.values(secrets)) {
+      expect(logged).not.toContain(secret);
+    }
+  });
+
   it('records the original source agent when routing SEND messages', () => {
     const agents = mockAgentManager({ 0: 'codex', 1: 'claude' });
     const orchestrator = new Orchestrator({} as never, agents as any) as any;
@@ -130,6 +186,15 @@ describe('Orchestrator', () => {
         agentType: 'codex',
       },
       directType: true,
+      allowTargetMutation: false,
+      targetExpectation: {
+        panelIndex: 1,
+        state: 'managed',
+        terminal: null,
+        sessionId: 'claude-session-1',
+        agentType: 'claude',
+        profileId: 'claude',
+      },
       kind: 'send',
       messageId: expect.stringMatching(/^msg_/),
       threadId: expect.stringMatching(/^thr_/),
@@ -217,6 +282,15 @@ describe('Orchestrator', () => {
         agentType: 'codex',
       },
       directType: true,
+      allowTargetMutation: false,
+      targetExpectation: {
+        panelIndex: 0,
+        state: 'managed',
+        terminal: null,
+        sessionId: 'claude-session-0',
+        agentType: 'claude',
+        profileId: 'claude',
+      },
       kind: 'reply',
       messageId: expect.stringMatching(/^msg_/),
       threadId: 'thr_existing',
@@ -673,6 +747,115 @@ describe('Orchestrator', () => {
     expect(orchestrator.protocolInjected.has(0)).toBe(false);
   });
 
+  it('keeps parsed protocol output inert until Ctrl+P injection arms the exact session', async () => {
+    const tp = mockTerminalPanel(0);
+    const layout = mockLayout({ 0: tp });
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    orchestrator.delay = vi.fn(async () => undefined);
+    orchestrator.sendTextToAgent = vi.fn(async () => true);
+    orchestrator.submitInput = vi.fn(async () => true);
+    orchestrator.connectPanel(tp);
+
+    const query = (capability?: string): CommanderMessage => ({
+      type: 'query',
+      sourcePanel: 0,
+      sourceAgent: 'Codex CLI',
+      targetAgent: 'generic',
+      targetPanel: -1,
+      content: 'ping',
+      ...(capability ? { capability } : {}),
+    });
+
+    tp.onCommanderMessage(query());
+    tp.onCommanderMessage(query('b'.repeat(43)));
+    expect(tp.sendInput).not.toHaveBeenCalled();
+
+    await expect(orchestrator.injectProtocol(tp)).resolves.toBe(true);
+    const capability = orchestrator.protocolCapabilities.get('codex-session-0');
+    expect(capability).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+    tp.onCommanderMessage(query('b'.repeat(43)));
+    expect(tp.sendInput).not.toHaveBeenCalled();
+    tp.onCommanderMessage(query(capability));
+    expect(tp.sendInput).toHaveBeenCalledWith(expect.stringContaining('[Commander] PONG'));
+  });
+
+  it('rotates protocol capability after a managed-session restart', async () => {
+    const tp = mockTerminalPanel(0);
+    const layout = mockLayout({ 0: tp });
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    orchestrator.delay = vi.fn(async () => undefined);
+    orchestrator.sendTextToAgent = vi.fn(async () => true);
+    orchestrator.submitInput = vi.fn(async () => true);
+    orchestrator.connectPanel(tp);
+
+    await orchestrator.injectProtocol(tp);
+    const oldCapability = orchestrator.protocolCapabilities.get('codex-session-0');
+    agents._sessionIds[0] = 'codex-session-0-restarted';
+    orchestrator.handleAgentLifecycle({
+      type: 'restarted',
+      panelIndex: 0,
+      sessionId: 'codex-session-0-restarted',
+      previousSessionId: 'codex-session-0',
+      agentType: 'codex',
+      agentName: 'Codex CLI',
+      profileId: 'codex',
+      profileLabel: 'Codex CLI',
+    });
+    expect(orchestrator.protocolCapabilities.has('codex-session-0')).toBe(false);
+
+    await orchestrator.injectProtocol(tp);
+    const newCapability = orchestrator.protocolCapabilities.get('codex-session-0-restarted');
+    expect(newCapability).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(newCapability).not.toBe(oldCapability);
+  });
+
+  it('binds legacy markers only through the armed template workflow', async () => {
+    const tp = mockTerminalPanel(0);
+    const layout = mockLayout({ 0: tp });
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    const template = '===COMMANDER:QUERY===\nagents\n===COMMANDER:END===';
+
+    expect(orchestrator.prepareTemplateTask(0, template)).toEqual({
+      success: false,
+      error: expect.stringContaining('press Ctrl+P'),
+    });
+    expect(orchestrator.prepareTemplateTask(0, 'Explain COMMANDER:QUERY in prose.')).toEqual({
+      success: true,
+      content: 'Explain COMMANDER:QUERY in prose.',
+      bindProtocolCapability: false,
+    });
+
+    orchestrator.delay = vi.fn(async () => undefined);
+    orchestrator.sendTextToAgent = vi.fn(async () => true);
+    orchestrator.submitInput = vi.fn(async () => true);
+    await orchestrator.injectProtocol(tp);
+    const prepared = orchestrator.prepareTemplateTask(0, template, true);
+    expect(prepared).toEqual({
+      success: true,
+      content: template,
+      bindProtocolCapability: true,
+    });
+    if (!prepared.success) throw new Error(prepared.error);
+
+    const firstCapability = orchestrator.protocolCapabilities.get('codex-session-0');
+    await orchestrator.injectProtocol(tp);
+    const deliveryCapability = orchestrator.protocolCapabilities.get('codex-session-0');
+    expect(deliveryCapability).not.toBe(firstCapability);
+
+    await expect(orchestrator.sendTemplateTask('codex', 0, prepared)).resolves.toEqual({
+      success: true,
+    });
+    expect(orchestrator.sendTextToAgent).toHaveBeenLastCalledWith(
+      tp,
+      `===COMMANDER:QUERY:${deliveryCapability}===\nagents\n===COMMANDER:END:${deliveryCapability}===`,
+      expect.any(Function),
+    );
+  });
+
   // ── Task queue ──────────────────────────────────────────────────
 
   it('bounds retained tasks per panel and rejects overflow deterministically', () => {
@@ -811,6 +994,298 @@ describe('Orchestrator', () => {
     expect(orchestrator.retainedTaskCount).toBe(ROUTED_QUEUE_MAX_TASKS_PER_PANEL);
   });
 
+  it('never converts, launches, or replaces a mismatched automatic protocol target', async () => {
+    const panel = mockTerminalPanel(0, true);
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager({ 0: 'claude' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+
+    await expect(
+      orchestrator.executeTask('codex', 0, 'automatic route', undefined, undefined, false),
+    ).resolves.toEqual({
+      success: false,
+      error: 'Protocol routing refused to replace claude in Panel 1 with codex',
+    });
+
+    expect(layout.convertToTerminal).not.toHaveBeenCalled();
+    expect(agents.killAgent).not.toHaveBeenCalled();
+    expect(agents.launchAgent).not.toHaveBeenCalled();
+    expect(panel.killAgent).not.toHaveBeenCalled();
+    expect(panel.sendInput).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty automatic protocol target instead of launching into it', async () => {
+    const layout = mockLayout();
+    layout.hasPanel.mockReturnValue(true);
+    const agents = mockAgentManager();
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+
+    await expect(
+      orchestrator.executeTask('codex', 0, 'automatic route', undefined, undefined, false),
+    ).resolves.toEqual({
+      success: false,
+      error: 'Protocol routing requires Panel 1 to already run codex',
+    });
+
+    expect(layout.convertToTerminal).not.toHaveBeenCalled();
+    expect(agents.launchAgent).not.toHaveBeenCalled();
+  });
+
+  it('drops a queued SEND when the resolved target restarts as the same agent profile', async () => {
+    const sourcePanel = mockTerminalPanel(0);
+    const targetPanel = mockTerminalPanel(1);
+    const layout = mockLayout({ 0: sourcePanel, 1: targetPanel });
+    const agents = mockAgentManager({ 0: 'codex', 1: 'claude' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    const queueState = {
+      tasks: [],
+      processing: true,
+      currentTask: null,
+      detachedReason: null,
+    };
+    orchestrator.panelQueues.set(1, queueState);
+
+    orchestrator.handleAgentMessage({
+      type: 'send',
+      sourcePanel: 0,
+      sourceAgent: 'Codex CLI',
+      targetAgent: 'claude',
+      targetPanel: 1,
+      content: 'Review this exact generation',
+    } satisfies CommanderMessage);
+
+    expect(queueState.tasks).toHaveLength(1);
+    expect(queueState.tasks[0].targetExpectation).toMatchObject({
+      state: 'managed',
+      sessionId: 'claude-session-1',
+      profileId: 'claude',
+    });
+    agents._sessionIds[1] = 'claude-session-1-restarted';
+    queueState.processing = false;
+    await orchestrator.processQueue(queueState);
+
+    expect(targetPanel.sendInput).not.toHaveBeenCalled();
+    expect(orchestrator.getRecentActivity(1)[0]).toMatchObject({
+      kind: 'send',
+      status: 'failed',
+      error: 'Panel 2 session changed after the task was authorized',
+    });
+    expect(orchestrator.ledger.claimReplyWindow('claude-session-1-restarted')).toBeNull();
+  });
+
+  it('drops queued REPLY and BROADCAST deliveries after same-profile target restarts', async () => {
+    const sourcePanel = mockTerminalPanel(0);
+    const replySourcePanel = mockTerminalPanel(1);
+    const layout = mockLayout({ 0: sourcePanel, 1: replySourcePanel });
+    const agents = mockAgentManager({ 0: 'claude', 1: 'codex' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    orchestrator.connectedPanels = new Set([0, 1]);
+    const targetQueue = {
+      tasks: [],
+      processing: true,
+      currentTask: null,
+      detachedReason: null,
+    };
+    orchestrator.panelQueues.set(0, targetQueue);
+    orchestrator.ledger.openReplyWindow({
+      threadId: 'thr_generation',
+      replyToMessageId: 'msg_generation',
+      waitingOnSessionId: 'codex-session-1',
+      returnToSessionId: 'claude-session-0',
+      returnToAgentName: 'Claude Code',
+      returnToAgentType: 'claude',
+    });
+
+    orchestrator.handleAgentMessage({
+      type: 'reply',
+      sourcePanel: 1,
+      sourceAgent: 'Codex CLI',
+      targetAgent: 'generic',
+      targetPanel: -1,
+      content: 'Reply only to the original Claude session',
+    } satisfies CommanderMessage);
+    agents._sessionIds[0] = 'claude-session-0-restarted';
+    targetQueue.processing = false;
+    await orchestrator.processQueue(targetQueue);
+
+    expect(sourcePanel.sendInput).not.toHaveBeenCalled();
+    expect(orchestrator.getRecentActivity(1)[0]).toMatchObject({
+      kind: 'reply',
+      status: 'failed',
+      error: 'Panel 1 session changed after the task was authorized',
+    });
+
+    const broadcastQueue = {
+      tasks: [],
+      processing: true,
+      currentTask: null,
+      detachedReason: null,
+    };
+    orchestrator.panelQueues.set(1, broadcastQueue);
+    orchestrator.handleAgentMessage({
+      type: 'broadcast',
+      sourcePanel: 0,
+      sourceAgent: 'Claude Code',
+      targetAgent: 'generic',
+      targetPanel: -1,
+      content: 'Broadcast only to the resolved Codex generation',
+    } satisfies CommanderMessage);
+    agents._sessionIds[1] = 'codex-session-1-restarted';
+    broadcastQueue.processing = false;
+    await orchestrator.processQueue(broadcastQueue);
+
+    expect(replySourcePanel.sendInput.mock.calls.flat().join('')).not.toContain(
+      'Broadcast only to the resolved Codex generation',
+    );
+    expect(orchestrator.getRecentActivity(1)[0]).toMatchObject({
+      kind: 'broadcast',
+      status: 'failed',
+      error: 'Panel 2 session changed after the task was authorized',
+    });
+  });
+
+  it('does not apply queued replacement consent to a new same-panel session', async () => {
+    const panel = mockTerminalPanel(0, true);
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager({ 0: 'claude' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    const targetExpectation = orchestrator.captureTaskTarget(0);
+    const queueState = {
+      tasks: [],
+      processing: true,
+      currentTask: null,
+      detachedReason: null,
+    };
+    orchestrator.panelQueues.set(0, queueState);
+
+    const delivery = orchestrator.sendTask(
+      'codex',
+      0,
+      'Replace the session I confirmed',
+      undefined,
+      targetExpectation,
+    );
+    agents._sessionIds[0] = 'claude-session-0-new-arrival';
+    queueState.processing = false;
+    await orchestrator.processQueue(queueState);
+
+    await expect(delivery).resolves.toEqual({
+      success: false,
+      error: 'Panel 1 session changed after the task was authorized',
+    });
+    expect(agents.killAgent).not.toHaveBeenCalled();
+    expect(agents.launchAgent).not.toHaveBeenCalled();
+    expect(panel.sendInput).not.toHaveBeenCalled();
+  });
+
+  it('launches into a confirmed idle panel only while it remains idle', async () => {
+    const panel = mockTerminalPanel(0, false);
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager();
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    const targetExpectation = orchestrator.captureTaskTarget(0);
+    const queueState = {
+      tasks: [],
+      processing: true,
+      currentTask: null,
+      detachedReason: null,
+    };
+    orchestrator.panelQueues.set(0, queueState);
+
+    const delivery = orchestrator.sendTask(
+      'codex',
+      0,
+      'Use the panel that was empty',
+      undefined,
+      targetExpectation,
+    );
+    panel.isRunning = true;
+    agents._agentTypes[0] = 'claude';
+    agents._profileIds[0] = 'claude';
+    agents._sessionIds[0] = 'claude-session-0-new-arrival';
+    queueState.processing = false;
+    await orchestrator.processQueue(queueState);
+
+    await expect(delivery).resolves.toEqual({
+      success: false,
+      error: 'Panel 1 session changed after the task was authorized',
+    });
+    expect(agents.killAgent).not.toHaveBeenCalled();
+    expect(agents.launchAgent).not.toHaveBeenCalled();
+    expect(panel.sendInput).not.toHaveBeenCalled();
+  });
+
+  it('does not apply unmanaged-session consent after the same label is relaunched', async () => {
+    const panel = mockTerminalPanel(0, true);
+    Object.assign(panel, { sessionName: 'shell' });
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager();
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    const targetExpectation = orchestrator.captureTaskTarget(0);
+    const queueState = {
+      tasks: [],
+      processing: true,
+      currentTask: null,
+      detachedReason: null,
+    };
+    orchestrator.panelQueues.set(0, queueState);
+
+    const delivery = orchestrator.sendTask(
+      'codex',
+      0,
+      'Replace the shell generation I confirmed',
+      undefined,
+      targetExpectation,
+    );
+    panel.sessionGeneration += 1;
+    queueState.processing = false;
+    await orchestrator.processQueue(queueState);
+
+    await expect(delivery).resolves.toEqual({
+      success: false,
+      error: 'Panel 1 session changed after the task was authorized',
+    });
+    expect(panel.killAgent).not.toHaveBeenCalled();
+    expect(agents.launchAgent).not.toHaveBeenCalled();
+    expect(panel.sendInput).not.toHaveBeenCalled();
+  });
+
+  it('does not apply idle-panel consent to a replacement panel with the same stable ID', async () => {
+    const originalPanel = mockTerminalPanel(0, false);
+    const panels = { 0: originalPanel } as Record<number, ReturnType<typeof mockTerminalPanel>>;
+    const layout = mockLayout(panels);
+    const agents = mockAgentManager();
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    const targetExpectation = orchestrator.captureTaskTarget(0);
+    const queueState = {
+      tasks: [],
+      processing: true,
+      currentTask: null,
+      detachedReason: null,
+    };
+    orchestrator.panelQueues.set(0, queueState);
+
+    const delivery = orchestrator.sendTask(
+      'codex',
+      0,
+      'Use only the panel object I confirmed',
+      undefined,
+      targetExpectation,
+    );
+    const replacementPanel = mockTerminalPanel(0, false);
+    panels[0] = replacementPanel;
+    queueState.processing = false;
+    await orchestrator.processQueue(queueState);
+
+    await expect(delivery).resolves.toEqual({
+      success: false,
+      error: 'Panel 1 session changed after the task was authorized',
+    });
+    expect(replacementPanel.killAgent).not.toHaveBeenCalled();
+    expect(agents.launchAgent).not.toHaveBeenCalled();
+    expect(replacementPanel.sendInput).not.toHaveBeenCalled();
+  });
+
   it('awaits managed process termination before launching its replacement', async () => {
     const panel = mockTerminalPanel(0, true);
     const layout = mockLayout({ 0: panel });
@@ -823,6 +1298,7 @@ describe('Orchestrator', () => {
       delete agents._agentTypes[0];
       delete agents._profileIds[0];
       delete agents._sessionIds[0];
+      panel.isRunning = false;
       return termination;
     });
     const orchestrator = new Orchestrator(layout as any, agents as any) as any;
@@ -854,6 +1330,7 @@ describe('Orchestrator', () => {
       delete agents._agentTypes[0];
       delete agents._profileIds[0];
       delete agents._sessionIds[0];
+      panel.isRunning = false;
       return termination;
     });
     const orchestrator = new Orchestrator(layout as any, agents as any) as any;
@@ -884,6 +1361,7 @@ describe('Orchestrator', () => {
       delete agents._agentTypes[0];
       delete agents._profileIds[0];
       delete agents._sessionIds[0];
+      panel.isRunning = false;
       return termination;
     });
     const orchestrator = new Orchestrator(layout as any, agents as any) as any;
@@ -893,6 +1371,7 @@ describe('Orchestrator', () => {
     agents._agentTypes[0] = 'gemini';
     agents._profileIds[0] = 'gemini';
     agents._sessionIds[0] = 'gemini-user-replacement';
+    panel.isRunning = true;
     releaseTermination();
 
     await expect(execution).resolves.toEqual({
@@ -900,6 +1379,49 @@ describe('Orchestrator', () => {
       error: 'Panel 1 managed session changed before delivery',
     });
     expect(agents.launchAgent).not.toHaveBeenCalled();
+    expect(panel.sendInput).not.toHaveBeenCalled();
+    expect(layout.setActivePanel).not.toHaveBeenCalled();
+  });
+
+  it('does not replace a raw session that starts while authorized termination is pending', async () => {
+    const panel = mockTerminalPanel(0, true);
+    Object.assign(panel, { sessionName: 'Claude Code' });
+    const layout = mockLayout({ 0: panel });
+    const agents = mockAgentManager({ 0: 'claude' });
+    let releaseTermination!: () => void;
+    const termination = new Promise<void>((resolve) => {
+      releaseTermination = resolve;
+    });
+    agents.killAgent.mockImplementation(() => {
+      delete agents._agentTypes[0];
+      delete agents._profileIds[0];
+      delete agents._sessionIds[0];
+      panel.isRunning = false;
+      return termination;
+    });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    const targetExpectation = orchestrator.captureTaskTarget(0);
+
+    const delivery = orchestrator.sendTask(
+      'codex',
+      0,
+      'Replace only the session I authorized',
+      undefined,
+      targetExpectation,
+    );
+    await vi.waitFor(() => expect(agents.killAgent).toHaveBeenCalledWith(0));
+
+    panel.isRunning = true;
+    panel.sessionName = 'shell';
+    panel.sessionGeneration += 1;
+    releaseTermination();
+
+    await expect(delivery).resolves.toEqual({
+      success: false,
+      error: 'Panel 1 managed session changed before delivery',
+    });
+    expect(agents.launchAgent).not.toHaveBeenCalled();
+    expect(panel.killAgent).not.toHaveBeenCalled();
     expect(panel.sendInput).not.toHaveBeenCalled();
     expect(layout.setActivePanel).not.toHaveBeenCalled();
   });
@@ -1331,6 +1853,52 @@ describe('Orchestrator', () => {
 
   // ── executeTask delivery path ──────────────────────────────────
 
+  it('serializes future approval input behind an in-flight task delivery', async () => {
+    const tp = mockTerminalPanel(0);
+    const layout = mockLayout({ 0: tp });
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    let releaseTask!: () => void;
+    const taskPaused = new Promise<void>((resolve) => { releaseTask = resolve; });
+    orchestrator.sendTextToAgent = vi.fn(async () => {
+      await taskPaused;
+      return true;
+    });
+    orchestrator.submitInput = vi.fn(async () => true);
+
+    const taskDelivery = orchestrator.executeTask('codex', 0, 'long task');
+    await Promise.resolve();
+    expect(orchestrator.sendTextToAgent).toHaveBeenCalled();
+
+    const approvalDelivery = orchestrator.sendProgrammaticInput(tp, 'approve', true);
+    expect(tp.sendInput).not.toHaveBeenCalled();
+
+    releaseTask();
+    await expect(taskDelivery).resolves.toEqual({ success: true });
+    await expect(approvalDelivery).resolves.toBeTruthy();
+    expect(tp.sendInput).toHaveBeenCalledTimes(1);
+    expect(tp.sendInput).toHaveBeenCalledWith('approve\r');
+  });
+
+  it('rejects unsafe terminal controls before mutating a target or writing paste bytes', async () => {
+    const tp = mockTerminalPanel(0);
+    const layout = mockLayout({ 0: tp });
+    const agents = mockAgentManager({ 0: 'claude' });
+    const orchestrator = new Orchestrator(layout as any, agents as any) as any;
+    const malicious = 'safe\x1b[201~\rapprove';
+
+    await expect(orchestrator.executeTask('codex', 0, malicious)).resolves.toEqual({
+      success: false,
+      error: 'Payload contains unsafe terminal control U+001B',
+    });
+    expect(layout.convertToTerminal).not.toHaveBeenCalled();
+    expect(agents.killAgent).not.toHaveBeenCalled();
+    expect(tp.sendInput).not.toHaveBeenCalled();
+
+    await expect(orchestrator.sendTextToAgent(tp, malicious)).resolves.toBe(false);
+    expect(tp.sendInput).not.toHaveBeenCalled();
+  });
+
   it('types short Claude tasks directly and submits them after a short delay', async () => {
     const tp = mockTerminalPanel(0);
     const layout = mockLayout({ 0: tp });
@@ -1415,6 +1983,19 @@ describe('Orchestrator', () => {
     expect(tp.sendInput.mock.calls[2][0]).toBe('\x1b[201~');
   });
 
+  it('normalizes CRLF payloads before opening bracketed paste', async () => {
+    const tp = mockTerminalPanel(0);
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator({} as never, agents as any) as any;
+
+    await expect(orchestrator.sendTextToAgent(tp, 'first\r\nsecond')).resolves.toBeTruthy();
+    expect(tp.sendInput.mock.calls.map(([input]) => input)).toEqual([
+      '\x1b[200~',
+      'first\nsecond',
+      '\x1b[201~',
+    ]);
+  });
+
   it('chunks large text to avoid PTY buffer overflow', async () => {
     vi.useFakeTimers();
 
@@ -1434,6 +2015,28 @@ describe('Orchestrator', () => {
     expect(tp.sendInput.mock.calls[2][0]).toHaveLength(1024);
     expect(tp.sendInput.mock.calls[3][0]).toHaveLength(952);
     expect(tp.sendInput.mock.calls[4][0]).toBe('\x1b[201~');
+  });
+
+  it('chunks by UTF-8 bytes without splitting Unicode code points', async () => {
+    vi.useFakeTimers();
+
+    const tp = mockTerminalPanel(0);
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator({} as never, agents as any) as any;
+    const text = `${'x'.repeat(1023)}🙂${'界'.repeat(400)}`;
+
+    const delivery = orchestrator.sendTextToAgent(tp, text);
+    await vi.runAllTimersAsync();
+    await expect(delivery).resolves.toBeTruthy();
+
+    const chunks = tp.sendInput.mock.calls
+      .slice(1, -1)
+      .map(([input]) => input as string);
+    expect(chunks.join('')).toBe(text);
+    expect(chunks.every((chunk) => Buffer.byteLength(chunk, 'utf8') <= 1024)).toBe(true);
+    expect(chunks.every((chunk) => !chunk.includes('\uFFFD'))).toBe(true);
+    expect(chunks[0]).toBe('x'.repeat(1023));
+    expect(chunks[1].startsWith('🙂')).toBe(true);
   });
 
   it('stops chunking when its target becomes invalid during a pacing delay', async () => {

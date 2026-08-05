@@ -7,6 +7,12 @@ export interface FileEntry {
   modified: Date;
   permissions: string;
   extension: string;
+  /** Identity of the directory entry itself (lstat), used for safe destructive actions. */
+  deviceId?: string;
+  inode?: string;
+  identityMode?: number;
+  /** Exact status-change generation captured from bigint lstat. */
+  ctimeNs?: string;
 }
 
 export type SortField = 'name' | 'size' | 'date' | 'ext';

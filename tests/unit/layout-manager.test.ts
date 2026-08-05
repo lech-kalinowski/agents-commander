@@ -123,6 +123,14 @@ function createLayout(width = 80, height = 24) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe('LayoutManager responsive workspace', () => {
   beforeEach(() => {
     panelMocks.filePanels.length = 0;
@@ -257,6 +265,31 @@ describe('LayoutManager responsive workspace', () => {
     expect(layout.workspacePanelIds).not.toContain(50);
     expect(layout.workspacePanelIds.at(-1)).toBe(100);
     expect(layout.panelCount).toBe(100);
+  });
+
+  it('reloads a hidden panel after an in-flight refresh is invalidated', async () => {
+    const { layout } = createLayout();
+    await layout.initialize('/repo', 3, 2);
+    const panel0 = panelMocks.filePanels[0];
+    const staleLoad = deferred<boolean>();
+    panel0.loadDirectory.mockImplementationOnce(() => staleLoad.promise);
+
+    const firstRefresh = layout.refreshAll();
+    expect(panel0.loadDirectory).toHaveBeenCalledTimes(2);
+
+    layout.setActivePanel(2);
+    await layout.refreshAll();
+    expect(layout.visiblePanelIds).toEqual([2]);
+    expect(panel0.loadDirectory).toHaveBeenCalledTimes(2);
+
+    staleLoad.resolve(true);
+    await firstRefresh;
+    expect(panel0.loadDirectory).toHaveBeenCalledTimes(2);
+
+    layout.setActivePanel(0);
+    await vi.waitFor(() => {
+      expect(panel0.loadDirectory).toHaveBeenCalledTimes(3);
+    });
   });
 
   it('prepares hidden P100 with readable launch geometry without changing the active page', async () => {

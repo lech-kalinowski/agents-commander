@@ -1,6 +1,10 @@
 import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
-import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../../utils/dialog-state.js';
 import { bindOverlayResize, screenGeometry, truncateOverlayText } from './geometry.js';
 
 export function showConfirmDialog(
@@ -10,7 +14,7 @@ export function showConfirmDialog(
   message: string,
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    enterDialog();
+    enterDialog(screen);
 
     const safeMessage = truncateOverlayText(message, 500);
     const preferredWidth = Math.max(44, Math.min(72, safeMessage.length + 6));
@@ -103,15 +107,21 @@ export function showConfirmDialog(
     renderButtons();
 
     let resolved = false;
+    let unregisterCancellation = () => {};
     const finish = (result: boolean) => {
       if (resolved) return;
       resolved = true;
-      leaveDialog();
-      unbindResize();
-      dialog.destroy();
-      screen.render();
-      resolve(result);
+      try {
+        unregisterCancellation();
+        leaveDialog(screen);
+        unbindResize();
+        dialog.destroy();
+        screen.render();
+      } finally {
+        resolve(result);
+      }
     };
+    unregisterCancellation = registerDialogCancellation(screen, () => finish(false));
 
     dialog.key(['left', 'right', 'tab'], () => {
       selected = !selected;

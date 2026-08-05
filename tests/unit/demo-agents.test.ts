@@ -57,6 +57,26 @@ describe('demo agent launch specs', () => {
     expect(spec.name).toBe('Demo Reviewer');
   });
 
+  it('passes a validated protocol capability to the bundled role', () => {
+    const capability = 'a'.repeat(43);
+    const spec = createDemoAgentLaunchSpec('coordinator', {
+      mode: 'source',
+      sourceRoot: process.cwd(),
+    }, capability);
+
+    expect(spec.args).toEqual([
+      path.resolve('src/demo/demo-agent.js'),
+      '--role',
+      'coordinator',
+      '--protocol-capability',
+      capability,
+    ]);
+    expect(() => createDemoAgentLaunchSpec('coordinator', {
+      mode: 'source',
+      sourceRoot: process.cwd(),
+    }, 'too-short')).toThrow('protocol capability is invalid');
+  });
+
   it('fails closed when the bundled demo asset is unavailable', () => {
     expect(() => createDemoAgentLaunchSpec('coordinator', {
       mode: 'installed',

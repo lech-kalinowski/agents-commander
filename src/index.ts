@@ -22,7 +22,12 @@ export {
   DEMO_WORKSPACE_FILES,
 } from './demo/demo-workspace.js';
 export { Orchestrator } from './orchestration/orchestrator.js';
-export { ProtocolScanner, buildProtocolInstructions } from './orchestration/protocol.js';
+export {
+  ProtocolScanner,
+  buildProtocolInstructions,
+  generateProtocolCapability,
+  isProtocolCapability,
+} from './orchestration/protocol.js';
 export {
   MAX_ACTIVE_PANELS,
   MAX_PANEL_ID,

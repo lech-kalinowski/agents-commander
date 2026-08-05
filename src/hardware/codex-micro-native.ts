@@ -14,6 +14,7 @@ export type CodexMicroTransport = 'usb' | 'bluetooth' | 'unknown';
 export type CodexMicroConnectionState =
   | 'starting'
   | 'connected'
+  | 'busy'
   | 'disconnected'
   | 'permission-denied'
   | 'unavailable'
@@ -23,6 +24,8 @@ export interface CodexMicroDeviceStatus {
   state: CodexMicroConnectionState;
   transport: CodexMicroTransport;
   connectionEpoch: string | null;
+  /** The helper continuously verifies that no competing HID event reader is active. */
+  ownership?: 'guarded';
   firmware?: string;
   battery?: number;
   charging?: boolean;
@@ -96,6 +99,7 @@ function sameStatus(left: CodexMicroDeviceStatus, right: CodexMicroDeviceStatus)
   return left.state === right.state
     && left.transport === right.transport
     && left.connectionEpoch === right.connectionEpoch
+    && left.ownership === right.ownership
     && left.firmware === right.firmware
     && left.battery === right.battery
     && left.charging === right.charging
@@ -374,6 +378,18 @@ export class CodexMicroNativeBridge {
     const state = record.state;
     if (state === 'connected') {
       this.clearStartupTimer();
+      if (record.ownership !== 'guarded') {
+        this.pressedInputs.clear();
+        this.joystickArmed = true;
+        this.lastWideActionAt = Number.NEGATIVE_INFINITY;
+        this.setStatus({
+          state: 'error',
+          transport: normalizeTransport(record.transport),
+          connectionEpoch: null,
+          detail: 'Native helper did not confirm the sole-reader guard',
+        });
+        return;
+      }
       this.restartDelayMs = MIN_RESTART_DELAY_MS;
       const transport = normalizeTransport(record.transport);
       const epoch = this.currentStatus.state === 'connected'
@@ -387,6 +403,7 @@ export class CodexMicroNativeBridge {
         state: 'connected',
         transport,
         connectionEpoch: epoch,
+        ownership: 'guarded',
         firmware: safeFirmware(record.firmware),
         battery: finiteBattery(record.battery),
         charging: typeof record.charging === 'boolean' ? record.charging : undefined,
@@ -396,6 +413,7 @@ export class CodexMicroNativeBridge {
 
     if (
       state === 'disconnected'
+      || state === 'busy'
       || state === 'permission-denied'
       || state === 'unavailable'
       || state === 'error'
@@ -415,7 +433,11 @@ export class CodexMicroNativeBridge {
   }
 
   private handleInputMessage(record: Record<string, unknown>): void {
-    if (this.currentStatus.state !== 'connected' || !this.currentStatus.connectionEpoch) return;
+    if (
+      this.currentStatus.state !== 'connected'
+      || this.currentStatus.ownership !== 'guarded'
+      || !this.currentStatus.connectionEpoch
+    ) return;
     if (typeof record.input !== 'string' || !isCodexMicroNativeInput(record.input)) return;
     const input = record.input;
     const act = record.act;
@@ -440,7 +462,7 @@ export class CodexMicroNativeBridge {
   }
 
   private handleJoystickMessage(record: Record<string, unknown>): void {
-    if (this.currentStatus.state !== 'connected') return;
+    if (this.currentStatus.state !== 'connected' || this.currentStatus.ownership !== 'guarded') return;
     const angle = record.angle;
     const distance = record.distance;
     if (
@@ -467,7 +489,11 @@ export class CodexMicroNativeBridge {
 
   private emitInput(input: CodexMicroNativeInput): void {
     const connectionEpoch = this.currentStatus.connectionEpoch;
-    if (this.currentStatus.state !== 'connected' || !connectionEpoch) return;
+    if (
+      this.currentStatus.state !== 'connected'
+      || this.currentStatus.ownership !== 'guarded'
+      || !connectionEpoch
+    ) return;
     const event: CodexMicroHardwareEvent = {
       source: 'native',
       input,

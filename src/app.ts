@@ -134,6 +134,7 @@ export class App {
     connectionEpoch: null,
   };
   private pendingCodexMicroDecision: PendingCodexMicroDecision | null = null;
+  private codexMicroKeyboardWarningShown = false;
   private unsubscribeCodexMicroStatus: (() => void) | null = null;
   private unsubscribeCodexMicroInput: (() => void) | null = null;
   private unsubscribeAgentLifecycle: (() => void) | null = null;
@@ -281,6 +282,7 @@ export class App {
     if (!this.launch.skipWelcome) {
       await showWelcomeDialog(this.screen, this.theme);
     }
+    this.warnCodexMicroKeyboardFallback();
     if (!this.disposalStarted && this.launch.demo) {
       await this.offerOfflineDemo();
     }
@@ -330,6 +332,21 @@ export class App {
     bridge.start();
   }
 
+  private warnCodexMicroKeyboardFallback(): void {
+    const micro = this.config.hardware.codexMicro;
+    if (
+      this.codexMicroKeyboardWarningShown
+      || this.disposalStarted
+      || !micro.enabled
+      || micro.inputMode !== 'keyboard'
+    ) return;
+    this.codexMicroKeyboardWarningShown = true;
+    showErrorToast(
+      this.screen,
+      'Codex Micro keyboard fallback has NO reader guard; keep ChatGPT fully quit',
+    );
+  }
+
   private handleCodexMicroStatus(status: CodexMicroDeviceStatus): void {
     const previous = this.codexMicroStatus;
     this.codexMicroStatus = status;
@@ -340,6 +357,7 @@ export class App {
       pending
       && (
         status.state !== 'connected'
+        || status.ownership !== 'guarded'
         || status.connectionEpoch !== pending.event.connectionEpoch
       )
     ) {
@@ -348,9 +366,23 @@ export class App {
       this.pendingCodexMicroDecision = null;
     }
 
-    if (!this.disposalStarted && previous.state !== 'connected' && status.state === 'connected') {
+    if (
+      !this.disposalStarted
+      && status.state === 'busy'
+      && previous.state !== 'busy'
+    ) {
+      showErrorToast(
+        this.screen,
+        'Codex Micro is open in ChatGPT or another app; Commander controls are paused',
+      );
+    } else if (
+      !this.disposalStarted
+      && previous.state !== 'connected'
+      && status.state === 'connected'
+      && status.ownership === 'guarded'
+    ) {
       const transport = status.transport === 'unknown' ? '' : ` (${status.transport.toUpperCase()})`;
-      showToast(this.screen, `Codex Micro connected${transport}`, 2000);
+      showToast(this.screen, `Codex Micro ready for Commander${transport}`, 2000);
     } else if (
       !this.disposalStarted
       && previous.state === 'connected'
@@ -365,6 +397,7 @@ export class App {
   private isCurrentCodexMicroEvent(event: CodexMicroHardwareEvent): boolean {
     const now = Date.now();
     return this.codexMicroStatus.state === 'connected'
+      && this.codexMicroStatus.ownership === 'guarded'
       && this.codexMicroStatus.connectionEpoch === event.connectionEpoch
       && event.receivedAt <= now + CODEX_MICRO_CLOCK_SKEW_MS
       && now - event.receivedAt <= CODEX_MICRO_DECISION_LEASE_MS;
@@ -389,7 +422,9 @@ export class App {
       }
       if (
         pending.action === event.action
+        && pending.event.input === event.input
         && pending.event.connectionEpoch === event.connectionEpoch
+        && event.sequence > pending.event.sequence
         && (event.action === 'approve' || event.action === 'reject')
       ) {
         pending.event = event;
@@ -451,6 +486,20 @@ export class App {
     action: CodexDecisionAction,
     hardwareEvent?: CodexMicroHardwareEvent,
   ): Promise<void> {
+    if (this.config.hardware.codexMicro.inputMode !== 'native') {
+      showErrorToast(
+        this.screen,
+        'Codex Micro decisions require native input with the sole-reader guard',
+      );
+      return;
+    }
+    if (
+      this.codexMicroStatus.state !== 'connected'
+      || this.codexMicroStatus.ownership !== 'guarded'
+    ) {
+      showErrorToast(this.screen, 'Codex Micro sole-reader guard is not active; no input was sent');
+      return;
+    }
     if (!this.config.hardware?.codexMicro.decisionControls) {
       showErrorToast(this.screen, 'Codex Micro decision controls are disabled in configuration');
       return;
@@ -495,6 +544,7 @@ export class App {
       decision.timeout.unref?.();
       try {
         confirmed = await showConfirmDialog(this.screen, this.theme, title, message, {
+          externalConfirmOnly: true,
           onReady: (controller) => {
             if (this.pendingCodexMicroDecision === pending) pending!.controller = controller;
           },
@@ -508,6 +558,14 @@ export class App {
       confirmed = await showConfirmDialog(this.screen, this.theme, title, message);
     }
     if (!confirmed || this.disposalStarted) return;
+
+    if (
+      this.codexMicroStatus.state !== 'connected'
+      || this.codexMicroStatus.ownership !== 'guarded'
+    ) {
+      showErrorToast(this.screen, 'Codex Micro sole-reader guard changed; no input was sent');
+      return;
+    }
 
     const confirmedHardwareEvent = pending?.event;
     if (
@@ -1766,15 +1824,20 @@ export class App {
     let microLabel = '';
     if (microEnabled) {
       if (this.config.hardware.codexMicro.inputMode === 'keyboard') {
-        microLabel = 'MICRO:KEYS';
+        microLabel = 'MICRO:KEYS/NO-GUARD';
       } else if (!this.codexMicroStatus) {
         microLabel = 'MICRO';
-      } else if (this.codexMicroStatus.state === 'connected') {
+      } else if (
+        this.codexMicroStatus.state === 'connected'
+        && this.codexMicroStatus.ownership === 'guarded'
+      ) {
         microLabel = this.codexMicroStatus.transport === 'usb'
-          ? 'MICRO:USB'
+          ? 'MICRO:USB/GUARD'
           : this.codexMicroStatus.transport === 'bluetooth'
-            ? 'MICRO:BT'
-            : 'MICRO:ON';
+            ? 'MICRO:BT/GUARD'
+            : 'MICRO:GUARD';
+      } else if (this.codexMicroStatus.state === 'busy') {
+        microLabel = 'MICRO:BUSY';
       } else if (this.codexMicroStatus.state === 'starting') {
         microLabel = 'MICRO:WAIT';
       } else if (this.codexMicroStatus.state === 'disconnected') {

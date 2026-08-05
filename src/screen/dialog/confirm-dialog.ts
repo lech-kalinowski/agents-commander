@@ -17,6 +17,8 @@ export interface ConfirmDialogController {
 
 export interface ConfirmDialogOptions {
   onReady?: (controller: ConfirmDialogController) => void;
+  /** Only controller.confirm() may approve; terminal keys remain cancellation-only. */
+  externalConfirmOnly?: boolean;
 }
 
 export function showConfirmDialog(
@@ -27,6 +29,7 @@ export function showConfirmDialog(
   options: ConfirmDialogOptions = {},
 ): Promise<boolean> {
   return new Promise((resolve) => {
+    const externalConfirmOnly = options.externalConfirmOnly === true;
     enterDialog(screen);
 
     const safeMessage = truncateOverlayText(message, 500);
@@ -107,6 +110,12 @@ export function showConfirmDialog(
     );
 
     function renderButtons(): void {
+      if (externalConfirmOnly) {
+        yesBtn.setContent('{gray-fg} [ Device ] {/gray-fg}');
+        noBtn.setContent('{cyan-bg}{black-fg}  [  No  ] {/black-fg}{/cyan-bg}');
+        screen.render();
+        return;
+      }
       if (selected) {
         yesBtn.setContent('{cyan-bg}{black-fg}  [ Yes ]  {/black-fg}{/cyan-bg}');
         noBtn.setContent('     No     ');
@@ -150,6 +159,7 @@ export function showConfirmDialog(
     options.onReady?.(controller);
 
     dialog.key(['left', 'right', 'tab'], () => {
+      if (externalConfirmOnly) return;
       selected = !selected;
       renderButtons();
     });
@@ -157,9 +167,13 @@ export function showConfirmDialog(
     // Consume arrow keys so they don't propagate to screen-level handlers
     dialog.key(['up', 'down'], () => { /* swallow */ });
 
-    dialog.key(['y', 'Y'], () => finish(true));
+    dialog.key(['y', 'Y'], () => {
+      if (!externalConfirmOnly) finish(true);
+    });
     dialog.key(['n', 'N', 'escape'], () => finish(false));
-    dialog.key(['enter', 'return'], () => finish(selected));
+    dialog.key(['enter', 'return'], () => finish(
+      externalConfirmOnly ? false : selected,
+    ));
 
     dialog.focus();
     screen.render();

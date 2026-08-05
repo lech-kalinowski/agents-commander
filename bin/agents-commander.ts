@@ -50,7 +50,7 @@ program
   .option('--demo', 'Launch the deterministic offline conference demo')
   .option('--codex-micro', 'Enable native Codex Micro controls for this launch')
   .option('--no-codex-micro', 'Disable Codex Micro controls for this launch')
-  .option('--codex-micro-keyboard', 'Use legacy programmed keyboard shortcuts instead of native input')
+  .option('--codex-micro-keyboard', 'Use unguarded legacy shortcuts; keep ChatGPT fully quit')
   .option('--codex-micro-decisions', 'Enable guarded approve/reject controls for this launch')
   .option('--no-codex-micro-decisions', 'Disable guarded approve/reject controls for this launch')
   .option('--codex-micro-test', 'Enable Codex Micro controls and open the input checklist')

@@ -335,14 +335,18 @@ describe('App conference and offline demo integration', () => {
       state: 'connected',
       transport: 'usb',
       connectionEpoch: 'device-epoch',
+      ownership: 'guarded',
     };
     expect(app.conferenceStatus()).toEqual({
-      modeLabel: 'OFFLINE DEMO + MICRO:USB',
+      modeLabel: 'OFFLINE DEMO + MICRO:USB/GUARD',
       warning: undefined,
     });
 
     app.launch = { conference: false, demo: false };
-    expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO:USB' });
+    expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO:USB/GUARD' });
+
+    delete app.codexMicroStatus.ownership;
+    expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO:!' });
 
     app.codexMicroStatus = {
       state: 'disconnected',
@@ -352,7 +356,7 @@ describe('App conference and offline demo integration', () => {
     expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO:LOST' });
 
     app.config.hardware.codexMicro.inputMode = 'keyboard';
-    expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO:KEYS' });
+    expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO:KEYS/NO-GUARD' });
   });
 
   it('runs owned launch cleanup exactly once before exiting', async () => {

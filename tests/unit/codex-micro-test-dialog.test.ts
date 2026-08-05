@@ -98,8 +98,11 @@ describe('Codex Micro test content', () => {
 
     expect(CODEX_MICRO_BINDINGS).toHaveLength(13);
     for (const binding of CODEX_MICRO_BINDINGS) {
-      expect(content).toContain(binding.label);
+      if (binding.action !== 'approve' && binding.action !== 'reject') {
+        expect(content).toContain(binding.label);
+      }
     }
+    expect(content.match(/Disabled — native guarded mode required/g)).toHaveLength(2);
     expect(content).toContain('Detected 2/13 controls');
     expect(content.match(/\[✓\]/g)).toHaveLength(2);
   });
@@ -113,6 +116,7 @@ describe('Codex Micro test content', () => {
         state: 'connected',
         transport: 'usb',
         connectionEpoch: 'not-rendered',
+        ownership: 'guarded',
         firmware: 'v0.4.1{red-fg}',
         battery: 72.6,
         charging: true,
@@ -135,6 +139,26 @@ describe('Codex Micro test content', () => {
     expect(content).not.toContain('not-rendered');
   });
 
+  it('does not report readiness or invite presses while another reader is active', () => {
+    const content = formatCodexMicroTestContent(new Set(), {
+      inputMode: 'native',
+      testedInputs: new Set(CODEX_MICRO_NATIVE_BINDINGS.map(({ input }) => input)),
+      deviceStatus: {
+        state: 'busy',
+        transport: 'usb',
+        connectionEpoch: null,
+        detail: 'another_hid_client',
+      },
+      decisionControls: true,
+    });
+
+    expect(content).toContain('In use by another app · controls paused');
+    expect(content).toContain('Do not press controls');
+    expect(content).toContain('Physical-input test paused');
+    expect(content).toContain('Commander discards all Codex Micro input');
+    expect(content).not.toContain('ready for rehearsal');
+  });
+
   it('teaches native controls first and labels keyboard programming as fallback', () => {
     for (const copy of [
       'no Work Louder reprogramming is required',
@@ -144,6 +168,15 @@ describe('Codex Micro test content', () => {
       'Approve/Reject',
       '--codex-micro-decisions',
       '--codex-micro-keyboard',
+      'MICRO:BUSY',
+      'Commander discards device input',
+      'not an',
+      'OS-enforced exclusive lock',
+      'Layer 2 did not isolate',
+      'Factory labels are swappable',
+      'Never use sudo',
+      'decisions are disabled',
+      'entire session',
     ]) {
       expect(HELP_TEXT).toContain(copy);
     }
@@ -199,10 +232,14 @@ describe('Codex Micro test dialog', () => {
     }
 
     expect(handle.testedActions()).toEqual(CODEX_MICRO_BINDINGS.map(({ action }) => action));
-    expect(dialog.content).toContain('All controls detected — ready for rehearsal.');
+    expect(dialog.content).toContain(
+      'All programmed shortcuts detected — mapping works; device/client safety remains unverified.',
+    );
+    expect(dialog.content).toContain('Disabled — native guarded mode required');
+    expect(dialog.content).not.toContain('ready for rehearsal');
   });
 
-  it('tracks direct hardware controls, live status, and keeps native mode exclusive', () => {
+  it('tracks direct hardware controls only while the sole-reader guard is active', () => {
     const screen = createScreen();
     screens.push(screen);
     const handle = showCodexMicroTestDialog(screen, theme, {
@@ -218,8 +255,8 @@ describe('Codex Micro test dialog', () => {
 
     expect(dialog.height).toBe(30);
     expect(dialog.content).toContain('Waiting for device');
-    expect(dialog.content).toContain('Detected 0/19 physical controls');
-    expect(dialog.content).toContain('Approve/Reject are input-test only');
+    expect(dialog.content).toContain('Physical-input test paused');
+    expect(dialog.content).toContain('Wait for a guarded connection');
 
     screen.emit('keypress', undefined, {
       name: CODEX_MICRO_BINDINGS[0].key,
@@ -227,6 +264,25 @@ describe('Codex Micro test dialog', () => {
     });
     expect(handle.testedActions()).toEqual([]);
 
+    expect(handle.recordHardwareInput('AG00', 'focus-panel-1')).toBe(false);
+
+    handle.setDeviceStatus({
+      state: 'connected',
+      transport: 'bluetooth',
+      connectionEpoch: null,
+      ownership: 'guarded',
+    });
+    expect(handle.recordHardwareInput('AG00', 'focus-panel-1')).toBe(false);
+    expect(dialog.content).toContain('Physical-input test paused');
+
+    handle.setDeviceStatus({
+      state: 'connected',
+      transport: 'bluetooth',
+      connectionEpoch: 'ephemeral-epoch',
+      ownership: 'guarded',
+      firmware: 'v0.4.1',
+      battery: 88,
+    });
     expect(handle.recordHardwareInput('AG00', 'focus-panel-1')).toBe(true);
     expect(handle.recordHardwareInput('ACT10', 'open-activity')).toBe(true);
     expect(handle.recordHardwareInput('ACT11', 'approve')).toBe(false);
@@ -235,18 +291,32 @@ describe('Codex Micro test dialog', () => {
     expect(dialog.content).toContain('Detected 2/19 physical controls');
     expect(dialog.content).toContain('Last input: ACT10 → Activity');
 
-    handle.setDeviceStatus({
-      state: 'connected',
-      transport: 'bluetooth',
-      connectionEpoch: 'ephemeral-epoch',
-      firmware: 'v0.4.1',
-      battery: 88,
-    });
     expect(dialog.content).toContain('Connected');
+    expect(dialog.content).toContain('sole-reader guard active');
     expect(dialog.content).toContain('Bluetooth');
     expect(dialog.content).toContain('firmware v0.4.1');
     expect(dialog.content).toContain('battery 88%');
     expect(dialog.content).not.toContain('ephemeral-epoch');
+
+    handle.setDeviceStatus({
+      state: 'busy',
+      transport: 'bluetooth',
+      connectionEpoch: null,
+      detail: 'another_hid_client',
+    });
+    expect(handle.testedActions()).toEqual([]);
+    expect(handle.testedInputs()).toEqual([]);
+    expect(dialog.content).toContain('Physical-input test paused');
+    expect(dialog.content).toContain('Last input: none yet');
+
+    handle.setDeviceStatus({
+      state: 'connected',
+      transport: 'bluetooth',
+      connectionEpoch: 'replacement-epoch',
+      ownership: 'guarded',
+    });
+    expect(dialog.content).toContain('Detected 0/19 physical controls');
+    expect(dialog.content).not.toContain('hardware input is ready');
 
     screen.emit('keypress', 'r', { name: 'r', full: 'r' });
     expect(handle.testedActions()).toEqual([]);
@@ -256,12 +326,59 @@ describe('Codex Micro test dialog', () => {
     expect(dialog.content).toContain('Last input: none yet');
   });
 
+  it('preserves progress for same-epoch metadata and resets it for a direct epoch change', () => {
+    const screen = createScreen();
+    screens.push(screen);
+    const handle = showCodexMicroTestDialog(screen, theme, {
+      inputMode: 'native',
+      initialStatus: {
+        state: 'connected',
+        transport: 'usb',
+        connectionEpoch: 'epoch-a',
+        ownership: 'guarded',
+      },
+    });
+    const dialog = checklistDialog();
+
+    expect(handle.recordHardwareInput('AG00', 'focus-panel-1')).toBe(true);
+    handle.setDeviceStatus({
+      state: 'connected',
+      transport: 'usb',
+      connectionEpoch: 'epoch-a',
+      ownership: 'guarded',
+      firmware: 'v0.4.2',
+      battery: 75,
+    });
+
+    expect(handle.testedInputs()).toEqual(['AG00']);
+    expect(dialog.content).toContain('Detected 1/19 physical controls');
+    expect(dialog.content).toContain('Last input: AG00 → Workspace slot 1');
+
+    handle.setDeviceStatus({
+      state: 'connected',
+      transport: 'usb',
+      connectionEpoch: 'epoch-b',
+      ownership: 'guarded',
+    });
+
+    expect(handle.testedInputs()).toEqual([]);
+    expect(handle.testedActions()).toEqual([]);
+    expect(dialog.content).toContain('Detected 0/19 physical controls');
+    expect(dialog.content).toContain('Last input: none yet');
+  });
+
   it('completes the native checklist from all factory reports, coalescing the wide key', () => {
     const screen = createScreen();
     screens.push(screen);
     const handle = showCodexMicroTestDialog(screen, theme, {
       inputMode: 'native',
       decisionControls: true,
+      initialStatus: {
+        state: 'connected',
+        transport: 'usb',
+        connectionEpoch: 'test-epoch',
+        ownership: 'guarded',
+      },
     });
     const dialog = checklistDialog();
 

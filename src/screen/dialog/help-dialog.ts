@@ -85,6 +85,14 @@ Multi-panel AI Agent Manager & File Browser
   no Work Louder reprogramming is required. Allow the launch
   terminal in Privacy & Security > Input Monitoring.
 
+  Native input uses a sole-reader conflict guard. This is not an
+  OS-enforced exclusive lock. If another active reader is found,
+  {yellow-fg}MICRO:BUSY{/yellow-fg} appears and Commander discards device input.
+  Fully quit ChatGPT, or disable its Input Monitoring and restart
+  it; keep the launch terminal permitted, then rerun Doctor.
+  Never use sudo. On firmware 0.4.1, Layer 2 did not isolate events.
+
+  Factory labels are swappable; fixed AG/ACT positions are used.
   Agent keys 1–6   Focus active workspace slots 1–6
   Fast / Split     Cycle density / add panel
   Codex key        Panel navigator (same destination as F11)
@@ -99,7 +107,8 @@ Multi-panel AI Agent Manager & File Browser
   second matching press within five seconds.
 
   {cyan-fg}--codex-micro-keyboard{/cyan-fg} is the explicit fallback for
-  a device layer already programmed with legacy shortcuts.
+  a layer programmed with legacy shortcuts. Its guard is unavailable;
+  decisions are disabled. Keep ChatGPT quit for the entire session.
   Conference and Demo modes do not enable hardware automatically.
 
   {bold}File panel only{/bold} (pass through to agents):

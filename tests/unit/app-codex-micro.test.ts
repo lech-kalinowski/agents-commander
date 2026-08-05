@@ -76,6 +76,7 @@ function createDecisionHarness(grid = approvedGrid) {
       state: 'connected',
       transport: 'usb',
       connectionEpoch: 'micro-epoch-1',
+      ownership: 'guarded',
     },
     pendingCodexMicroDecision: null,
     updateStatus: vi.fn(),
@@ -188,6 +189,44 @@ describe('App Codex Micro integration', () => {
     expect(layout.focusPanelOffset).not.toHaveBeenCalled();
   });
 
+  it('never submits decision actions from the unguarded keyboard fallback', () => {
+    const { app, orchestrator } = createDecisionHarness();
+    app.config.hardware.codexMicro.inputMode = 'keyboard';
+    app.config.hardware.codexMicro.decisionControls = true;
+
+    app.setupGlobalKeys();
+    for (const shortcut of ['C-S-f11', 'C-S-f12']) {
+      const registration = vi.mocked(app.screen.key).mock.calls.find(
+        ([keys]: [string[]]) => keys.includes(shortcut),
+      );
+      expect(registration).toBeDefined();
+      registration?.[1]();
+    }
+
+    expect(showConfirmDialog).not.toHaveBeenCalled();
+    expect(orchestrator.submitGuardedCodexDecision).not.toHaveBeenCalled();
+    expect(showErrorToast).toHaveBeenCalledTimes(2);
+    expect(showErrorToast).toHaveBeenLastCalledWith(
+      app.screen,
+      'Codex Micro decisions require native input with the sole-reader guard',
+    );
+  });
+
+  it('surfaces the unguarded keyboard fallback warning only once', () => {
+    const { app } = createDecisionHarness();
+    app.config.hardware.codexMicro.inputMode = 'keyboard';
+    app.codexMicroKeyboardWarningShown = false;
+
+    app.warnCodexMicroKeyboardFallback();
+    app.warnCodexMicroKeyboardFallback();
+
+    expect(showErrorToast).toHaveBeenCalledOnce();
+    expect(showErrorToast).toHaveBeenCalledWith(
+      app.screen,
+      'Codex Micro keyboard fallback has NO reader guard; keep ChatGPT fully quit',
+    );
+  });
+
   it('routes physical navigation through adaptive workspace helpers', () => {
     const { app, layout } = createDecisionHarness();
 
@@ -292,9 +331,21 @@ describe('App Codex Micro integration', () => {
       app.theme,
       'Codex Micro — Approve Once',
       expect.stringContaining('same device key again within 5 seconds'),
-      expect.objectContaining({ onReady: expect.any(Function) }),
+      expect.objectContaining({
+        externalConfirmOnly: true,
+        onReady: expect.any(Function),
+      }),
     );
     expect(orchestrator.submitGuardedCodexDecision).not.toHaveBeenCalled();
+
+    app.handleCodexMicroHardwareEvent({ ...first, receivedAt: Date.now() });
+    app.handleCodexMicroHardwareEvent({
+      ...first,
+      input: 'ACT08',
+      sequence: 2,
+      receivedAt: Date.now(),
+    });
+    expect(controller.confirm).not.toHaveBeenCalled();
 
     const second = { ...first, sequence: 2, receivedAt: Date.now() };
     app.handleCodexMicroHardwareEvent(second);
@@ -413,6 +464,65 @@ describe('App Codex Micro integration', () => {
     expect(showErrorToast).toHaveBeenCalledWith(
       app.screen,
       'Codex Micro disconnected; hardware actions are paused',
+    );
+  });
+
+  it('fails closed on a competing reader, cancels decisions, and reports MICRO:BUSY once', () => {
+    const { app, layout } = createDecisionHarness();
+    const cancel = vi.fn();
+    app.pendingCodexMicroDecision = {
+      action: 'approve',
+      event: {
+        source: 'native',
+        input: 'ACT07',
+        action: 'approve',
+        connectionEpoch: 'micro-epoch-1',
+        sequence: 1,
+        receivedAt: Date.now(),
+      },
+      controller: { cancel, confirm: vi.fn(), isOpen: vi.fn(() => true) },
+      expiresAt: Date.now() + 5_000,
+      timeout: setTimeout(() => undefined, 5_000),
+    };
+    app.launch = { conference: false, demo: false };
+
+    const busyStatus = {
+      state: 'busy',
+      transport: 'usb',
+      connectionEpoch: null,
+      detail: 'another_hid_client',
+    };
+    app.handleCodexMicroStatus(busyStatus);
+    app.handleCodexMicroHardwareEvent({
+      source: 'native',
+      input: 'AG00',
+      action: 'focus-panel-1',
+      connectionEpoch: 'micro-epoch-1',
+      sequence: 2,
+      receivedAt: Date.now(),
+    });
+    app.handleCodexMicroStatus(busyStatus);
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(app.pendingCodexMicroDecision).toBeNull();
+    expect(layout.focusWorkspaceSlot).not.toHaveBeenCalled();
+    expect(showErrorToast).toHaveBeenCalledOnce();
+    expect(showErrorToast).toHaveBeenCalledWith(
+      app.screen,
+      'Codex Micro is open in ChatGPT or another app; Commander controls are paused',
+    );
+    expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO:BUSY' });
+
+    app.handleCodexMicroStatus({
+      state: 'connected',
+      transport: 'usb',
+      connectionEpoch: 'micro-epoch-2',
+      ownership: 'guarded',
+    });
+    expect(showToast).toHaveBeenCalledWith(
+      app.screen,
+      'Codex Micro ready for Commander (USB)',
+      2000,
     );
   });
 

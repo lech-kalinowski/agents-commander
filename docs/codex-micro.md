@@ -11,6 +11,13 @@ product IDs, requests safe device status, and receives control events. It does
 not read or store a serial number, change firmware, access files, or control
 RGB lighting.
 
+Native mode uses a sole-reader conflict guard. It checks for another active
+direct HID reader before accepting each event. macOS can otherwise deliver one
+physical event to both ChatGPT and Agents Commander. If a conflict is detected,
+Commander fails closed: the status bar shows `MICRO:BUSY` and Commander
+discards the input. This is an observational safety guard, not an OS-enforced
+exclusive lock.
+
 ## Native control map
 
 | Physical control | Device input | Agents Commander action |
@@ -35,6 +42,10 @@ RGB lighting.
 | Joystick left | — | Focus previous panel |
 | Joystick right | — | Focus next panel |
 
+The physical names in this table are the factory keycap arrangement. Codex
+Micro keycaps are swappable, so Commander identifies the fixed `AG00`–`AG05`
+and `ACT06`–`ACT12` switch positions rather than trusting the installed label.
+
 The wide Mic key reports two adjacent inputs; Commander de-duplicates them into
 one action. The joystick must return toward center before another directional
 action fires. An active workspace slot is the first, second, and so on among
@@ -49,6 +60,19 @@ launches Agents Commander permission under **System Settings > Privacy &
 Security > Input Monitoring**. Restart that terminal after changing the
 permission.
 
+Before launching Commander, use one of these guarded launch setups:
+
+1. Fully quit ChatGPT Desktop with **ChatGPT > Quit ChatGPT** (`Cmd+Q`); closing
+   its window is not sufficient.
+2. Or disable ChatGPT under **System Settings > Privacy & Security > Input
+   Monitoring**, restart ChatGPT, keep Input Monitoring enabled for the
+   terminal that launches Commander, and proceed only if Doctor passes.
+
+Do not run Commander with `sudo` and do not loosen device permissions. A
+different Work Louder layer is not a proven isolation boundary. On the tested
+firmware 0.4.1, Layer 2 still emitted the same vendor event stream to both
+attached applications.
+
 Connect the device, then run the bounded startup probe:
 
 ```bash
@@ -57,7 +81,9 @@ agents-commander --doctor --codex-micro /path/to/project
 
 Doctor reports whether the exact controller is connected and may show the
 transport, firmware version, and battery level. It never prints a device
-serial number. Next, open the interactive physical-input checklist:
+serial number. `MICRO:BUSY` means another active HID event reader was detected;
+Commander discards device input until that reader disconnects. Next, open the
+interactive physical-input checklist:
 
 ```bash
 agents-commander --codex-micro-test /path/to/project
@@ -138,28 +164,34 @@ agents-commander --codex-micro-keyboard /path/to/project
 | `Ctrl+Shift+F5` through `Ctrl+Shift+F8` | Focus visible slots 1–4 |
 | `Ctrl+Shift+F9` | Panel navigator |
 | `Ctrl+Shift+F10` | Routed-message Activity |
-| `Ctrl+Shift+F11` | Guarded one-time approval |
-| `Ctrl+Shift+F12` | Guarded rejection |
+| `Ctrl+Shift+F11` | Disabled; native guarded mode is required |
+| `Ctrl+Shift+F12` | Disabled; native guarded mode is required |
 | `Ctrl+Shift+Insert` | Control test overlay |
 
 Keep these assignments exact. This mode receives ordinary terminal keyboard
 events, so Doctor cannot prove which physical device sent them; complete the
-interactive checklist instead.
+interactive checklist instead. The sole-reader guard is unavailable in this
+mode, and Approve/Reject controls are therefore disabled. Keep ChatGPT Desktop
+fully quit for the entire keyboard-mode session; Commander cannot detect a new
+vendor reader. On the tested firmware 0.4.1, switching layers alone did not
+isolate the vendor events.
 
 ## Conference rehearsal
 
 1. Connect the Codex Micro by USB-C and select its wired device mode. Keep a
    conventional keyboard connected as the stage fallback.
-2. Run `agents-commander --doctor --codex-micro` and resolve every Codex Micro
-   warning, including Input Monitoring permission.
-3. Run `agents-commander --codex-micro-test` and exercise every control used in
+2. Fully quit ChatGPT Desktop, or remove its Input Monitoring permission and
+   restart it. Keep the presentation terminal permitted; never use `sudo`.
+3. Run `agents-commander --doctor --codex-micro` and resolve every Codex Micro
+   warning. Do not continue while the status bar shows `MICRO:BUSY`.
+4. Run `agents-commander --codex-micro-test` and exercise every control used in
    the talk.
-4. Start the audience-facing command with `--codex-micro` added explicitly.
-5. Exercise navigation with more panels than the visible density.
-6. If decision controls are part of the demo, enable them explicitly and test
+5. Start the audience-facing command with `--codex-micro` added explicitly.
+6. Exercise navigation with more panels than the visible density.
+7. If decision controls are part of the demo, enable them explicitly and test
    approval and rejection against a disposable Codex task. Confirm that an
    unrelated, changed, or stale prompt sends nothing.
-7. Unplug and reconnect the controller once, confirm the status recovers, and
+8. Unplug and reconnect the controller once, confirm the status recovers, and
    rehearse continuing with the keyboard if it does not.
 
 Complete the rehearsal on the exact presentation computer, terminal,

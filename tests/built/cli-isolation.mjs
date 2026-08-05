@@ -96,6 +96,9 @@ try {
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /Usage: agents-commander/u);
   assert.match(help.stdout, /--doctor/u);
+  assert.match(help.stdout, /--codex-micro(?:\s|$)/mu);
+  assert.match(help.stdout, /--no-codex-micro\b/u);
+  assert.match(help.stdout, /--codex-micro-test\b/u);
 
   const version = runLightweightCli(['--version']);
   assert.equal(version.status, 0, version.stderr);
@@ -109,6 +112,15 @@ try {
   assert.match(doctor.stdout, /Agents Commander Doctor/u);
   assert.match(doctor.stdout, /\[PASS\] PTY helper:/u);
   assert.match(doctor.stdout, /\[PASS\] Offline demo agent:/u);
+
+  const microDoctor = runLightweightCli(['--doctor', '--codex-micro']);
+  assert.ok(
+    microDoctor.status === 0 || microDoctor.status === 1,
+    `Unexpected Codex Micro Doctor exit status ${microDoctor.status}: ${microDoctor.stderr}`,
+  );
+  assert.match(microDoctor.stdout, /\[WARN\] Codex Micro:/u);
+  assert.match(microDoctor.stdout, /device identity cannot be verified/u);
+  assert.match(microDoctor.stdout, /--codex-micro-test/u);
 
   const uiLaunch = spawnCli([]);
   assert.equal(uiLaunch.error, undefined, `UI isolation control failed: ${uiLaunch.error?.message}`);

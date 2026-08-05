@@ -29,6 +29,11 @@ describe('loadConfig', () => {
           args: ['--fast'],
         },
       },
+      hardware: {
+        codexMicro: {
+          decisionControls: false,
+        },
+      },
     }) as never);
 
     const config = loadConfig();
@@ -43,6 +48,10 @@ describe('loadConfig', () => {
       env: defaultConfig.agents.codex.env,
     });
     expect(config.agents.claude).toEqual(defaultConfig.agents.claude);
+    expect(config.hardware.codexMicro).toEqual({
+      enabled: false,
+      decisionControls: false,
+    });
   });
 
   it('falls back to defaults for non-object config payloads', () => {
@@ -65,6 +74,7 @@ describe('loadConfig', () => {
         codex: { command: '', args: 'fast', env: { VALID: 'yes', INVALID: 1 } },
       },
       orchestration: { ackTimeout: 'forever', maxContentLines: 0, maxContentBytes: 512 },
+      hardware: { codexMicro: { enabled: 'yes', decisionControls: 1 } },
     }) as never);
 
     const config = loadConfig();
@@ -80,6 +90,7 @@ describe('loadConfig', () => {
       env: { VALID: 'yes' },
     });
     expect(config.orchestration).toEqual(defaultConfig.orchestration);
+    expect(config.hardware).toEqual(defaultConfig.hardware);
   });
 
   it.each([1, 100])('accepts the active panel-count boundary %i', (panelCount) => {
@@ -118,10 +129,31 @@ describe('loadConfig', () => {
     const first = loadConfig();
     first.editor.tabSize = 8;
     first.agents.codex.args.push('--changed');
+    first.hardware.codexMicro.enabled = true;
 
     const second = loadConfig();
     expect(second.editor.tabSize).toBe(defaultConfig.editor.tabSize);
     expect(second.agents.codex.args).toEqual(defaultConfig.agents.codex.args);
+    expect(second.hardware.codexMicro).toEqual(defaultConfig.hardware.codexMicro);
+    expect(second.hardware).not.toBe(first.hardware);
+    expect(second.hardware.codexMicro).not.toBe(first.hardware.codexMicro);
+  });
+
+  it('loads explicit Codex Micro settings without enabling them implicitly', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+      hardware: {
+        codexMicro: {
+          enabled: true,
+          decisionControls: false,
+        },
+      },
+    }) as never);
+
+    expect(loadConfig().hardware.codexMicro).toEqual({
+      enabled: true,
+      decisionControls: false,
+    });
   });
 
   it('migrates legacy agent overrides and normalizes named OpenCode profiles', () => {

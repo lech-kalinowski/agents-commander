@@ -1,4 +1,4 @@
-import type { AppConfig } from './types.js';
+import type { AppConfig, NormalizedAppConfig } from './types.js';
 import { defaultConfig } from './defaults.js';
 import {
   isActivePanelCount,
@@ -22,13 +22,18 @@ export interface ExplicitLaunchOptions {
   skipWelcome?: boolean;
   conference?: boolean;
   demo?: boolean;
+  /** Override the persisted Codex Micro integration setting for this launch. */
+  codexMicro?: boolean;
+  /** Open the Codex Micro input checklist after startup. */
+  codexMicroTest?: boolean;
 }
 
 export interface ResolvedLaunchOptions {
-  config: AppConfig;
+  config: NormalizedAppConfig;
   skipWelcome: boolean;
   conference: boolean;
   demo: boolean;
+  codexMicroTest: boolean;
 }
 
 export const CONFERENCE_PRESET = Object.freeze({
@@ -39,7 +44,7 @@ export const CONFERENCE_PRESET = Object.freeze({
   skipWelcome: true,
 });
 
-function cloneConfig(config: AppConfig): AppConfig {
+function cloneConfig(config: AppConfig): NormalizedAppConfig {
   const legacyPanelDensity = config.panelCount === 2 || config.panelCount === 3 || config.panelCount === 4
     ? config.panelCount
     : defaultConfig.panelDensity;
@@ -67,6 +72,11 @@ function cloneConfig(config: AppConfig): AppConfig {
     orchestration: config.orchestration === undefined
       ? undefined
       : { ...config.orchestration },
+    hardware: {
+      codexMicro: {
+        ...(config.hardware?.codexMicro ?? defaultConfig.hardware.codexMicro),
+      },
+    },
   };
 }
 
@@ -86,6 +96,7 @@ export function resolveLaunchOptions(
   const config = cloneConfig(savedConfig);
   const demo = explicit.demo === true;
   const conference = demo || explicit.conference === true;
+  const codexMicroTest = explicit.codexMicroTest === true;
   let skipWelcome = false;
 
   if (conference) {
@@ -101,11 +112,22 @@ export function resolveLaunchOptions(
   if (isPanelDensity(explicit.density)) config.panelDensity = explicit.density;
   if (explicit.showHidden !== undefined) config.showHidden = explicit.showHidden;
   if (explicit.skipWelcome !== undefined) skipWelcome = explicit.skipWelcome;
+  if (explicit.codexMicro !== undefined) {
+    config.hardware.codexMicro.enabled = explicit.codexMicro;
+  }
+
+  // Test mode must be usable on a fresh install without changing persisted
+  // settings. It is launch-only and does not imply conference or demo mode.
+  if (codexMicroTest) {
+    config.hardware.codexMicro.enabled = true;
+    skipWelcome = true;
+  }
 
   return {
     config,
     skipWelcome,
     conference,
     demo,
+    codexMicroTest,
   };
 }

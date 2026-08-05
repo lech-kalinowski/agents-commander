@@ -8,6 +8,7 @@ import {
   ROUTED_QUEUE_MAX_TASKS_PER_PANEL,
 } from '../../src/orchestration/orchestrator.js';
 import { logger } from '../../src/utils/logger.js';
+import { fingerprintCodexVisibleGrid } from '../../src/hardware/codex-decision.js';
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -18,7 +19,10 @@ function mockTerminalPanel(panelIndex: number, isRunning = true) {
     panelIndex,
     isRunning,
     sessionGeneration: 1,
+    inputGeneration: 0n,
+    inputSynchronized: true,
     sendInput: vi.fn((text: string) => inputs.push(text)),
+    getVisibleGridLines: vi.fn(() => [] as string[]),
     muteScanner: vi.fn(),
     unmuteScanner: vi.fn(),
     markProtocolTextAsProcessed: vi.fn(),
@@ -1878,6 +1882,117 @@ describe('Orchestrator', () => {
     await expect(approvalDelivery).resolves.toBeTruthy();
     expect(tp.sendInput).toHaveBeenCalledTimes(1);
     expect(tp.sendInput).toHaveBeenCalledWith('approve\r');
+  });
+
+  it('submits only Enter for an unchanged selected one-time Codex decision', async () => {
+    const tp = mockTerminalPanel(0);
+    const grid = [
+      'Would you like to run the following command?',
+      '$ npm run verify',
+      '› 1. Yes, proceed',
+      "  2. Yes, and don't ask again for commands that start with npm run",
+      '  3. No, and tell Codex what to do differently',
+    ];
+    tp.getVisibleGridLines.mockReturnValue(grid);
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator(mockLayout({ 0: tp }) as any, agents as any);
+
+    await expect(orchestrator.submitGuardedCodexDecision(tp as any, {
+      action: 'approve',
+      sessionId: 'codex-session-0',
+      sessionGeneration: 1,
+      inputGeneration: 0n,
+      fingerprint: fingerprintCodexVisibleGrid(grid),
+    })).resolves.toBeTruthy();
+
+    expect(tp.sendInput).toHaveBeenCalledOnce();
+    expect(tp.sendInput).toHaveBeenCalledWith('\r');
+  });
+
+  it('fails closed when a confirmed Codex decision changes while its input lane waits', async () => {
+    const tp = mockTerminalPanel(0);
+    const grid = [
+      'Do you want to run this command?',
+      '> 1. Allow once',
+      '  2. No',
+    ];
+    tp.getVisibleGridLines.mockReturnValue(grid);
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator(mockLayout({ 0: tp }) as any, agents as any) as any;
+    let release!: () => void;
+    const blocker = new Promise<void>((resolve) => { release = resolve; });
+    orchestrator.inputLaneTails.set('codex-session-0', blocker);
+
+    const pending = orchestrator.submitGuardedCodexDecision(tp, {
+      action: 'approve',
+      sessionId: 'codex-session-0',
+      sessionGeneration: 1,
+      inputGeneration: 0n,
+      fingerprint: fingerprintCodexVisibleGrid(grid),
+    });
+    tp.getVisibleGridLines.mockReturnValue([
+      'Command completed.',
+      '$ ',
+    ]);
+    release();
+
+    await expect(pending).resolves.toBe(false);
+    expect(tp.sendInput).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on user input while waiting even before the terminal grid redraws', async () => {
+    const tp = mockTerminalPanel(0);
+    const grid = [
+      'Do you want to run this command?',
+      '> 1. Allow once',
+      '  2. No',
+    ];
+    tp.getVisibleGridLines.mockReturnValue(grid);
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator(mockLayout({ 0: tp }) as any, agents as any) as any;
+    let release!: () => void;
+    const blocker = new Promise<void>((resolve) => { release = resolve; });
+    orchestrator.inputLaneTails.set('codex-session-0', blocker);
+
+    const pending = orchestrator.submitGuardedCodexDecision(tp, {
+      action: 'approve',
+      sessionId: 'codex-session-0',
+      sessionGeneration: 1,
+      inputGeneration: 0n,
+      fingerprint: fingerprintCodexVisibleGrid(grid),
+    });
+    tp.inputGeneration = 1n;
+    release();
+
+    await expect(pending).resolves.toBe(false);
+    expect(tp.getVisibleGridLines).not.toHaveBeenCalled();
+    expect(tp.sendInput).not.toHaveBeenCalled();
+  });
+
+  it('rejects a Codex decision after either managed or PTY session identity changes', async () => {
+    const tp = mockTerminalPanel(0);
+    const grid = [
+      'Do you want to run this command?',
+      '  1. Allow once',
+      '> 2. No',
+    ];
+    tp.getVisibleGridLines.mockReturnValue(grid);
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator(mockLayout({ 0: tp }) as any, agents as any);
+    const expected = {
+      action: 'reject' as const,
+      sessionId: 'codex-session-0',
+      sessionGeneration: 1,
+      inputGeneration: 0n,
+      fingerprint: fingerprintCodexVisibleGrid(grid),
+    };
+
+    agents._sessionIds[0] = 'codex-session-0-replaced';
+    await expect(orchestrator.submitGuardedCodexDecision(tp as any, expected)).resolves.toBe(false);
+    agents._sessionIds[0] = 'codex-session-0';
+    tp.sessionGeneration = 2;
+    await expect(orchestrator.submitGuardedCodexDecision(tp as any, expected)).resolves.toBe(false);
+    expect(tp.sendInput).not.toHaveBeenCalled();
   });
 
   it('rejects unsafe terminal controls before mutating a target or writing paste bytes', async () => {

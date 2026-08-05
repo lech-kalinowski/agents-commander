@@ -79,6 +79,23 @@ Multi-panel AI Agent Manager & File Browser
   CLI: --panels 1-100 sets the initial workspace size.
        --density auto|2|3|4 sets visible density.
 
+{bold}{yellow-fg}CODEX MICRO (EXPERIMENTAL){/yellow-fg}{/bold}
+
+  Opt in with {cyan-fg}--codex-micro{/cyan-fg}. Program the device in
+  Work Louder Input to emit these keyboard shortcuts:
+
+  Ctrl+Shift+PageUp/Down   Previous / next panel
+  Ctrl+Shift+Home/End      Previous / next page
+  Ctrl+Shift+F5/F6/F7/F8   Focus visible slot 1 / 2 / 3 / 4
+  Ctrl+Shift+F9            Open panel navigator
+  Ctrl+Shift+F10           Open routed activity
+  Ctrl+Shift+F11/F12       Guarded approve / reject
+  Ctrl+Shift+Insert        Open control test overlay
+
+  Run {cyan-fg}agents-commander --codex-micro-test{/cyan-fg}
+  before a live demo. Conference and Demo modes do not
+  enable the hardware controls automatically.
+
   {bold}File panel only{/bold} (pass through to agents):
   Ctrl+E      Reset to default 2-panel view
   Ctrl+G      Edit selected file in Vim; otherwise guide

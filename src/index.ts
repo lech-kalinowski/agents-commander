@@ -22,6 +22,29 @@ export {
   DEMO_WORKSPACE_FILES,
 } from './demo/demo-workspace.js';
 export { Orchestrator } from './orchestration/orchestrator.js';
+export type { GuardedCodexDecision } from './orchestration/orchestrator.js';
+export {
+  CODEX_MICRO_BINDINGS,
+  CODEX_MICRO_KEYS,
+  getCodexMicroAction,
+  getCodexMicroBinding,
+  getCodexMicroKey,
+  getCodexMicroKeys,
+  isCodexMicroKey,
+} from './hardware/codex-micro.js';
+export type {
+  CodexMicroAction,
+  CodexMicroBinding,
+  CodexMicroKey,
+} from './hardware/codex-micro.js';
+export {
+  detectCodexDecision,
+  fingerprintCodexVisibleGrid,
+} from './hardware/codex-decision.js';
+export type {
+  CodexDecisionAction,
+  CodexDecisionDetection,
+} from './hardware/codex-decision.js';
 export {
   ProtocolScanner,
   buildProtocolInstructions,
@@ -58,7 +81,13 @@ export type {
   LaunchPanelCount,
   ResolvedLaunchOptions,
 } from './config/launch-options.js';
-export type { AppConfig, Theme } from './config/types.js';
+export type {
+  AppConfig,
+  CodexMicroConfig,
+  HardwareConfig,
+  NormalizedAppConfig,
+  Theme,
+} from './config/types.js';
 export type { PanelDensity } from './panel-limits.js';
 export type { DemoAgentRole } from './demo/demo-agents.js';
 export type { DemoWorkspace } from './demo/demo-workspace.js';

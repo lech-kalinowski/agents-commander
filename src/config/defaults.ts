@@ -1,4 +1,4 @@
-import type { AppConfig } from './types.js';
+import type { NormalizedAppConfig } from './types.js';
 import { DEFAULT_AGENT_PROFILES, KNOWN_AGENTS } from '../agents/types.js';
 
 const defaultAgents = Object.fromEntries(
@@ -12,7 +12,7 @@ const defaultAgents = Object.fromEntries(
   ]),
 );
 
-export const defaultConfig: AppConfig = {
+export const defaultConfig: NormalizedAppConfig = {
   theme: 'classic-blue',
   panelCount: 2,
   panelDensity: 'auto',
@@ -39,5 +39,11 @@ export const defaultConfig: AppConfig = {
     dedupWindow: 15000,
     maxContentLines: 500,
     maxContentBytes: 262144,
+  },
+  hardware: {
+    codexMicro: {
+      enabled: false,
+      decisionControls: true,
+    },
   },
 };

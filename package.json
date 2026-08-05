@@ -19,6 +19,7 @@
     "dist/**/*.d.ts",
     "dist/**/*.py",
     "dist/**/*.md",
+    "docs/codex-micro.md",
     "LICENSE",
     "README.md"
   ],

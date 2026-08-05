@@ -24,6 +24,9 @@ function savedConfig() {
       ]),
     ),
     orchestration: { ...defaultConfig.orchestration },
+    hardware: {
+      codexMicro: { ...defaultConfig.hardware.codexMicro },
+    },
   };
 }
 
@@ -148,6 +151,7 @@ describe('resolveLaunchOptions', () => {
     if (result.config.orchestration) {
       result.config.orchestration.ackTimeout = 1;
     }
+    result.config.hardware.codexMicro.enabled = true;
 
     expect(saved).toEqual(snapshot);
     expect(result.config).not.toBe(saved);
@@ -156,6 +160,8 @@ describe('resolveLaunchOptions', () => {
     expect(result.config.agents.codex.args).not.toBe(saved.agents.codex.args);
     expect(result.config.agents.codex.env).not.toBe(saved.agents.codex.env);
     expect(result.config.orchestration).not.toBe(saved.orchestration);
+    expect(result.config.hardware).not.toBe(saved.hardware);
+    expect(result.config.hardware.codexMicro).not.toBe(saved.hardware.codexMicro);
   });
 
   it('supplies default profiles for pre-profile runtime configuration objects', () => {
@@ -179,6 +185,52 @@ describe('resolveLaunchOptions', () => {
     expect(result.config.panelCount).toBe(3);
     expect(result.config.panelDensity).toBe(3);
     expect(legacy).not.toHaveProperty('panelDensity');
+  });
+
+  it('supplies disabled defaults for pre-hardware runtime configuration objects', () => {
+    const legacy = savedConfig() as Record<string, unknown>;
+    delete legacy.hardware;
+
+    const result = resolveLaunchOptions(legacy as never);
+
+    expect(result.config.hardware).toEqual(defaultConfig.hardware);
+    expect(result.config.hardware).not.toBe(defaultConfig.hardware);
+    expect(result.config.hardware.codexMicro).not.toBe(defaultConfig.hardware.codexMicro);
+  });
+
+  it('applies explicit Codex Micro enable and disable overrides for one launch', () => {
+    const disabled = resolveLaunchOptions(savedConfig(), { codexMicro: true });
+    expect(disabled.config.hardware.codexMicro.enabled).toBe(true);
+
+    const savedEnabled = savedConfig();
+    savedEnabled.hardware.codexMicro.enabled = true;
+    const enabled = resolveLaunchOptions(savedEnabled, { codexMicro: false });
+    expect(enabled.config.hardware.codexMicro.enabled).toBe(false);
+    expect(savedEnabled.hardware.codexMicro.enabled).toBe(true);
+  });
+
+  it('makes Codex Micro test mode opt-in, enabled, and welcome-free without starting demo', () => {
+    const regular = resolveLaunchOptions(savedConfig());
+    expect(regular).toMatchObject({
+      codexMicroTest: false,
+      skipWelcome: false,
+      conference: false,
+      demo: false,
+    });
+    expect(regular.config.hardware.codexMicro.enabled).toBe(false);
+
+    const testMode = resolveLaunchOptions(savedConfig(), {
+      codexMicro: false,
+      codexMicroTest: true,
+      skipWelcome: false,
+    });
+    expect(testMode).toMatchObject({
+      codexMicroTest: true,
+      skipWelcome: true,
+      conference: false,
+      demo: false,
+    });
+    expect(testMode.config.hardware.codexMicro.enabled).toBe(true);
   });
 
   it('ignores out-of-range runtime panel values without mutating saved settings', () => {

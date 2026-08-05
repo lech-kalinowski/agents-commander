@@ -97,6 +97,7 @@ try {
     'dist/index.d.ts',
     'dist/agents/pty-helper.py',
     'dist/demo/demo-agent.js',
+    'docs/codex-micro.md',
   ]) {
     assert.ok(packedPaths.has(requiredPath), `Packed package is missing ${requiredPath}`);
   }
@@ -158,6 +159,9 @@ try {
   assert.match(help.stdout, /--doctor/u);
   assert.match(help.stdout, /--conference/u);
   assert.match(help.stdout, /--demo/u);
+  assert.match(help.stdout, /--codex-micro(?:\s|$)/mu);
+  assert.match(help.stdout, /--no-codex-micro\b/u);
+  assert.match(help.stdout, /--codex-micro-test\b/u);
 
   const currentNodeMajor = Number.parseInt(process.versions.node.split('.')[0], 10);
   const doctor = run(binaryPath, ['--doctor', workspaceDirectory], {
@@ -179,6 +183,15 @@ try {
     );
   }
 
+  const microDoctor = run(binaryPath, ['--doctor', '--codex-micro', workspaceDirectory], {
+    cwd: workspaceDirectory,
+    expectedStatuses: currentNodeMajor >= MINIMUM_NODE_MAJOR ? [0] : [1],
+    label: 'packed CLI --doctor --codex-micro',
+  });
+  assert.match(microDoctor.stdout, /\[WARN\] Codex Micro:/u);
+  assert.match(microDoctor.stdout, /device identity cannot be verified/u);
+  assert.match(microDoctor.stdout, /--codex-micro-test/u);
+
   const packageImport = run(process.execPath, [
     '--input-type=module',
     '--eval',
@@ -186,6 +199,7 @@ try {
       "const packageApi = await import('agents-commander');",
       "if (typeof packageApi.App !== 'function') throw new Error('App export missing');",
       "if (typeof packageApi.VTerm !== 'function') throw new Error('VTerm export missing');",
+      "if (packageApi.getCodexMicroAction('C-S-f11') !== 'approve') throw new Error('Codex Micro export missing');",
     ].join('\n'),
   ], {
     cwd: consumerDirectory,
@@ -196,11 +210,13 @@ try {
   const typeFixturePath = path.join(consumerDirectory, 'consumer.ts');
   const typeConfigPath = path.join(consumerDirectory, 'tsconfig.json');
   await fs.writeFile(typeFixturePath, [
-    "import { App, VTerm, type AppLaunchOptions } from 'agents-commander';",
+    "import { App, VTerm, type AppConfig, type AppLaunchOptions, type CodexMicroAction } from 'agents-commander';",
     'const options: AppLaunchOptions = { conference: true, panels: 2 };',
+    "const microAction: CodexMicroAction = 'approve';",
+    "const legacyConfig: AppConfig = { theme: 'classic-blue', panelCount: 2, panelDensity: 'auto', showHidden: false, sortBy: 'name', sortAscending: true, watchDebounce: 100, editor: { tabSize: 2, wordWrap: true }, agents: {}, agentProfiles: [] };",
     'const AppConstructor: typeof App = App;',
     'const terminal = new VTerm(80, 24);',
-    'void [options, AppConstructor, terminal];',
+    'void [options, microAction, legacyConfig, AppConstructor, terminal];',
     '',
   ].join('\n'));
   await fs.writeFile(typeConfigPath, JSON.stringify({
@@ -228,6 +244,7 @@ try {
     path.join(installedRoot, 'dist', 'index.d.ts'),
     path.join(installedRoot, 'dist', 'agents', 'pty-helper.py'),
     path.join(installedRoot, 'dist', 'demo', 'demo-agent.js'),
+    path.join(installedRoot, 'docs', 'codex-micro.md'),
   ]) {
     assert.equal((await fs.lstat(requiredAsset)).isFile(), true, `${requiredAsset} is not a file`);
   }

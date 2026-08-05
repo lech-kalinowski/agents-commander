@@ -25,6 +25,8 @@ interface CliOptions {
   doctor?: boolean;
   conference?: boolean;
   demo?: boolean;
+  codexMicro?: boolean;
+  codexMicroTest?: boolean;
 }
 
 interface CliApp {
@@ -44,12 +46,23 @@ program
   .option('--doctor', 'Run startup diagnostics and exit')
   .option('--conference', 'Use presentation-safe Conference Mode defaults')
   .option('--demo', 'Launch the deterministic offline conference demo')
+  .option('--codex-micro', 'Enable Codex Micro keyboard controls for this launch')
+  .option('--no-codex-micro', 'Disable Codex Micro keyboard controls for this launch')
+  .option('--codex-micro-test', 'Enable Codex Micro controls and open the input checklist')
   .action(async (directory: string, options: CliOptions, command: Command) => {
     const requestedWorkingDir = path.resolve(directory);
 
     if (options.doctor) {
       try {
-        const report = await runDoctor({ workingDirectory: requestedWorkingDir });
+        const { loadConfig } = await import('../src/config/loader.js');
+        const config = loadConfig();
+        if (command.getOptionValueSource('codexMicro') === 'cli') {
+          config.hardware.codexMicro.enabled = options.codexMicro === true;
+        }
+        if (options.codexMicroTest) {
+          config.hardware.codexMicro.enabled = true;
+        }
+        const report = await runDoctor({ workingDirectory: requestedWorkingDir, config });
         process.stdout.write(`${formatDoctorReport(report)}\n`);
         process.exitCode = doctorExitCode(report);
       } catch (error) {
@@ -78,6 +91,9 @@ program
       const showHidden = command.getOptionValueSource('showHidden') === 'cli'
         ? options.showHidden
         : undefined;
+      const codexMicro = command.getOptionValueSource('codexMicro') === 'cli'
+        ? options.codexMicro
+        : undefined;
 
       let workingDir = requestedWorkingDir;
       if (options.demo) {
@@ -96,6 +112,8 @@ program
         showHidden,
         conference: options.conference,
         demo: options.demo,
+        codexMicro,
+        codexMicroTest: options.codexMicroTest,
         onShutdown: demoWorkspace?.cleanup,
         onSignalOwnership: demoWorkspace
           ? () => {

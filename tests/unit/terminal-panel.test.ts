@@ -69,7 +69,7 @@ describe('TerminalPanel input isolation', () => {
     while (isDialogActive()) leaveDialog();
   });
 
-  function createInputHarness() {
+  function createInputHarness(microEnabled = false) {
     const outputBox = new EventEmitter() as any;
     outputBox.height = 10;
     outputBox.aleft = 0;
@@ -80,17 +80,26 @@ describe('TerminalPanel input isolation', () => {
     outputBox.getScroll = vi.fn(() => 0);
     const box = new EventEmitter() as any;
     const stdin = { writable: true, write: vi.fn() };
-    const panel: any = {
+    const panel: any = Object.assign(Object.create(TerminalPanel.prototype), {
       outputBox,
       box,
       proc: { stdin },
       screen: { render: vi.fn() },
+      config: {
+        hardware: {
+          codexMicro: { enabled: microEnabled, decisionControls: true },
+        },
+      },
       vterm: { mouseEnabled: true },
       userScrolled: false,
+      _inputGeneration: 0n,
+      _outputObservedInputGeneration: 0n,
+      lastInputAt: Number.NEGATIVE_INFINITY,
       onMouseClick: vi.fn(),
       onUserInput: vi.fn(),
-    };
+    });
     panel.keyToAnsi = TerminalPanel.prototype['keyToAnsi'];
+    panel.recordUserInput = TerminalPanel.prototype['recordUserInput'];
     TerminalPanel.prototype['setupKeys'].call(panel);
     TerminalPanel.prototype['setupMouse'].call(panel);
     return { panel, box, outputBox, stdin };
@@ -117,6 +126,65 @@ describe('TerminalPanel input isolation', () => {
     leaveDialog();
     outputBox.emit('mouse', { action: 'mousedown', button: 'left', x: 2, y: 2 });
     expect(stdin.write).toHaveBeenLastCalledWith('\x1b[<0;3;3M');
+    expect(panel.inputGeneration).toBe(2n);
+    expect(panel.inputSynchronized).toBe(false);
+  });
+
+  it('requires processed PTY output and a quiet interval after every input write', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-05T10:00:00Z'));
+    try {
+      const { panel, outputBox } = createInputHarness();
+      panel.vterm.write = vi.fn();
+      panel.feedScannerFromVTerm = vi.fn();
+      panel.scheduleRender = vi.fn();
+
+      outputBox.emit('keypress', undefined, { name: 'down', full: 'down' });
+      expect(panel.inputGeneration).toBe(1n);
+      expect(panel.inputSynchronized).toBe(false);
+
+      panel.handleProcessData(panel.proc, new StringDecoder(), Buffer.from('\x1b[B'));
+      expect(panel.inputSynchronized).toBe(false);
+      vi.advanceTimersByTime(75);
+      expect(panel.inputSynchronized).toBe(true);
+
+      expect(panel.sendInput('Commander write')).toBe(true);
+      expect(panel.inputGeneration).toBe(2n);
+      expect(panel.inputSynchronized).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reserves Codex Micro chords only while the integration is enabled', () => {
+    const cases = [
+      [{ name: 'pageup', full: 'C-S-pageup', ctrl: true, shift: true }, '\x1b[5;6~'],
+      [{ name: 'pagedown', full: 'C-S-pagedown', ctrl: true, shift: true }, '\x1b[6;6~'],
+      [{ name: 'home', full: 'C-S-home', ctrl: true, shift: true }, '\x1b[1;6H'],
+      [{ name: 'end', full: 'C-S-end', ctrl: true, shift: true }, '\x1b[1;6F'],
+      [{ name: 'insert', full: 'C-S-insert', ctrl: true, shift: true }, '\x1b[2;6~'],
+      [{ name: 'f11', full: 'C-S-f11', ctrl: true, shift: true }, '\x1b[23;6~'],
+    ] as const;
+
+    const disabled = createInputHarness(false);
+    for (const [key] of cases) disabled.outputBox.emit('keypress', undefined, key);
+    expect(disabled.stdin.write.mock.calls).toEqual(cases.map(([, bytes]) => [bytes]));
+
+    const enabled = createInputHarness(true);
+    for (const [key] of cases) enabled.outputBox.emit('keypress', undefined, key);
+    expect(enabled.stdin.write).not.toHaveBeenCalled();
+    expect(enabled.panel.onUserInput).not.toHaveBeenCalled();
+  });
+
+  it('returns a detached visible-grid snapshot for guarded decisions', () => {
+    const lines = ['Allow command?', '> 1. Yes, once', '  2. No'];
+    const panel: any = Object.assign(Object.create(TerminalPanel.prototype), {
+      vterm: { getGridPlainLines: vi.fn(() => lines) },
+    });
+
+    const snapshot = panel.getVisibleGridLines();
+    expect(snapshot).toEqual(lines);
+    expect(snapshot).not.toBe(lines);
   });
 });
 

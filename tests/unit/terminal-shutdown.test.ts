@@ -194,6 +194,9 @@ describe('TerminalPanel checked input', () => {
     const write = vi.fn(() => false);
     const panel: any = Object.create(TerminalPanel.prototype);
     panel.agentName = 'Test Agent';
+    panel._inputGeneration = 0n;
+    panel._outputObservedInputGeneration = 0n;
+    panel.lastInputAt = Number.NEGATIVE_INFINITY;
     panel.proc = {
       stdin: {
         writable: true,
@@ -214,6 +217,9 @@ describe('TerminalPanel checked input', () => {
   it('returns false when stdin throws synchronously', () => {
     const panel: any = Object.create(TerminalPanel.prototype);
     panel.agentName = 'Test Agent';
+    panel._inputGeneration = 0n;
+    panel._outputObservedInputGeneration = 0n;
+    panel.lastInputAt = Number.NEGATIVE_INFINITY;
     panel.proc = {
       stdin: {
         writable: true,

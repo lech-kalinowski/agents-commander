@@ -220,6 +220,33 @@ describe('LayoutManager responsive workspace', () => {
     expect(layout.pageIndex).toBe(0);
   });
 
+  it('supports physical navigation by panel, page, and visible slot', async () => {
+    const { layout } = createLayout();
+    await layout.initialize('/repo', 5, 2);
+
+    expect(layout.focusPanelOffset(-1)).toBe(true);
+    expect(layout.activePanelId).toBe(4);
+    expect(layout.visiblePanelIds).toEqual([4]);
+
+    expect(layout.focusPageOffset(1)).toBe(true);
+    expect(layout.activePanelId).toBe(0);
+    expect(layout.visiblePanelIds).toEqual([0, 1]);
+
+    expect(layout.focusVisibleSlot(2)).toBe(true);
+    expect(layout.activePanelId).toBe(1);
+    expect(layout.focusPageOffset(1)).toBe(true);
+    expect(layout.activePanelId).toBe(3);
+    expect(layout.visiblePanelIds).toEqual([2, 3]);
+
+    expect(layout.focusPageOffset(1)).toBe(true);
+    expect(layout.activePanelId).toBe(4);
+    expect(layout.visiblePanelIds).toEqual([4]);
+    expect(layout.focusVisibleSlot(2)).toBe(false);
+    expect(layout.activePanelId).toBe(4);
+    expect(layout.focusPanelOffset(1)).toBe(true);
+    expect(layout.activePanelId).toBe(0);
+  });
+
   it('expands the visible auto-density page on resize without touching workspace identity', async () => {
     const { layout, screen } = createLayout(80, 24);
     await layout.initialize('/repo', 8, 'auto');

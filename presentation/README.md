@@ -47,6 +47,21 @@ node dist/bin/agents-commander.js --demo
 The offline demo seeds two bundled local demo roles and a deterministic routed
 handoff. It requires no network access, API key, or external agent CLI.
 
+For the optional experimental Codex Micro segment, program the 13 keyboard-HID
+shortcuts in Work Louder Input and complete the checklist on the presentation
+computer before opening the audience-facing run:
+
+```bash
+node dist/bin/agents-commander.js --codex-micro-test .
+node dist/bin/agents-commander.js --conference --codex-micro .
+```
+
+Conference and Demo modes do not enable the controller automatically. Prefer a
+wired USB-C connection on stage, keep a normal keyboard ready, and do not claim
+native device detection or RGB control; the current integration verifies
+keyboard shortcuts only. See [the Codex Micro rehearsal guide](../docs/codex-micro.md)
+for the mapping and rehearsal.
+
 ## On-stage recovery
 
 - `F12` opens routed activity; `Shift+F12` opens the protocol guide.
@@ -57,6 +72,8 @@ handoff. It requires no network access, API key, or external agent CLI.
 - `Ctrl+K` stops the active session; `F10` exits and cleans up agent processes.
 - If any external agent or conference network is unreliable, switch to
   `--demo` and continue with the same protocol story.
+- If Codex Micro input is unreliable, disconnect it and continue with the
+  documented keyboard shortcuts; no agent session depends on the device.
 
 ## Deck quality checks
 

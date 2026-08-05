@@ -377,6 +377,44 @@ These are file-panel actions. On terminal panels they pass through to the runnin
 | `Ctrl+R` | Refresh all panels |
 | `Ctrl+L` | View application logs |
 
+## Codex Micro controls (experimental)
+
+Agents Commander can use a Codex Micro as a keyboard HID controller. The integration is opt-in: program the controls in **Work Louder Input** to emit the exact shortcuts below, then start Commander with `--codex-micro`. Because the device sends ordinary keyboard events, the same setup works over Bluetooth or USB-C without a device-specific runtime dependency.
+
+| Work Louder Input shortcut | Agents Commander action |
+|-----|--------|
+| `Ctrl+Shift+PageUp` | Focus previous panel |
+| `Ctrl+Shift+PageDown` | Focus next panel |
+| `Ctrl+Shift+Home` | Show previous panel page, preserving the visible slot |
+| `Ctrl+Shift+End` | Show next panel page, preserving the visible slot |
+| `Ctrl+Shift+F5` | Focus visible slot 1 |
+| `Ctrl+Shift+F6` | Focus visible slot 2 |
+| `Ctrl+Shift+F7` | Focus visible slot 3 |
+| `Ctrl+Shift+F8` | Focus visible slot 4 |
+| `Ctrl+Shift+F9` | Open the panel navigator |
+| `Ctrl+Shift+F10` | Open routed-message Activity |
+| `Ctrl+Shift+F11` | Guarded approval of the currently selected one-time Codex choice |
+| `Ctrl+Shift+F12` | Guarded rejection of the currently selected Codex choice |
+| `Ctrl+Shift+Insert` | Open the Codex Micro control test overlay |
+
+Run the interactive checklist before relying on the controller:
+
+```bash
+agents-commander --codex-micro-test .
+```
+
+For normal opt-in operation:
+
+```bash
+agents-commander --codex-micro .
+```
+
+`--codex-micro-test` enables the controls for that run and opens the checklist. `--no-codex-micro` explicitly disables them. `--conference` and `--demo` do **not** enable Codex Micro automatically.
+
+Approval and rejection remain human-confirmed, fail-closed operations. They only submit when the active session is Codex and the currently selected prompt option still matches the requested one-time action; they never choose a persistent "always allow" option.
+
+For the stage, prefer a wired USB-C connection and keep the normal keyboard shortcuts as the fallback. This first version does not identify a physical Codex Micro, control its lighting, or use a native device/RGB API, so the checklist proves shortcut delivery rather than device identity. Physical testing on the presentation computer is still required. See [Codex Micro setup and rehearsal](docs/codex-micro.md).
+
 ## Configuration
 
 Create `~/.agents-commander/config.json`:
@@ -393,6 +431,12 @@ Create `~/.agents-commander/config.json`:
   "editor": {
     "tabSize": 2,
     "wordWrap": true
+  },
+  "hardware": {
+    "codexMicro": {
+      "enabled": false,
+      "decisionControls": true
+    }
   },
   "agents": {
     "claude": {
@@ -415,6 +459,8 @@ Create `~/.agents-commander/config.json`:
 ```
 
 `panelCount` is the initial active workspace size (`1` to `100`), matching `--panels`. `panelDensity` is the visible-page policy (`"auto"`, `2`, `3`, or `4`), matching `--density`. The two settings are independent.
+
+`hardware.codexMicro.enabled` opts into the keyboard-HID controls. `hardware.codexMicro.decisionControls` separately enables the guarded approval and rejection actions; leave it `false` if the physical controller should be navigation-only.
 
 `agentProfiles` adds named launch choices without removing the built-in profiles. OpenCode models use the full `provider/model` form; `agent` is optional, and `configPath` must be absolute. Keep provider credentials in your normal OpenCode authentication or environment setup rather than committing them to the repository.
 

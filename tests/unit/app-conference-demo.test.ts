@@ -325,6 +325,15 @@ describe('App conference and offline demo integration', () => {
       modeLabel: 'OFFLINE DEMO',
       warning: undefined,
     });
+
+    app.config = { hardware: { codexMicro: { enabled: true } } };
+    expect(app.conferenceStatus()).toEqual({
+      modeLabel: 'OFFLINE DEMO + MICRO',
+      warning: undefined,
+    });
+
+    app.launch = { conference: false, demo: false };
+    expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO' });
   });
 
   it('runs owned launch cleanup exactly once before exiting', async () => {

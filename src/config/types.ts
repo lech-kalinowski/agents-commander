@@ -38,6 +38,17 @@ export interface AgentCommandConfig {
   env: Record<string, string>;
 }
 
+export interface CodexMicroConfig {
+  /** Enable the optional keyboard-HID control surface integration. */
+  enabled: boolean;
+  /** Allow guarded approve/reject controls for active Codex prompts. */
+  decisionControls: boolean;
+}
+
+export interface HardwareConfig {
+  codexMicro: CodexMicroConfig;
+}
+
 export interface AppConfig {
   theme: string;
   /** Panels retained in the active workspace, independent of view density. */
@@ -53,4 +64,11 @@ export interface AppConfig {
   /** Named launch profiles. Legacy `agents` entries remain adapter-level defaults. */
   agentProfiles: AgentProfile[];
   orchestration?: Partial<OrchestrationConfig>;
+  /** Optional for backwards compatibility with pre-hardware API consumers. */
+  hardware?: HardwareConfig;
+}
+
+/** Fully normalized runtime configuration returned by the config loader. */
+export interface NormalizedAppConfig extends AppConfig {
+  hardware: HardwareConfig;
 }

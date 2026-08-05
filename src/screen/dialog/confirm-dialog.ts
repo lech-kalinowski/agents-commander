@@ -111,15 +111,21 @@ export function showConfirmDialog(
     const finish = (result: boolean) => {
       if (resolved) return;
       resolved = true;
-      try {
-        unregisterCancellation();
-        leaveDialog(screen);
-        unbindResize();
-        dialog.destroy();
-        screen.render();
-      } finally {
-        resolve(result);
-      }
+      // Blessed emits a CR twice: first as synthetic `enter`, then as the
+      // original `return`. Keep the modal shield and focus in place until the
+      // complete synchronous key dispatch unwinds, otherwise the second event
+      // can leak into the terminal restored beneath this dialog.
+      queueMicrotask(() => {
+        try {
+          unregisterCancellation();
+          leaveDialog(screen);
+          unbindResize();
+          dialog.destroy();
+          screen.render();
+        } finally {
+          resolve(result);
+        }
+      });
     };
     unregisterCancellation = registerDialogCancellation(screen, () => finish(false));
 
@@ -133,7 +139,7 @@ export function showConfirmDialog(
 
     dialog.key(['y', 'Y'], () => finish(true));
     dialog.key(['n', 'N', 'escape'], () => finish(false));
-    dialog.key(['enter'], () => finish(selected));
+    dialog.key(['enter', 'return'], () => finish(selected));
 
     dialog.focus();
     screen.render();

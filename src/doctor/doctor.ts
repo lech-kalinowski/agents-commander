@@ -166,6 +166,16 @@ export async function runDoctor(options: RunDoctorOptions): Promise<DoctorReport
     rows.push(row('terminal-size', 'Terminal size', 'pass', `${columns}x${terminalRows}`));
   }
 
+  if (config.hardware?.codexMicro.enabled) {
+    rows.push(row(
+      'codex-micro',
+      'Codex Micro',
+      'warn',
+      'Keyboard-HID controls enabled; device identity cannot be verified',
+      'Run agents-commander --codex-micro-test and press every mapped control.',
+    ));
+  }
+
   const pythonPath = resolveExecutable('python3');
   if (!pythonPath || !path.isAbsolute(pythonPath)) {
     rows.push(row('python', 'Python 3', 'fail', 'python3 executable was not found'));

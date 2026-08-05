@@ -21,6 +21,10 @@ import {
 import { showToast } from '../screen/toast.js';
 import { logger } from '../utils/logger.js';
 import blessed from 'blessed';
+import {
+  detectCodexDecision,
+  type CodexDecisionAction,
+} from '../hardware/codex-decision.js';
 
 interface TaskSourceRef {
   panel: number;
@@ -114,6 +118,18 @@ export type TaskTargetExpectation =
 export interface PreparedTemplateTask {
   content: string;
   bindProtocolCapability: boolean;
+}
+
+export interface GuardedCodexDecision {
+  action: CodexDecisionAction;
+  /** Exact managed session confirmed by the user. */
+  sessionId: string;
+  /** Exact PTY generation displayed during confirmation. */
+  sessionGeneration: number;
+  /** All PTY input writes captured before confirmation. */
+  inputGeneration: bigint;
+  /** SHA-256 fingerprint of the complete visible grid during confirmation. */
+  fingerprint: string;
 }
 
 const CLAUDE_DIRECT_TYPE_MAX_CHARS = 320;
@@ -892,6 +908,38 @@ export class Orchestrator {
       this.isManagedTaskTargetCurrent(target)
       && tp.sendInput(`${normalized.text}${submit ? '\r' : ''}`)
     ));
+  }
+
+  /**
+   * Submit Enter to an already-selected Codex decision only if the exact
+   * session and complete visible prompt remain unchanged inside its input lane.
+   * This never navigates options and never sends an affirmative answer string.
+   */
+  async submitGuardedCodexDecision(
+    tp: TerminalPanel,
+    expected: GuardedCodexDecision,
+  ): Promise<boolean> {
+    if (
+      !tp.isRunning
+      || tp.sessionGeneration !== expected.sessionGeneration
+      || !tp.inputSynchronized
+      || tp.inputGeneration !== expected.inputGeneration
+    ) return false;
+    const target = this.captureManagedTaskTarget(tp.panelIndex, tp, 'codex');
+    if (!target || target.sessionId !== expected.sessionId) return false;
+
+    return this.withSessionInputLane(target, () => {
+      if (
+        !this.isManagedTaskTargetCurrent(target)
+        || !tp.isRunning
+        || tp.sessionGeneration !== expected.sessionGeneration
+        || !tp.inputSynchronized
+        || tp.inputGeneration !== expected.inputGeneration
+      ) return false;
+
+      const detected = detectCodexDecision(tp.getVisibleGridLines(), expected.action);
+      return detected?.fingerprint === expected.fingerprint && tp.sendInput('\r');
+    });
   }
 
   /**

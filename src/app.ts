@@ -1,6 +1,6 @@
 import blessed from 'blessed';
 import path from 'node:path';
-import type { AppConfig, Theme } from './config/types.js';
+import type { NormalizedAppConfig, Theme } from './config/types.js';
 import { getTheme } from './config/themes.js';
 import { loadConfig } from './config/loader.js';
 import {
@@ -65,6 +65,18 @@ import {
 import { buildVimLaunchSpec, resolveCtrlGAction } from './utils/shortcut-routing.js';
 import { formatUserError, sanitizeUserText } from './utils/user-facing-errors.js';
 import type { PanelDensity } from './panel-limits.js';
+import {
+  CODEX_MICRO_BINDINGS,
+  type CodexMicroAction,
+} from './hardware/codex-micro.js';
+import {
+  detectCodexDecision,
+  type CodexDecisionAction,
+} from './hardware/codex-decision.js';
+import {
+  showCodexMicroTestDialog,
+  type CodexMicroTestDialogHandle,
+} from './screen/dialog/codex-micro-test-dialog.js';
 
 const RECOMMENDED_CONFERENCE_COLUMNS = 100;
 const RECOMMENDED_CONFERENCE_ROWS = 24;
@@ -76,7 +88,7 @@ export interface AppLaunchOptions extends ExplicitLaunchOptions {
 
 export class App {
   private screen!: blessed.Widgets.Screen;
-  private config: AppConfig;
+  private config: NormalizedAppConfig;
   private theme: Theme;
   private layout!: LayoutManager;
   private agentManager: AgentManager;
@@ -96,6 +108,7 @@ export class App {
   private demoPanelRoles = new Map<number, DemoAgentRole>();
   private demoRollbackPromise: Promise<void> | null = null;
   private activityDialog: ActivityDialogHandle | null = null;
+  private codexMicroTestDialog: CodexMicroTestDialogHandle | null = null;
   private unsubscribeAgentLifecycle: (() => void) | null = null;
   private watcherStarted = false;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -243,6 +256,9 @@ export class App {
     if (!this.disposalStarted && this.launch.demo) {
       await this.offerOfflineDemo();
     }
+    if (!this.disposalStarted && this.launch.codexMicroTest) {
+      this.openCodexMicroTest(false);
+    }
   }
 
   // ── Menu actions ──────────────────────────────────────────────
@@ -258,6 +274,142 @@ export class App {
       (limit) => this.orchestrator.getRecentActivity(limit),
     );
     if (dialog) this.activityDialog = dialog;
+  }
+
+  private openCodexMicroTest(markHardwareAction = true): void {
+    this.codexMicroTestDialog = showCodexMicroTestDialog(this.screen, this.theme);
+    if (markHardwareAction) {
+      this.codexMicroTestDialog.recordAction('open-test-overlay');
+    }
+  }
+
+  private currentCodexDecision(action: CodexDecisionAction): {
+    terminal: TerminalPanel;
+    sessionId: string;
+    sessionGeneration: number;
+    inputGeneration: bigint;
+    fingerprint: string;
+    selectedLabel: string;
+  } | null {
+    const terminal = this.layout.activeTerminalPanel;
+    if (!terminal?.isRunning) return null;
+    if (!terminal.inputSynchronized) return null;
+    if (this.agentManager.getAgentType(terminal.panelIndex) !== 'codex') return null;
+    const sessionId = this.agentManager.getAgentSessionId(terminal.panelIndex);
+    if (!sessionId) return null;
+    const inputGeneration = terminal.inputGeneration;
+    const detected = detectCodexDecision(terminal.getVisibleGridLines(), action);
+    if (
+      !detected
+      || !terminal.inputSynchronized
+      || terminal.inputGeneration !== inputGeneration
+    ) return null;
+    return {
+      terminal,
+      sessionId,
+      sessionGeneration: terminal.sessionGeneration,
+      inputGeneration,
+      fingerprint: detected.fingerprint,
+      selectedLabel: detected.selectedLabel,
+    };
+  }
+
+  private async actionCodexMicroDecision(action: CodexDecisionAction): Promise<void> {
+    if (!this.config.hardware?.codexMicro.decisionControls) {
+      showErrorToast(this.screen, 'Codex Micro decision controls are disabled in configuration');
+      return;
+    }
+
+    const expected = this.currentCodexDecision(action);
+    if (!expected) {
+      showErrorToast(
+        this.screen,
+        action === 'approve'
+          ? 'Approve once requires a selected one-time option in the active managed Codex prompt'
+          : 'Reject requires a selected reject option in the active managed Codex prompt',
+      );
+      return;
+    }
+
+    const confirmed = await showConfirmDialog(
+      this.screen,
+      this.theme,
+      action === 'approve' ? 'Codex Micro — Approve Once' : 'Codex Micro — Reject',
+      `Submit the currently selected Codex option “${expected.selectedLabel}”? Commander will send Enter only if the complete prompt is still unchanged.`,
+    );
+    if (!confirmed || this.disposalStarted) return;
+
+    const current = this.currentCodexDecision(action);
+    if (
+      !current
+      || current.terminal !== expected.terminal
+      || current.sessionId !== expected.sessionId
+      || current.sessionGeneration !== expected.sessionGeneration
+      || current.inputGeneration !== expected.inputGeneration
+      || current.fingerprint !== expected.fingerprint
+    ) {
+      showErrorToast(this.screen, 'Codex prompt changed during confirmation; no input was sent');
+      return;
+    }
+
+    const submitted = await this.orchestrator.submitGuardedCodexDecision(
+      expected.terminal,
+      {
+        action,
+        sessionId: expected.sessionId,
+        sessionGeneration: expected.sessionGeneration,
+        inputGeneration: expected.inputGeneration,
+        fingerprint: expected.fingerprint,
+      },
+    );
+    if (!submitted) {
+      showErrorToast(this.screen, 'Codex prompt or session changed; no input was sent');
+      return;
+    }
+    showToast(
+      this.screen,
+      action === 'approve' ? 'Submitted selected one-time approval' : 'Submitted selected rejection',
+    );
+  }
+
+  private runCodexMicroAction(action: CodexMicroAction): void | Promise<void> {
+    switch (action) {
+      case 'previous-panel':
+        this.layout.focusPanelOffset(-1);
+        break;
+      case 'next-panel':
+        this.layout.focusPanelOffset(1);
+        break;
+      case 'previous-page':
+        this.layout.focusPageOffset(-1);
+        break;
+      case 'next-page':
+        this.layout.focusPageOffset(1);
+        break;
+      case 'focus-slot-1':
+      case 'focus-slot-2':
+      case 'focus-slot-3':
+      case 'focus-slot-4': {
+        const slot = Number(action.at(-1));
+        if (!this.layout.focusVisibleSlot(slot)) {
+          showErrorToast(this.screen, `Visible panel slot ${slot} is unavailable`);
+        }
+        break;
+      }
+      case 'open-navigator':
+        return this.actionNavigatePanel();
+      case 'open-activity':
+        this.actionActivity();
+        return;
+      case 'approve':
+      case 'reject':
+        return this.actionCodexMicroDecision(action);
+      case 'open-test-overlay':
+        this.openCodexMicroTest();
+        return;
+    }
+    this.updateStatus();
+    this.screen.render();
   }
 
   private assertLaunchAllowed(action: string): void {
@@ -1286,6 +1438,22 @@ export class App {
     // Shift+F12 - protocol guide (F12 itself is reserved for Activity).
     screen.key(['S-f12'], guard(() => showProtocolGuide(screen, this.theme)));
 
+    // Codex Micro is a generic keyboard-HID surface. Its modified chords are
+    // reserved and dispatched only when explicitly enabled. While the test
+    // overlay is open, controls are recorded without executing their actions.
+    if (this.config?.hardware?.codexMicro.enabled) {
+      for (const binding of CODEX_MICRO_BINDINGS) {
+        const runAction = guard(() => this.runCodexMicroAction(binding.action));
+        screen.key([binding.key], () => {
+          if (this.codexMicroTestDialog?.isOpen()) {
+            this.codexMicroTestDialog.recordAction(binding.action);
+            return;
+          }
+          runAction();
+        });
+      }
+    }
+
     // Ctrl+O - Orchestrate; in offline-demo mode it also provides a safe
     // retry/replay path when neither bundled role is running.
     screen.key(['C-o'], guard(() => this.actionOrchestrateOrDemo()));
@@ -1383,14 +1551,19 @@ export class App {
   }
 
   private conferenceStatus(): { modeLabel?: string; warning?: string } {
-    if (!this.launch.conference) return {};
+    const microEnabled = this.config?.hardware?.codexMicro.enabled === true;
+    if (!this.launch.conference) {
+      return microEnabled ? { modeLabel: 'MICRO' } : {};
+    }
     const columns = typeof this.screen.width === 'number' ? this.screen.width : 80;
     const rows = typeof this.screen.height === 'number' ? this.screen.height : 24;
     const warning = columns < RECOMMENDED_CONFERENCE_COLUMNS || rows < RECOMMENDED_CONFERENCE_ROWS
       ? `screen ${columns}x${rows}; use ${RECOMMENDED_CONFERENCE_COLUMNS}x${RECOMMENDED_CONFERENCE_ROWS}+`
       : undefined;
     return {
-      modeLabel: this.launch.demo ? 'OFFLINE DEMO' : 'CONFERENCE',
+      modeLabel: [this.launch.demo ? 'OFFLINE DEMO' : 'CONFERENCE', microEnabled ? 'MICRO' : '']
+        .filter(Boolean)
+        .join(' + '),
       warning,
     };
   }
@@ -1503,6 +1676,15 @@ export class App {
           logger.error('Failed to close routed-message activity during disposal', error);
         }
         this.activityDialog = null;
+      }
+      if (this.codexMicroTestDialog) {
+        try {
+          this.codexMicroTestDialog.close();
+        } catch (error) {
+          failures.push(error);
+          logger.error('Failed to close Codex Micro test dialog during disposal', error);
+        }
+        this.codexMicroTestDialog = null;
       }
 
       let managedPanels: TerminalPanel[] = [];

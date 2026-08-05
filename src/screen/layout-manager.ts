@@ -276,12 +276,54 @@ export class LayoutManager {
   }
 
   cyclePanel(): void {
-    if (this.panels.length === 0) return;
+    this.focusPanelOffset(1);
+  }
+
+  /** Focus a workspace neighbour, wrapping at either end. */
+  focusPanelOffset(delta: number): boolean {
+    if (this.panels.length === 0 || !Number.isSafeInteger(delta) || delta === 0) return false;
     const currentIndex = this._activePanelId === null
-      ? -1
+      ? 0
       : this.panels.findIndex((panel) => panel.panelIndex === this._activePanelId);
-    const nextIndex = (Math.max(-1, currentIndex) + 1) % this.panels.length;
+    const baseIndex = currentIndex < 0 ? 0 : currentIndex;
+    const nextIndex = ((baseIndex + delta) % this.panels.length + this.panels.length)
+      % this.panels.length;
     this.setActivePanel(this.panels[nextIndex].panelIndex);
+    return true;
+  }
+
+  /**
+   * Focus the same visible slot on another page, wrapping between pages.
+   * A short final page clamps the slot to its final panel.
+   */
+  focusPageOffset(delta: number): boolean {
+    const { capacity, pageCount, pageIndex, startIndex } = this.currentViewport;
+    if (
+      this.panels.length === 0
+      || pageCount <= 1
+      || !Number.isSafeInteger(delta)
+      || delta === 0
+    ) return false;
+
+    const currentIndex = this._activePanelId === null
+      ? startIndex
+      : this.panels.findIndex((panel) => panel.panelIndex === this._activePanelId);
+    const visibleSlot = Math.max(0, currentIndex - startIndex);
+    const targetPage = ((pageIndex + delta) % pageCount + pageCount) % pageCount;
+    const targetStart = targetPage * capacity;
+    const targetEnd = Math.min(targetStart + capacity, this.panels.length);
+    const targetIndex = Math.min(targetStart + visibleSlot, targetEnd - 1);
+    this.setActivePanel(this.panels[targetIndex].panelIndex);
+    return true;
+  }
+
+  /** Focus a one-based slot on the currently visible page. */
+  focusVisibleSlot(slot: number): boolean {
+    if (!Number.isSafeInteger(slot) || slot < 1) return false;
+    const panelId = this.currentViewport.visiblePanelIds[slot - 1];
+    if (panelId === undefined) return false;
+    this.setActivePanel(panelId);
+    return true;
   }
 
   getPanel(panelId: number): Panel | null {

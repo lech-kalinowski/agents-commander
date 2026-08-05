@@ -29,6 +29,7 @@ import {
 import { sanitizeUserText } from '../utils/user-facing-errors.js';
 import { isPanelNumber } from '../panel-limits.js';
 import { isDialogActive } from '../utils/dialog-state.js';
+import { isCodexMicroKey } from '../hardware/codex-micro.js';
 
 /**
  * Keys reserved for the UI — never forwarded to the agent process.
@@ -49,6 +50,17 @@ const RESERVED_KEYS = new Set([
   'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
   'S-f4', 'S-f12',
 ]);
+
+const MODIFIED_FUNCTION_KEY_CODES: Readonly<Record<string, number>> = Object.freeze({
+  f5: 15,
+  f6: 17,
+  f7: 18,
+  f8: 19,
+  f9: 20,
+  f10: 21,
+  f11: 23,
+  f12: 24,
+});
 
 interface BlessedKeyEvent {
   name?: string;
@@ -88,6 +100,7 @@ interface ChildCloseObserver {
 }
 
 const COMMANDER_ACTIVITY_MS = 10000;
+const TERMINAL_INPUT_SETTLE_MS = 75;
 const TERMINAL_SIGINT_GRACE_MS = 500;
 const TERMINAL_SIGTERM_GRACE_MS = 1000;
 const TERMINAL_SIGKILL_GRACE_MS = 500;
@@ -183,6 +196,11 @@ export class TerminalPanel {
   private _status: 'idle' | 'running' | 'exited' | 'error' = 'idle';
   /** Monotonic identity for successful child-process launch attempts. */
   private _sessionGeneration = 0;
+  /** Monotonic count of all user and Commander writes to the active PTY. */
+  private _inputGeneration = 0n;
+  /** Latest input generation followed by process output applied to VTerm. */
+  private _outputObservedInputGeneration = 0n;
+  private lastInputAt = Number.NEGATIVE_INFINITY;
   private cwd: string;
   // renderTimer/renderPending removed — rendering is now coalesced globally via static scheduleScreenRender
   private scanner: ProtocolScanner | null = null;
@@ -234,6 +252,11 @@ export class TerminalPanel {
   get cols(): number { return this.vterm.colCount; }
   get sessionName(): string | null { return this.agentName || null; }
   get sessionGeneration(): number { return this._sessionGeneration; }
+  get inputGeneration(): bigint { return this._inputGeneration; }
+  get inputSynchronized(): boolean {
+    return this._inputGeneration === this._outputObservedInputGeneration
+      && Date.now() - this.lastInputAt >= TERMINAL_INPUT_SETTLE_MS;
+  }
   get workingDir(): string { return this.cwd; }
 
   constructor(
@@ -342,12 +365,18 @@ export class TerminalPanel {
 
       // Don't forward keys reserved for the UI
       const keyId = key.full || key.name;
-      if (keyId && RESERVED_KEYS.has(keyId)) return;
+      if (
+        keyId
+        && (
+          RESERVED_KEYS.has(keyId)
+          || (this.config.hardware?.codexMicro.enabled && isCodexMicroKey(keyId))
+        )
+      ) return;
 
       const data = this.keyToAnsi(ch, key);
       if (data) {
         this.proc.stdin.write(data);
-        this.onUserInput?.();
+        this.recordUserInput();
       }
     });
   }
@@ -415,7 +444,8 @@ export class TerminalPanel {
 
       // SGR extended mouse format: \x1b[<button;col;row;M/m
       const seq = `\x1b[<${button};${col};${row}${suffix}`;
-      this.proc?.stdin?.write(seq);
+      this.proc.stdin.write(seq);
+      this.recordUserInput();
     });
   }
 
@@ -427,6 +457,10 @@ export class TerminalPanel {
     }
 
     const name: string = key.name || '';
+    const modifier = 1
+      + (key.shift ? 1 : 0)
+      + (key.meta ? 2 : 0)
+      + (key.ctrl ? 4 : 0);
 
     // Enter / Return
     if (name === 'enter' || name === 'return') return '\r';
@@ -435,19 +469,29 @@ export class TerminalPanel {
     // Escape (only if not part of a reserved combo)
     if (name === 'escape') return '\x1b';
     // Delete
-    if (name === 'delete') return '\x1b[3~';
+    if (name === 'delete') return modifier === 1 ? '\x1b[3~' : `\x1b[3;${modifier}~`;
     // Insert
-    if (name === 'insert') return '\x1b[2~';
+    if (name === 'insert') return modifier === 1 ? '\x1b[2~' : `\x1b[2;${modifier}~`;
+    // Page navigation (unmodified variants are intercepted by panel scrolling).
+    if (name === 'pageup') return modifier === 1 ? '\x1b[5~' : `\x1b[5;${modifier}~`;
+    if (name === 'pagedown') return modifier === 1 ? '\x1b[6~' : `\x1b[6;${modifier}~`;
 
     // Arrow keys
-    if (name === 'up') return '\x1b[A';
-    if (name === 'down') return '\x1b[B';
-    if (name === 'right') return '\x1b[C';
-    if (name === 'left') return '\x1b[D';
+    if (name === 'up') return modifier === 1 ? '\x1b[A' : `\x1b[1;${modifier}A`;
+    if (name === 'down') return modifier === 1 ? '\x1b[B' : `\x1b[1;${modifier}B`;
+    if (name === 'right') return modifier === 1 ? '\x1b[C' : `\x1b[1;${modifier}C`;
+    if (name === 'left') return modifier === 1 ? '\x1b[D' : `\x1b[1;${modifier}D`;
 
     // Home / End
-    if (name === 'home') return '\x1b[H';
-    if (name === 'end') return '\x1b[F';
+    if (name === 'home') return modifier === 1 ? '\x1b[H' : `\x1b[1;${modifier}H`;
+    if (name === 'end') return modifier === 1 ? '\x1b[F' : `\x1b[1;${modifier}F`;
+
+    // Modified function keys can be emitted by programmable HID devices.
+    // Unmodified F-keys remain app-reserved before this conversion runs.
+    const functionCode = MODIFIED_FUNCTION_KEY_CODES[name];
+    if (functionCode !== undefined && modifier > 1) {
+      return `\x1b[${functionCode};${modifier}~`;
+    }
 
     // Space (sometimes comes as key.name='space' without ch)
     if (name === 'space') return ' ';
@@ -575,6 +619,9 @@ export class TerminalPanel {
         env: spawnEnv,
       });
       this._sessionGeneration += 1;
+      this._inputGeneration = 0n;
+      this._outputObservedInputGeneration = 0n;
+      this.lastInputAt = Number.NEGATIVE_INFINITY;
       const thisProc = this.proc;
       const resizeControl = this.proc.stdio[3] as Writable | null;
       this.resizeControl = resizeControl;
@@ -706,6 +753,10 @@ export class TerminalPanel {
     const text = this.decodePtyChunk(decoder, data);
     if (!text) return;
     this.vterm.write(text);
+    // Record only after the decoded process output has reached VTerm. Any
+    // later input (including one triggered while scanning this output) gets a
+    // newer generation and remains unsettled.
+    this._outputObservedInputGeneration = this._inputGeneration;
     this.feedScannerFromVTerm(true);
     this.scheduleRender();
   }
@@ -1667,11 +1718,27 @@ export class TerminalPanel {
     if (!stdin?.writable || stdin.destroyed || stdin.writableEnded) return false;
     try {
       stdin.write(text);
+      this.recordTerminalInput();
       return true;
     } catch (error) {
       logger.error(`Unable to send input to terminal session ${this.agentName}`, error);
       return false;
     }
+  }
+
+  private recordUserInput(): void {
+    this.recordTerminalInput();
+    this.onUserInput?.();
+  }
+
+  private recordTerminalInput(): void {
+    this._inputGeneration += 1n;
+    this.lastInputAt = Date.now();
+  }
+
+  /** Detached snapshot of every currently visible physical terminal row. */
+  getVisibleGridLines(): string[] {
+    return [...this.vterm.getGridPlainLines()];
   }
 
   private sendPtyResize(cols: number, rows: number): void {

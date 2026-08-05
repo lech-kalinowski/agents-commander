@@ -147,6 +147,44 @@ describe('Agents Commander Doctor', () => {
     expect(probe).toHaveBeenCalledTimes(2);
   });
 
+  it('explains that keyboard-HID hardware needs the interactive control test', async () => {
+    const root = temporaryDirectory();
+    createInstalledLayout(root);
+    const config = structuredClone(defaultConfig);
+    config.hardware.codexMicro.enabled = true;
+    const probe = vi.fn(async (
+      _command: string,
+      args: readonly string[],
+    ): Promise<ProcessProbeResult> => (
+      args[0] === '--version'
+        ? successfulProbe('Python 3.12.4')
+        : successfulProbe('pty-ok')
+    ));
+
+    const report = await runDoctor({
+      workingDirectory: root,
+      environment: {
+        nodeVersion: '22.19.0',
+        platform: 'darwin',
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        columns: 120,
+        rows: 30,
+      },
+      config,
+      assetLookup: { mode: 'installed', packageRoot: root },
+      resolveExecutable: () => process.execPath,
+      probe,
+    });
+
+    expect(report.rows.find((entry) => entry.id === 'codex-micro')).toMatchObject({
+      status: 'warn',
+      summary: expect.stringContaining('device identity cannot be verified'),
+      detail: expect.stringContaining('--codex-micro-test'),
+    });
+    expect(doctorExitCode(report)).toBe(0);
+  });
+
   it('marks required runtime failures as fatal', async () => {
     const root = temporaryDirectory();
     const report = await runDoctor({

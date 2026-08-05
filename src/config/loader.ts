@@ -1,7 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import type { AgentCommandConfig, AppConfig, OrchestrationConfig } from './types.js';
+import type {
+  AgentCommandConfig,
+  AppConfig,
+  HardwareConfig,
+  NormalizedAppConfig,
+  OrchestrationConfig,
+} from './types.js';
 import { defaultConfig } from './defaults.js';
 import type { AgentProfile, AgentType } from '../agents/types.js';
 import { KNOWN_AGENTS } from '../agents/types.js';
@@ -187,7 +193,23 @@ function normalizeOrchestration(value: unknown): OrchestrationConfig {
   };
 }
 
-function normalizeConfig(value: unknown): AppConfig {
+function normalizeHardware(value: unknown): HardwareConfig {
+  const input = isPlainObject(value) ? value : {};
+  const codexMicro = isPlainObject(input.codexMicro) ? input.codexMicro : {};
+  const defaults = defaultConfig.hardware.codexMicro;
+  return {
+    codexMicro: {
+      enabled: typeof codexMicro.enabled === 'boolean'
+        ? codexMicro.enabled
+        : defaults.enabled,
+      decisionControls: typeof codexMicro.decisionControls === 'boolean'
+        ? codexMicro.decisionControls
+        : defaults.decisionControls,
+    },
+  };
+}
+
+function normalizeConfig(value: unknown): NormalizedAppConfig {
   const input = isPlainObject(value) ? value : {};
   const editor = isPlainObject(input.editor) ? input.editor : {};
   const rawAgents = isPlainObject(input.agents) ? input.agents : {};
@@ -225,10 +247,11 @@ function normalizeConfig(value: unknown): AppConfig {
     agents,
     agentProfiles: normalizeProfiles(input.agentProfiles),
     orchestration: normalizeOrchestration(input.orchestration),
+    hardware: normalizeHardware(input.hardware),
   };
 }
 
-export function loadConfig(): AppConfig {
+export function loadConfig(): NormalizedAppConfig {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       return normalizeConfig(JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8')));

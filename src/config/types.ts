@@ -38,15 +38,27 @@ export interface AgentCommandConfig {
   env: Record<string, string>;
 }
 
+export type CodexMicroInputMode = 'native' | 'keyboard';
+
 export interface CodexMicroConfig {
-  /** Enable the optional keyboard-HID control surface integration. */
+  /** Enable the optional physical control surface integration. */
   enabled: boolean;
+  /** Use the shipping vendor-HID protocol or legacy programmed shortcuts. */
+  inputMode?: CodexMicroInputMode;
   /** Allow guarded approve/reject controls for active Codex prompts. */
   decisionControls: boolean;
 }
 
 export interface HardwareConfig {
   codexMicro: CodexMicroConfig;
+}
+
+export interface NormalizedCodexMicroConfig extends CodexMicroConfig {
+  inputMode: CodexMicroInputMode;
+}
+
+export interface NormalizedHardwareConfig extends HardwareConfig {
+  codexMicro: NormalizedCodexMicroConfig;
 }
 
 export interface AppConfig {
@@ -70,5 +82,5 @@ export interface AppConfig {
 
 /** Fully normalized runtime configuration returned by the config loader. */
 export interface NormalizedAppConfig extends AppConfig {
-  hardware: HardwareConfig;
+  hardware: NormalizedHardwareConfig;
 }

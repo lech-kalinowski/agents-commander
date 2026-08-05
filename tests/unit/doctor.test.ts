@@ -32,25 +32,41 @@ function successfulProbe(stdout: string): ProcessProbeResult {
   };
 }
 
+function unsuccessfulProbe(stdout: string, exitCode = 3): ProcessProbeResult {
+  return {
+    ok: false,
+    exitCode,
+    signal: null,
+    stdout,
+    stderr: '',
+    timedOut: false,
+    truncated: false,
+  };
+}
+
 function createInstalledLayout(root: string): {
   moduleUrl: string;
   helperPath: string;
+  microBridgePath: string;
 } {
   const entryPath = path.join(root, 'dist', 'bin', 'agents-commander.js');
   const helperPath = path.join(root, 'dist', 'agents', 'pty-helper.py');
+  const microBridgePath = path.join(root, 'dist', 'hardware', 'codex-micro-bridge.py');
   const templatesPath = path.join(root, 'dist', 'templates');
   const demoPath = path.join(root, 'dist', 'demo', 'demo-agent.mjs');
   fs.mkdirSync(path.dirname(entryPath), { recursive: true });
   fs.mkdirSync(path.dirname(helperPath), { recursive: true });
+  fs.mkdirSync(path.dirname(microBridgePath), { recursive: true });
   fs.mkdirSync(templatesPath, { recursive: true });
   fs.mkdirSync(path.dirname(demoPath), { recursive: true });
   fs.writeFileSync(entryPath, '');
   fs.writeFileSync(helperPath, '#!/usr/bin/env python3\n');
+  fs.writeFileSync(microBridgePath, '#!/usr/bin/env python3\n');
   fs.writeFileSync(demoPath, '#!/usr/bin/env node\n');
   for (let index = 0; index < 100; index += 1) {
     fs.writeFileSync(path.join(templatesPath, `template-${index}.md`), `# ${index}\n`);
   }
-  return { moduleUrl: pathToFileURL(entryPath).href, helperPath };
+  return { moduleUrl: pathToFileURL(entryPath).href, helperPath, microBridgePath };
 }
 
 afterEach(() => {
@@ -147,11 +163,12 @@ describe('Agents Commander Doctor', () => {
     expect(probe).toHaveBeenCalledTimes(2);
   });
 
-  it('explains that keyboard-HID hardware needs the interactive control test', async () => {
+  it('explains that legacy keyboard fallback needs the interactive control test', async () => {
     const root = temporaryDirectory();
     createInstalledLayout(root);
     const config = structuredClone(defaultConfig);
     config.hardware.codexMicro.enabled = true;
+    config.hardware.codexMicro.inputMode = 'keyboard';
     const probe = vi.fn(async (
       _command: string,
       args: readonly string[],
@@ -179,10 +196,235 @@ describe('Agents Commander Doctor', () => {
 
     expect(report.rows.find((entry) => entry.id === 'codex-micro')).toMatchObject({
       status: 'warn',
-      summary: expect.stringContaining('device identity cannot be verified'),
+      summary: expect.stringContaining('keyboard fallback'),
       detail: expect.stringContaining('--codex-micro-test'),
     });
+    expect(probe).toHaveBeenCalledTimes(2);
     expect(doctorExitCode(report)).toBe(0);
+  });
+
+  it('probes native Codex Micro hardware with bounded output and allowlisted metadata', async () => {
+    const root = temporaryDirectory();
+    const layout = createInstalledLayout(root);
+    const config = structuredClone(defaultConfig);
+    config.hardware.codexMicro.enabled = true;
+    const probe = vi.fn(async (
+      _command: string,
+      args: readonly string[],
+    ): Promise<ProcessProbeResult> => {
+      if (args[0] === '--version') return successfulProbe('Python 3.12.4');
+      if (args[0] === layout.microBridgePath) {
+        return successfulProbe(`${JSON.stringify({
+          version: 1,
+          type: 'probe',
+          status: 'connected',
+          transport: 'usb',
+          serial: 'must-not-appear',
+          device: {
+            firmwareVersion: 'v0.4.1',
+            profileIndex: 0,
+            layerIndex: 1,
+            batteryPercent: 100,
+            charging: true,
+            serial: 'must-not-appear',
+          },
+        })}\n`);
+      }
+      return successfulProbe('pty-ok');
+    });
+
+    const report = await runDoctor({
+      workingDirectory: root,
+      environment: {
+        nodeVersion: '22.19.0',
+        platform: 'darwin',
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        columns: 120,
+        rows: 30,
+      },
+      config,
+      assetLookup: { mode: 'installed', packageRoot: root },
+      resolveExecutable: () => process.execPath,
+      probe,
+    });
+
+    const microRow = report.rows.find((entry) => entry.id === 'codex-micro');
+    expect(microRow).toMatchObject({
+      status: 'pass',
+      summary: 'Connected over USB',
+      detail: 'Firmware v0.4.1; Battery 100% (charging)',
+    });
+    expect(JSON.stringify(microRow)).not.toContain('must-not-appear');
+    expect(probe).toHaveBeenCalledWith(
+      process.execPath,
+      [layout.microBridgePath, '--probe'],
+      { timeoutMs: 3_000, maxOutputBytes: 8 * 1024 },
+    );
+    expect(doctorExitCode(report)).toBe(0);
+  });
+
+  it('reports a missing native device from a valid nonzero probe result', async () => {
+    const root = temporaryDirectory();
+    const layout = createInstalledLayout(root);
+    const config = structuredClone(defaultConfig);
+    config.hardware.codexMicro.enabled = true;
+    const probe = vi.fn(async (
+      _command: string,
+      args: readonly string[],
+    ): Promise<ProcessProbeResult> => {
+      if (args[0] === '--version') return successfulProbe('Python 3.12.4');
+      if (args[0] === layout.microBridgePath) {
+        return unsuccessfulProbe('{"version":1,"type":"probe","status":"absent"}\n');
+      }
+      return successfulProbe('pty-ok');
+    });
+
+    const report = await runDoctor({
+      workingDirectory: root,
+      environment: {
+        nodeVersion: '22.19.0',
+        platform: 'darwin',
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        columns: 120,
+        rows: 30,
+      },
+      config,
+      assetLookup: { mode: 'installed', packageRoot: root },
+      resolveExecutable: () => process.execPath,
+      probe,
+    });
+
+    expect(report.rows.find((entry) => entry.id === 'codex-micro')).toMatchObject({
+      status: 'warn',
+      summary: 'No Codex Micro is connected',
+    });
+    expect(doctorExitCode(report)).toBe(0);
+  });
+
+  it('does not trust a connected record from a probe that exits abnormally', async () => {
+    const root = temporaryDirectory();
+    const layout = createInstalledLayout(root);
+    const config = structuredClone(defaultConfig);
+    config.hardware.codexMicro.enabled = true;
+    const probe = vi.fn(async (
+      _command: string,
+      args: readonly string[],
+    ): Promise<ProcessProbeResult> => {
+      if (args[0] === '--version') return successfulProbe('Python 3.12.4');
+      if (args[0] === layout.microBridgePath) {
+        return unsuccessfulProbe(
+          '{"version":1,"type":"probe","status":"connected","transport":"usb"}\n',
+          5,
+        );
+      }
+      return successfulProbe('pty-ok');
+    });
+
+    const report = await runDoctor({
+      workingDirectory: root,
+      environment: {
+        nodeVersion: '22.19.0',
+        platform: 'darwin',
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        columns: 120,
+        rows: 30,
+      },
+      config,
+      assetLookup: { mode: 'installed', packageRoot: root },
+      resolveExecutable: () => process.execPath,
+      probe,
+    });
+
+    expect(report.rows.find((entry) => entry.id === 'codex-micro')).toMatchObject({
+      status: 'warn',
+      summary: 'Native device probe ended unexpectedly',
+      detail: expect.stringContaining('code 5'),
+    });
+    expect(doctorExitCode(report)).toBe(0);
+  });
+
+  it('turns a native permission denial into actionable Input Monitoring guidance', async () => {
+    const root = temporaryDirectory();
+    const layout = createInstalledLayout(root);
+    const config = structuredClone(defaultConfig);
+    config.hardware.codexMicro.enabled = true;
+    const probe = vi.fn(async (
+      _command: string,
+      args: readonly string[],
+    ): Promise<ProcessProbeResult> => {
+      if (args[0] === '--version') return successfulProbe('Python 3.12.4');
+      if (args[0] === layout.microBridgePath) {
+        return unsuccessfulProbe(
+          '{"version":1,"type":"probe","status":"unavailable","reason":"permission_denied"}\n',
+          4,
+        );
+      }
+      return successfulProbe('pty-ok');
+    });
+
+    const report = await runDoctor({
+      workingDirectory: root,
+      environment: {
+        nodeVersion: '22.19.0',
+        platform: 'darwin',
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        columns: 120,
+        rows: 30,
+      },
+      config,
+      assetLookup: { mode: 'installed', packageRoot: root },
+      resolveExecutable: () => process.execPath,
+      probe,
+    });
+
+    expect(report.rows.find((entry) => entry.id === 'codex-micro')).toMatchObject({
+      status: 'warn',
+      summary: 'Input Monitoring permission is required',
+      detail: expect.stringContaining('Privacy & Security > Input Monitoring'),
+    });
+    expect(doctorExitCode(report)).toBe(0);
+  });
+
+  it('does not run the native probe outside macOS', async () => {
+    const root = temporaryDirectory();
+    createInstalledLayout(root);
+    const config = structuredClone(defaultConfig);
+    config.hardware.codexMicro.enabled = true;
+    const probe = vi.fn(async (
+      _command: string,
+      args: readonly string[],
+    ): Promise<ProcessProbeResult> => (
+      args[0] === '--version'
+        ? successfulProbe('Python 3.12.4')
+        : successfulProbe('pty-ok')
+    ));
+
+    const report = await runDoctor({
+      workingDirectory: root,
+      environment: {
+        nodeVersion: '22.19.0',
+        platform: 'linux',
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        columns: 120,
+        rows: 30,
+      },
+      config,
+      assetLookup: { mode: 'installed', packageRoot: root },
+      resolveExecutable: () => process.execPath,
+      probe,
+    });
+
+    expect(report.rows.find((entry) => entry.id === 'codex-micro')).toMatchObject({
+      status: 'warn',
+      summary: 'Native device input currently requires macOS',
+      detail: expect.stringContaining('--codex-micro-keyboard'),
+    });
+    expect(probe).toHaveBeenCalledTimes(2);
   });
 
   it('marks required runtime failures as fatal', async () => {

@@ -21,19 +21,21 @@
     "dist/**/*.md",
     "docs/codex-micro.md",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "README.md"
   ],
   "scripts": {
-    "copy:runtime-assets": "mkdir -p dist/agents dist/templates dist/demo && cp src/agents/pty-helper.py dist/agents/ && cp src/templates/builtin/*.md dist/templates/ && cp src/demo/demo-agent.js dist/demo/",
+    "copy:runtime-assets": "mkdir -p dist/agents dist/templates dist/demo dist/hardware && cp src/agents/pty-helper.py dist/agents/ && cp src/templates/builtin/*.md dist/templates/ && cp src/demo/demo-agent.js dist/demo/ && cp src/hardware/codex-micro-bridge.py dist/hardware/",
     "build": "tsup && npm run copy:runtime-assets",
     "dev": "tsup --watch --onSuccess \"npm run copy:runtime-assets\"",
     "start": "node dist/bin/agents-commander.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:hardware": "python3 -m unittest tests/codex_micro_bridge_test.py",
     "test:built": "node tests/built/cli-isolation.mjs",
     "test:pack": "node tests/built/packed-install-smoke.mjs",
     "test:watch": "vitest",
-    "verify": "npm run typecheck && npm test && npm run build && npm run test:built && npm run test:pack",
+    "verify": "npm run typecheck && npm test && npm run test:hardware && npm run build && npm run test:built && npm run test:pack",
     "prepack": "npm run verify"
   },
   "keywords": [

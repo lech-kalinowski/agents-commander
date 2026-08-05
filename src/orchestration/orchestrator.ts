@@ -130,6 +130,8 @@ export interface GuardedCodexDecision {
   inputGeneration: bigint;
   /** SHA-256 fingerprint of the complete visible grid during confirmation. */
   fingerprint: string;
+  /** Revalidate a short-lived trusted input origin inside the session lane. */
+  validateOrigin?: () => boolean;
 }
 
 const CLAUDE_DIRECT_TYPE_MAX_CHARS = 320;
@@ -930,7 +932,8 @@ export class Orchestrator {
 
     return this.withSessionInputLane(target, () => {
       if (
-        !this.isManagedTaskTargetCurrent(target)
+        (expected.validateOrigin && !expected.validateOrigin())
+        || !this.isManagedTaskTargetCurrent(target)
         || !tp.isRunning
         || tp.sessionGeneration !== expected.sessionGeneration
         || !tp.inputSynchronized

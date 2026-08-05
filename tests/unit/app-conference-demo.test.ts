@@ -326,14 +326,33 @@ describe('App conference and offline demo integration', () => {
       warning: undefined,
     });
 
-    app.config = { hardware: { codexMicro: { enabled: true } } };
+    app.config = {
+      hardware: {
+        codexMicro: { enabled: true, inputMode: 'native', decisionControls: false },
+      },
+    };
+    app.codexMicroStatus = {
+      state: 'connected',
+      transport: 'usb',
+      connectionEpoch: 'device-epoch',
+    };
     expect(app.conferenceStatus()).toEqual({
-      modeLabel: 'OFFLINE DEMO + MICRO',
+      modeLabel: 'OFFLINE DEMO + MICRO:USB',
       warning: undefined,
     });
 
     app.launch = { conference: false, demo: false };
-    expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO' });
+    expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO:USB' });
+
+    app.codexMicroStatus = {
+      state: 'disconnected',
+      transport: 'unknown',
+      connectionEpoch: null,
+    };
+    expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO:LOST' });
+
+    app.config.hardware.codexMicro.inputMode = 'keyboard';
+    expect(app.conferenceStatus()).toEqual({ modeLabel: 'MICRO:KEYS' });
   });
 
   it('runs owned launch cleanup exactly once before exiting', async () => {

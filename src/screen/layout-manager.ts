@@ -326,6 +326,13 @@ export class LayoutManager {
     return true;
   }
 
+  /** Focus a one-based panel in workspace order, bringing its page into view. */
+  focusWorkspaceSlot(slot: number): boolean {
+    if (!Number.isSafeInteger(slot) || slot < 1 || slot > this.panels.length) return false;
+    this.setActivePanel(this.panels[slot - 1].panelIndex);
+    return true;
+  }
+
   getPanel(panelId: number): Panel | null {
     return this.findPanel(panelId) ?? null;
   }

@@ -22,8 +22,12 @@ export interface ExplicitLaunchOptions {
   skipWelcome?: boolean;
   conference?: boolean;
   demo?: boolean;
-  /** Override the persisted Codex Micro integration setting for this launch. */
+  /** Enable native Codex Micro input, or disable the integration, for this launch. */
   codexMicro?: boolean;
+  /** Use legacy Work Louder-programmed keyboard shortcuts for this launch. */
+  codexMicroKeyboard?: boolean;
+  /** Override guarded physical approve/reject controls for this launch. */
+  codexMicroDecisions?: boolean;
   /** Open the Codex Micro input checklist after startup. */
   codexMicroTest?: boolean;
 }
@@ -74,7 +78,8 @@ function cloneConfig(config: AppConfig): NormalizedAppConfig {
       : { ...config.orchestration },
     hardware: {
       codexMicro: {
-        ...(config.hardware?.codexMicro ?? defaultConfig.hardware.codexMicro),
+        ...defaultConfig.hardware.codexMicro,
+        ...config.hardware?.codexMicro,
       },
     },
   };
@@ -114,12 +119,21 @@ export function resolveLaunchOptions(
   if (explicit.skipWelcome !== undefined) skipWelcome = explicit.skipWelcome;
   if (explicit.codexMicro !== undefined) {
     config.hardware.codexMicro.enabled = explicit.codexMicro;
+    if (explicit.codexMicro) config.hardware.codexMicro.inputMode = 'native';
+  }
+  if (explicit.codexMicroKeyboard === true && explicit.codexMicro !== false) {
+    config.hardware.codexMicro.inputMode = 'keyboard';
+    config.hardware.codexMicro.enabled = true;
+  }
+  if (explicit.codexMicroDecisions !== undefined) {
+    config.hardware.codexMicro.decisionControls = explicit.codexMicroDecisions;
   }
 
   // Test mode must be usable on a fresh install without changing persisted
   // settings. It is launch-only and does not imply conference or demo mode.
   if (codexMicroTest) {
     config.hardware.codexMicro.enabled = true;
+    if (!explicit.codexMicroKeyboard) config.hardware.codexMicro.inputMode = 'native';
     skipWelcome = true;
   }
 

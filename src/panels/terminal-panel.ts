@@ -369,7 +369,11 @@ export class TerminalPanel {
         keyId
         && (
           RESERVED_KEYS.has(keyId)
-          || (this.config.hardware?.codexMicro.enabled && isCodexMicroKey(keyId))
+          || (
+            this.config.hardware?.codexMicro.enabled
+            && this.config.hardware.codexMicro.inputMode === 'keyboard'
+            && isCodexMicroKey(keyId)
+          )
         )
       ) return;
 

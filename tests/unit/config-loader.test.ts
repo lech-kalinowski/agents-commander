@@ -50,6 +50,7 @@ describe('loadConfig', () => {
     expect(config.agents.claude).toEqual(defaultConfig.agents.claude);
     expect(config.hardware.codexMicro).toEqual({
       enabled: false,
+      inputMode: 'native',
       decisionControls: false,
     });
   });
@@ -74,7 +75,7 @@ describe('loadConfig', () => {
         codex: { command: '', args: 'fast', env: { VALID: 'yes', INVALID: 1 } },
       },
       orchestration: { ackTimeout: 'forever', maxContentLines: 0, maxContentBytes: 512 },
-      hardware: { codexMicro: { enabled: 'yes', decisionControls: 1 } },
+      hardware: { codexMicro: { enabled: 'yes', inputMode: 'raw', decisionControls: 1 } },
     }) as never);
 
     const config = loadConfig();
@@ -145,6 +146,7 @@ describe('loadConfig', () => {
       hardware: {
         codexMicro: {
           enabled: true,
+          inputMode: 'keyboard',
           decisionControls: false,
         },
       },
@@ -152,6 +154,25 @@ describe('loadConfig', () => {
 
     expect(loadConfig().hardware.codexMicro).toEqual({
       enabled: true,
+      inputMode: 'keyboard',
+      decisionControls: false,
+    });
+  });
+
+  it('defaults legacy Codex Micro config to native input with decisions disabled', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+      hardware: { codexMicro: { enabled: true } },
+    }) as never);
+
+    expect(loadConfig().hardware.codexMicro).toEqual({
+      enabled: true,
+      inputMode: 'native',
+      decisionControls: false,
+    });
+    expect(defaultConfig.hardware.codexMicro).toEqual({
+      enabled: false,
+      inputMode: 'native',
       decisionControls: false,
     });
   });

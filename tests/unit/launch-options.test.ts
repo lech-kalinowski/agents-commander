@@ -199,14 +199,57 @@ describe('resolveLaunchOptions', () => {
   });
 
   it('applies explicit Codex Micro enable and disable overrides for one launch', () => {
-    const disabled = resolveLaunchOptions(savedConfig(), { codexMicro: true });
+    const savedKeyboard = savedConfig();
+    savedKeyboard.hardware.codexMicro.inputMode = 'keyboard';
+    const disabled = resolveLaunchOptions(savedKeyboard, { codexMicro: true });
     expect(disabled.config.hardware.codexMicro.enabled).toBe(true);
+    expect(disabled.config.hardware.codexMicro.inputMode).toBe('native');
+    expect(disabled.config.hardware.codexMicro.decisionControls).toBe(false);
 
     const savedEnabled = savedConfig();
     savedEnabled.hardware.codexMicro.enabled = true;
     const enabled = resolveLaunchOptions(savedEnabled, { codexMicro: false });
     expect(enabled.config.hardware.codexMicro.enabled).toBe(false);
     expect(savedEnabled.hardware.codexMicro.enabled).toBe(true);
+  });
+
+  it('keeps keyboard emulation and decision controls as explicit launch overrides', () => {
+    const keyboard = resolveLaunchOptions(savedConfig(), {
+      codexMicroKeyboard: true,
+      codexMicroDecisions: true,
+    });
+
+    expect(keyboard.config.hardware.codexMicro).toEqual({
+      enabled: true,
+      inputMode: 'keyboard',
+      decisionControls: true,
+    });
+    expect(defaultConfig.hardware.codexMicro).toEqual({
+      enabled: false,
+      inputMode: 'native',
+      decisionControls: false,
+    });
+
+    const decisionsDisabled = resolveLaunchOptions(keyboard.config, {
+      codexMicroDecisions: false,
+    });
+    expect(decisionsDisabled.config.hardware.codexMicro.decisionControls).toBe(false);
+
+    const emergencyDisabled = resolveLaunchOptions(keyboard.config, {
+      codexMicro: false,
+      codexMicroKeyboard: true,
+    });
+    expect(emergencyDisabled.config.hardware.codexMicro.enabled).toBe(false);
+  });
+
+  it('normalizes pre-input-mode runtime objects to native mode', () => {
+    const legacy = savedConfig();
+    delete (legacy.hardware.codexMicro as { inputMode?: string }).inputMode;
+
+    const result = resolveLaunchOptions(legacy);
+
+    expect(result.config.hardware.codexMicro.inputMode).toBe('native');
+    expect(legacy.hardware.codexMicro).not.toHaveProperty('inputMode');
   });
 
   it('makes Codex Micro test mode opt-in, enabled, and welcome-free without starting demo', () => {
@@ -231,6 +274,13 @@ describe('resolveLaunchOptions', () => {
       demo: false,
     });
     expect(testMode.config.hardware.codexMicro.enabled).toBe(true);
+    expect(testMode.config.hardware.codexMicro.inputMode).toBe('native');
+
+    const keyboardTest = resolveLaunchOptions(savedConfig(), {
+      codexMicroTest: true,
+      codexMicroKeyboard: true,
+    });
+    expect(keyboardTest.config.hardware.codexMicro.inputMode).toBe('keyboard');
   });
 
   it('ignores out-of-range runtime panel values without mutating saved settings', () => {

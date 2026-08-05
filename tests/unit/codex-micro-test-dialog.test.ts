@@ -1,6 +1,9 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CODEX_MICRO_BINDINGS } from '../../src/hardware/codex-micro.js';
+import {
+  CODEX_MICRO_BINDINGS,
+  CODEX_MICRO_NATIVE_BINDINGS,
+} from '../../src/hardware/codex-micro.js';
 import {
   closeDialogsForScreen,
   isDialogActive,
@@ -101,21 +104,53 @@ describe('Codex Micro test content', () => {
     expect(content.match(/\[✓\]/g)).toHaveLength(2);
   });
 
-  it('keeps the built-in help explicit about opt-in setup and all 13 controls', () => {
-    for (const shortcut of [
-      'Ctrl+Shift+PageUp/Down',
-      'Ctrl+Shift+Home/End',
-      'Ctrl+Shift+F5/F6/F7/F8',
-      'Ctrl+Shift+F9',
-      'Ctrl+Shift+F10',
-      'Ctrl+Shift+F11/F12',
-      'Ctrl+Shift+Insert',
+  it('lists factory controls and safely presents live native-device metadata', () => {
+    const testedInputs = new Set(['AG00', 'ACT10'] as const);
+    const content = formatCodexMicroTestContent(new Set(), {
+      inputMode: 'native',
+      testedInputs,
+      deviceStatus: {
+        state: 'connected',
+        transport: 'usb',
+        connectionEpoch: 'not-rendered',
+        firmware: 'v0.4.1{red-fg}',
+        battery: 72.6,
+        charging: true,
+        detail: '{red-fg}ready{/red-fg}\u001b[31m',
+      },
+      lastHardwareInput: { input: 'ACT10', action: 'open-activity' },
+    });
+
+    for (const binding of CODEX_MICRO_NATIVE_BINDINGS) {
+      expect(content).toContain(binding.input);
+    }
+    expect(content).toContain('Connected');
+    expect(content).toContain('USB');
+    expect(content).toContain('firmware v0.4.1 red-fg');
+    expect(content).toContain('battery 73% (charging)');
+    expect(content).toContain('Detected 2/19 physical controls');
+    expect(content).toContain('Decision actions: disabled');
+    expect(content).toContain('Last input: ACT10 → Activity');
+    expect(content).not.toContain('{red-fg}ready');
+    expect(content).not.toContain('not-rendered');
+  });
+
+  it('teaches native controls first and labels keyboard programming as fallback', () => {
+    for (const copy of [
+      'no Work Louder reprogramming is required',
+      'Input Monitoring',
+      'Agent keys 1–6',
+      'Panel navigator (same destination as F11)',
+      'Approve/Reject',
+      '--codex-micro-decisions',
+      '--codex-micro-keyboard',
     ]) {
-      expect(HELP_TEXT).toContain(shortcut);
+      expect(HELP_TEXT).toContain(copy);
     }
     expect(HELP_TEXT).toContain('--codex-micro');
     expect(HELP_TEXT).toContain('--codex-micro-test');
-    expect(HELP_TEXT).toContain('do not\n  enable the hardware controls automatically');
+    expect(HELP_TEXT).toContain('do not enable hardware automatically');
+    expect(HELP_TEXT).not.toContain('Program the device in');
   });
 });
 
@@ -165,6 +200,79 @@ describe('Codex Micro test dialog', () => {
 
     expect(handle.testedActions()).toEqual(CODEX_MICRO_BINDINGS.map(({ action }) => action));
     expect(dialog.content).toContain('All controls detected — ready for rehearsal.');
+  });
+
+  it('tracks direct hardware controls, live status, and keeps native mode exclusive', () => {
+    const screen = createScreen();
+    screens.push(screen);
+    const handle = showCodexMicroTestDialog(screen, theme, {
+      inputMode: 'native',
+      decisionControls: false,
+      initialStatus: {
+        state: 'disconnected',
+        transport: 'unknown',
+        connectionEpoch: null,
+      },
+    });
+    const dialog = checklistDialog();
+
+    expect(dialog.height).toBe(30);
+    expect(dialog.content).toContain('Waiting for device');
+    expect(dialog.content).toContain('Detected 0/19 physical controls');
+    expect(dialog.content).toContain('Approve/Reject are input-test only');
+
+    screen.emit('keypress', undefined, {
+      name: CODEX_MICRO_BINDINGS[0].key,
+      full: CODEX_MICRO_BINDINGS[0].key,
+    });
+    expect(handle.testedActions()).toEqual([]);
+
+    expect(handle.recordHardwareInput('AG00', 'focus-panel-1')).toBe(true);
+    expect(handle.recordHardwareInput('ACT10', 'open-activity')).toBe(true);
+    expect(handle.recordHardwareInput('ACT11', 'approve')).toBe(false);
+    expect(handle.testedInputs()).toEqual(['AG00', 'ACT10']);
+    expect(handle.testedActions()).toEqual(['focus-panel-1', 'open-activity']);
+    expect(dialog.content).toContain('Detected 2/19 physical controls');
+    expect(dialog.content).toContain('Last input: ACT10 → Activity');
+
+    handle.setDeviceStatus({
+      state: 'connected',
+      transport: 'bluetooth',
+      connectionEpoch: 'ephemeral-epoch',
+      firmware: 'v0.4.1',
+      battery: 88,
+    });
+    expect(dialog.content).toContain('Connected');
+    expect(dialog.content).toContain('Bluetooth');
+    expect(dialog.content).toContain('firmware v0.4.1');
+    expect(dialog.content).toContain('battery 88%');
+    expect(dialog.content).not.toContain('ephemeral-epoch');
+
+    screen.emit('keypress', 'r', { name: 'r', full: 'r' });
+    expect(handle.testedActions()).toEqual([]);
+    expect(handle.testedInputs()).toEqual([]);
+    expect(dialog.content).toContain('Detected 0/19 physical controls');
+    expect(dialog.content).toContain('Connected');
+    expect(dialog.content).toContain('Last input: none yet');
+  });
+
+  it('completes the native checklist from all factory reports, coalescing the wide key', () => {
+    const screen = createScreen();
+    screens.push(screen);
+    const handle = showCodexMicroTestDialog(screen, theme, {
+      inputMode: 'native',
+      decisionControls: true,
+    });
+    const dialog = checklistDialog();
+
+    for (const binding of CODEX_MICRO_NATIVE_BINDINGS) {
+      expect(handle.recordHardwareInput(binding.input, binding.action)).toBe(true);
+    }
+
+    expect(handle.testedInputs()).toHaveLength(CODEX_MICRO_NATIVE_BINDINGS.length);
+    expect(dialog.content).toContain('All physical controls detected — ready for rehearsal.');
+    expect(dialog.content.match(/\[✓\]/g)).toHaveLength(19);
+    expect(dialog.scrollOffset).toBeGreaterThan(0);
   });
 
   it('closes cleanly, restores focus, and ignores later records', () => {

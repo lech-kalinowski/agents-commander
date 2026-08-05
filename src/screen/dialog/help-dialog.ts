@@ -81,20 +81,26 @@ Multi-panel AI Agent Manager & File Browser
 
 {bold}{yellow-fg}CODEX MICRO (EXPERIMENTAL){/yellow-fg}{/bold}
 
-  Opt in with {cyan-fg}--codex-micro{/cyan-fg}. Program the device in
-  Work Louder Input to emit these keyboard shortcuts:
+  Native macOS input reads the shipping controls directly;
+  no Work Louder reprogramming is required. Allow the launch
+  terminal in Privacy & Security > Input Monitoring.
 
-  Ctrl+Shift+PageUp/Down   Previous / next panel
-  Ctrl+Shift+Home/End      Previous / next page
-  Ctrl+Shift+F5/F6/F7/F8   Focus visible slot 1 / 2 / 3 / 4
-  Ctrl+Shift+F9            Open panel navigator
-  Ctrl+Shift+F10           Open routed activity
-  Ctrl+Shift+F11/F12       Guarded approve / reject
-  Ctrl+Shift+Insert        Open control test overlay
+  Agent keys 1–6   Focus active workspace slots 1–6
+  Fast / Split     Cycle density / add panel
+  Codex key        Panel navigator (same destination as F11)
+  Dial turn/press  Previous/next panel / routed Activity
+  Joystick         Panel/page navigation
+  Approve/Reject   Guarded decisions; disabled by default
 
-  Run {cyan-fg}agents-commander --codex-micro-test{/cyan-fg}
-  before a live demo. Conference and Demo modes do not
-  enable the hardware controls automatically.
+  Verify: {cyan-fg}agents-commander --doctor --codex-micro{/cyan-fg}
+  Test:   {cyan-fg}agents-commander --codex-micro-test{/cyan-fg}
+  Run:    {cyan-fg}agents-commander --codex-micro{/cyan-fg}
+  Decisions require {cyan-fg}--codex-micro-decisions{/cyan-fg} and a
+  second matching press within five seconds.
+
+  {cyan-fg}--codex-micro-keyboard{/cyan-fg} is the explicit fallback for
+  a device layer already programmed with legacy shortcuts.
+  Conference and Demo modes do not enable hardware automatically.
 
   {bold}File panel only{/bold} (pass through to agents):
   Ctrl+E      Reset to default 2-panel view

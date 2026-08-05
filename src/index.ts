@@ -26,17 +26,31 @@ export type { GuardedCodexDecision } from './orchestration/orchestrator.js';
 export {
   CODEX_MICRO_BINDINGS,
   CODEX_MICRO_KEYS,
+  CODEX_MICRO_NATIVE_BINDINGS,
   getCodexMicroAction,
   getCodexMicroBinding,
   getCodexMicroKey,
   getCodexMicroKeys,
+  getCodexMicroNativeAction,
+  getCodexMicroNativeBinding,
   isCodexMicroKey,
+  isCodexMicroNativeInput,
 } from './hardware/codex-micro.js';
 export type {
   CodexMicroAction,
   CodexMicroBinding,
   CodexMicroKey,
+  CodexMicroKeyboardAction,
+  CodexMicroNativeBinding,
+  CodexMicroNativeInput,
 } from './hardware/codex-micro.js';
+export { CodexMicroNativeBridge } from './hardware/codex-micro-native.js';
+export type {
+  CodexMicroConnectionState,
+  CodexMicroDeviceStatus,
+  CodexMicroHardwareEvent,
+  CodexMicroTransport,
+} from './hardware/codex-micro-native.js';
 export {
   detectCodexDecision,
   fingerprintCodexVisibleGrid,
@@ -84,7 +98,10 @@ export type {
 export type {
   AppConfig,
   CodexMicroConfig,
+  CodexMicroInputMode,
   HardwareConfig,
+  NormalizedCodexMicroConfig,
+  NormalizedHardwareConfig,
   NormalizedAppConfig,
   Theme,
 } from './config/types.js';

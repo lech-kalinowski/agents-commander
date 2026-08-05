@@ -96,8 +96,10 @@ try {
     'dist/bin/agents-commander.js',
     'dist/index.d.ts',
     'dist/agents/pty-helper.py',
+    'dist/hardware/codex-micro-bridge.py',
     'dist/demo/demo-agent.js',
     'docs/codex-micro.md',
+    'THIRD_PARTY_NOTICES.md',
   ]) {
     assert.ok(packedPaths.has(requiredPath), `Packed package is missing ${requiredPath}`);
   }
@@ -160,6 +162,9 @@ try {
   assert.match(help.stdout, /--conference/u);
   assert.match(help.stdout, /--demo/u);
   assert.match(help.stdout, /--codex-micro(?:\s|$)/mu);
+  assert.match(help.stdout, /--codex-micro-keyboard\b/u);
+  assert.match(help.stdout, /--codex-micro-decisions\b/u);
+  assert.match(help.stdout, /--no-codex-micro-decisions\b/u);
   assert.match(help.stdout, /--no-codex-micro\b/u);
   assert.match(help.stdout, /--codex-micro-test\b/u);
 
@@ -188,9 +193,21 @@ try {
     expectedStatuses: currentNodeMajor >= MINIMUM_NODE_MAJOR ? [0] : [1],
     label: 'packed CLI --doctor --codex-micro',
   });
-  assert.match(microDoctor.stdout, /\[WARN\] Codex Micro:/u);
-  assert.match(microDoctor.stdout, /device identity cannot be verified/u);
-  assert.match(microDoctor.stdout, /--codex-micro-test/u);
+  assert.match(microDoctor.stdout, /Codex Micro:/u);
+  assert.doesNotMatch(microDoctor.stdout, /serial/iu);
+
+  const microKeyboardDoctor = run(
+    binaryPath,
+    ['--doctor', '--codex-micro-keyboard', workspaceDirectory],
+    {
+      cwd: workspaceDirectory,
+      expectedStatuses: currentNodeMajor >= MINIMUM_NODE_MAJOR ? [0] : [1],
+      label: 'packed CLI --doctor --codex-micro-keyboard',
+    },
+  );
+  assert.match(microKeyboardDoctor.stdout, /\[WARN\] Codex Micro:/u);
+  assert.match(microKeyboardDoctor.stdout, /keyboard fallback/iu);
+  assert.match(microKeyboardDoctor.stdout, /--codex-micro-test/u);
 
   const packageImport = run(process.execPath, [
     '--input-type=module',
@@ -243,11 +260,23 @@ try {
   for (const requiredAsset of [
     path.join(installedRoot, 'dist', 'index.d.ts'),
     path.join(installedRoot, 'dist', 'agents', 'pty-helper.py'),
+    path.join(installedRoot, 'dist', 'hardware', 'codex-micro-bridge.py'),
     path.join(installedRoot, 'dist', 'demo', 'demo-agent.js'),
     path.join(installedRoot, 'docs', 'codex-micro.md'),
+    path.join(installedRoot, 'THIRD_PARTY_NOTICES.md'),
   ]) {
     assert.equal((await fs.lstat(requiredAsset)).isFile(), true, `${requiredAsset} is not a file`);
   }
+  const thirdPartyNotices = await fs.readFile(
+    path.join(installedRoot, 'THIRD_PARTY_NOTICES.md'),
+    'utf8',
+  );
+  assert.match(thirdPartyNotices, /Copyright \(c\) 2026 Eli Benveniste/u);
+  assert.match(
+    thirdPartyNotices,
+    /64258eb6cc3312a43f9f9f86d87e55e0b609ccc5/u,
+  );
+  assert.match(thirdPartyNotices, /THE SOFTWARE IS PROVIDED "AS IS"/u);
   const installedTemplates = (await fs.readdir(
     path.join(installedRoot, 'dist', 'templates'),
   )).filter((name) => name.endsWith('.md'));

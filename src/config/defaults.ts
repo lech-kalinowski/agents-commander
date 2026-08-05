@@ -43,7 +43,8 @@ export const defaultConfig: NormalizedAppConfig = {
   hardware: {
     codexMicro: {
       enabled: false,
-      decisionControls: true,
+      inputMode: 'native',
+      decisionControls: false,
     },
   },
 };

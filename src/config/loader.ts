@@ -4,8 +4,8 @@ import os from 'node:os';
 import type {
   AgentCommandConfig,
   AppConfig,
-  HardwareConfig,
   NormalizedAppConfig,
+  NormalizedHardwareConfig,
   OrchestrationConfig,
 } from './types.js';
 import { defaultConfig } from './defaults.js';
@@ -193,7 +193,7 @@ function normalizeOrchestration(value: unknown): OrchestrationConfig {
   };
 }
 
-function normalizeHardware(value: unknown): HardwareConfig {
+function normalizeHardware(value: unknown): NormalizedHardwareConfig {
   const input = isPlainObject(value) ? value : {};
   const codexMicro = isPlainObject(input.codexMicro) ? input.codexMicro : {};
   const defaults = defaultConfig.hardware.codexMicro;
@@ -202,6 +202,9 @@ function normalizeHardware(value: unknown): HardwareConfig {
       enabled: typeof codexMicro.enabled === 'boolean'
         ? codexMicro.enabled
         : defaults.enabled,
+      inputMode: codexMicro.inputMode === 'native' || codexMicro.inputMode === 'keyboard'
+        ? codexMicro.inputMode
+        : defaults.inputMode,
       decisionControls: typeof codexMicro.decisionControls === 'boolean'
         ? codexMicro.decisionControls
         : defaults.decisionControls,

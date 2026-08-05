@@ -7,11 +7,24 @@ import {
 } from '../../utils/dialog-state.js';
 import { bindOverlayResize, screenGeometry, truncateOverlayText } from './geometry.js';
 
+export interface ConfirmDialogController {
+  /** Confirm the dialog through a trusted external input source. */
+  confirm(): void;
+  /** Cancel the dialog through a trusted external input source. */
+  cancel(): void;
+  isOpen(): boolean;
+}
+
+export interface ConfirmDialogOptions {
+  onReady?: (controller: ConfirmDialogController) => void;
+}
+
 export function showConfirmDialog(
   screen: blessed.Widgets.Screen,
   theme: Theme,
   title: string,
   message: string,
+  options: ConfirmDialogOptions = {},
 ): Promise<boolean> {
   return new Promise((resolve) => {
     enterDialog(screen);
@@ -128,6 +141,13 @@ export function showConfirmDialog(
       });
     };
     unregisterCancellation = registerDialogCancellation(screen, () => finish(false));
+
+    const controller: ConfirmDialogController = {
+      confirm: () => finish(true),
+      cancel: () => finish(false),
+      isOpen: () => !resolved,
+    };
+    options.onReady?.(controller);
 
     dialog.key(['left', 'right', 'tab'], () => {
       selected = !selected;

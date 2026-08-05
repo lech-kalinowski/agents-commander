@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   listBuiltinTemplateFiles,
   resolveBuiltinTemplateDirectory,
+  resolveCodexMicroBridgePath,
   resolveDemoAgentPath,
   resolvePtyHelperPath,
   runtimeAssetLookupForModule,
@@ -31,15 +32,18 @@ describe('runtime asset resolution', () => {
     const root = temporaryDirectory();
     const entryPath = path.join(root, 'dist', 'bin', 'agents-commander.js');
     const helperPath = path.join(root, 'dist', 'agents', 'pty-helper.py');
+    const microBridgePath = path.join(root, 'dist', 'hardware', 'codex-micro-bridge.py');
     const templatesPath = path.join(root, 'dist', 'templates');
     const demoPath = path.join(root, 'dist', 'demo', 'demo-agent.mjs');
 
     fs.mkdirSync(path.dirname(entryPath), { recursive: true });
     fs.mkdirSync(path.dirname(helperPath), { recursive: true });
+    fs.mkdirSync(path.dirname(microBridgePath), { recursive: true });
     fs.mkdirSync(templatesPath, { recursive: true });
     fs.mkdirSync(path.dirname(demoPath), { recursive: true });
     fs.writeFileSync(entryPath, '');
     fs.writeFileSync(helperPath, '#!/usr/bin/env python3\n');
+    fs.writeFileSync(microBridgePath, '#!/usr/bin/env python3\n');
     fs.writeFileSync(path.join(templatesPath, 'z-last.md'), '# Last\n');
     fs.writeFileSync(path.join(templatesPath, 'a-first.md'), '# First\n');
     fs.writeFileSync(path.join(templatesPath, 'ignore.txt'), 'not a template\n');
@@ -51,6 +55,7 @@ describe('runtime asset resolution', () => {
     };
 
     expect(resolvePtyHelperPath(options)).toBe(helperPath);
+    expect(resolveCodexMicroBridgePath(options)).toBe(microBridgePath);
     expect(resolveBuiltinTemplateDirectory(options)).toBe(templatesPath);
     expect(listBuiltinTemplateFiles(templatesPath)).toEqual([
       path.join(templatesPath, 'a-first.md'),
@@ -64,6 +69,7 @@ describe('runtime asset resolution', () => {
     const entryPath = path.join(root, 'dist', 'bin', 'agents-commander.js');
     fs.mkdirSync(path.dirname(entryPath), { recursive: true });
     fs.mkdirSync(path.join(root, 'dist', 'agents', 'pty-helper.py'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'dist', 'hardware', 'codex-micro-bridge.py'), { recursive: true });
     fs.mkdirSync(path.join(root, 'dist', 'demo', 'demo-agent.mjs'), { recursive: true });
 
     const options: RuntimeAssetLookupOptions = {
@@ -72,18 +78,22 @@ describe('runtime asset resolution', () => {
     };
 
     expect(resolvePtyHelperPath(options)).toBeNull();
+    expect(resolveCodexMicroBridgePath(options)).toBeNull();
     expect(resolveDemoAgentPath(options)).toBeNull();
   });
 
   it('resolves every development asset only from an explicit source root', () => {
     const root = temporaryDirectory();
     const helperPath = path.join(root, 'src', 'agents', 'pty-helper.py');
+    const microBridgePath = path.join(root, 'src', 'hardware', 'codex-micro-bridge.py');
     const templatesPath = path.join(root, 'src', 'templates', 'builtin');
     const demoPath = path.join(root, 'src', 'demo', 'demo-agent.mjs');
     fs.mkdirSync(path.dirname(helperPath), { recursive: true });
+    fs.mkdirSync(path.dirname(microBridgePath), { recursive: true });
     fs.mkdirSync(templatesPath, { recursive: true });
     fs.mkdirSync(path.dirname(demoPath), { recursive: true });
     fs.writeFileSync(helperPath, '#!/usr/bin/env python3\n');
+    fs.writeFileSync(microBridgePath, '#!/usr/bin/env python3\n');
     fs.writeFileSync(path.join(templatesPath, 'source.md'), '# Source\n');
     fs.writeFileSync(demoPath, '#!/usr/bin/env node\n');
 
@@ -92,6 +102,7 @@ describe('runtime asset resolution', () => {
       sourceRoot: root,
     };
     expect(resolvePtyHelperPath(sourceLookup)).toBe(helperPath);
+    expect(resolveCodexMicroBridgePath(sourceLookup)).toBe(microBridgePath);
     expect(resolveBuiltinTemplateDirectory(sourceLookup)).toBe(templatesPath);
     expect(resolveDemoAgentPath(sourceLookup)).toBe(demoPath);
   });
@@ -146,6 +157,7 @@ describe('runtime asset resolution', () => {
     } as RuntimeAssetLookupOptions;
 
     expect(resolvePtyHelperPath(installedLookup)).toBeNull();
+    expect(resolveCodexMicroBridgePath(installedLookup)).toBeNull();
     expect(resolveDemoAgentPath(installedLookup)).toBeNull();
   });
 
@@ -153,15 +165,26 @@ describe('runtime asset resolution', () => {
     const root = temporaryDirectory();
     const externalHelper = path.join(root, 'workspace-helper.py');
     const helperPath = path.join(root, 'package', 'dist', 'agents', 'pty-helper.py');
+    const bridgePath = path.join(root, 'package', 'dist', 'hardware', 'codex-micro-bridge.py');
     fs.writeFileSync(externalHelper, '#!/usr/bin/env python3\n');
     fs.mkdirSync(path.dirname(helperPath), { recursive: true });
+    fs.mkdirSync(path.dirname(bridgePath), { recursive: true });
     fs.symlinkSync(externalHelper, helperPath);
+    fs.symlinkSync(externalHelper, bridgePath);
 
     expect(resolvePtyHelperPath({
       mode: 'installed',
       packageRoot: path.join(root, 'package'),
     })).toBeNull();
+    expect(resolveCodexMicroBridgePath({
+      mode: 'installed',
+      packageRoot: path.join(root, 'package'),
+    })).toBeNull();
     expect(resolvePtyHelperPath({
+      mode: 'installed',
+      packageRoot: 'relative-package-root',
+    })).toBeNull();
+    expect(resolveCodexMicroBridgePath({
       mode: 'installed',
       packageRoot: 'relative-package-root',
     })).toBeNull();

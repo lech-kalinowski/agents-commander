@@ -102,6 +102,17 @@ export function resolvePtyHelperPath(options: RuntimeAssetLookupOptions): string
   return isReadableRegularFile(helperPath) ? helperPath : null;
 }
 
+export function resolveCodexMicroBridgePath(
+  options: RuntimeAssetLookupOptions,
+): string | null {
+  const root = lookupRoot(options);
+  if (!root) return null;
+  const bridgePath = options.mode === 'installed'
+    ? path.join(root, 'dist', 'hardware', 'codex-micro-bridge.py')
+    : path.join(root, 'src', 'hardware', 'codex-micro-bridge.py');
+  return isReadableRegularFile(bridgePath) ? bridgePath : null;
+}
+
 export function resolveBuiltinTemplateDirectory(
   options: RuntimeAssetLookupOptions,
 ): string | null {

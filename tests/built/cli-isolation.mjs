@@ -113,13 +113,15 @@ try {
   assert.match(doctor.stdout, /\[PASS\] PTY helper:/u);
   assert.match(doctor.stdout, /\[PASS\] Offline demo agent:/u);
 
-  const microDoctor = runLightweightCli(['--doctor', '--codex-micro']);
+  // Use the explicit keyboard fallback here so this isolation test is
+  // deterministic even when a real Codex Micro is connected to the host.
+  const microDoctor = runLightweightCli(['--doctor', '--codex-micro-keyboard']);
   assert.ok(
     microDoctor.status === 0 || microDoctor.status === 1,
     `Unexpected Codex Micro Doctor exit status ${microDoctor.status}: ${microDoctor.stderr}`,
   );
   assert.match(microDoctor.stdout, /\[WARN\] Codex Micro:/u);
-  assert.match(microDoctor.stdout, /device identity cannot be verified/u);
+  assert.match(microDoctor.stdout, /device identity is not checked/u);
   assert.match(microDoctor.stdout, /--codex-micro-test/u);
 
   const uiLaunch = spawnCli([]);

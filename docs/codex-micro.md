@@ -1,55 +1,75 @@
 # Codex Micro setup and rehearsal
 
-Codex Micro support in Agents Commander is experimental and opt-in. Version 1 treats the controller as a standard keyboard HID: Work Louder Input emits reserved keyboard shortcuts, and Commander translates those shortcuts into panel, navigation, and guarded decision actions.
+Codex Micro support in Agents Commander is experimental and opt-in. Native
+mode reads the shipping factory controls directly through a small bundled
+bridge, so the controller does not need an Agents Commander layer in Work
+Louder Input. Native mode supports both USB and Bluetooth on macOS and is the
+default when the integration is enabled.
 
-There is no native device dependency. Commander does not currently identify whether an event came from a Codex Micro, read device state, or control the device's RGB lighting.
+The bridge is deliberately narrow: it recognizes the Codex Micro vendor and
+product IDs, requests safe device status, and receives control events. It does
+not read or store a serial number, change firmware, access files, or control
+RGB lighting.
 
-## Program the controls
+## Native control map
 
-Create an Agents Commander layer in Work Louder Input with these exact assignments:
+| Physical control | Device input | Agents Commander action |
+| --- | --- | --- |
+| Agent 1 | `AG00` | Focus active workspace slot 1 |
+| Agent 2 | `AG01` | Focus active workspace slot 2 |
+| Agent 3 | `AG02` | Focus active workspace slot 3 |
+| Agent 4 | `AG03` | Focus active workspace slot 4 |
+| Agent 5 | `AG04` | Focus active workspace slot 5 |
+| Agent 6 | `AG05` | Focus active workspace slot 6 |
+| Fast | `ACT06` | Cycle visible panel density |
+| Approve | `ACT07` | Guarded one-time approval, if enabled |
+| Reject | `ACT08` | Guarded rejection, if enabled |
+| Split | `ACT09` | Add a panel |
+| Wide Mic key | `ACT10` + `ACT11` | Open routed-message Activity once |
+| Codex | `ACT12` | Open the panel navigator |
+| Dial press | `ENC_CLK` | Open routed-message Activity |
+| Dial clockwise | `ENC_CW` | Focus next panel |
+| Dial counter-clockwise | `ENC_CC` | Focus previous panel |
+| Joystick up | — | Previous panel page |
+| Joystick down | — | Next panel page |
+| Joystick left | — | Focus previous panel |
+| Joystick right | — | Focus next panel |
 
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl+Shift+PageUp` | Previous panel |
-| `Ctrl+Shift+PageDown` | Next panel |
-| `Ctrl+Shift+Home` | Previous panel page |
-| `Ctrl+Shift+End` | Next panel page |
-| `Ctrl+Shift+F5` | Focus visible slot 1 |
-| `Ctrl+Shift+F6` | Focus visible slot 2 |
-| `Ctrl+Shift+F7` | Focus visible slot 3 |
-| `Ctrl+Shift+F8` | Focus visible slot 4 |
-| `Ctrl+Shift+F9` | Panel navigator |
-| `Ctrl+Shift+F10` | Routed-message Activity |
-| `Ctrl+Shift+F11` | Guarded one-time approval |
-| `Ctrl+Shift+F12` | Guarded rejection |
-| `Ctrl+Shift+Insert` | Control test overlay |
+The wide Mic key reports two adjacent inputs; Commander de-duplicates them into
+one action. The joystick must return toward center before another directional
+action fires. An active workspace slot is the first, second, and so on among
+the panels that still exist; after a panel is removed, its stable panel number
+may differ from its slot. Use the Codex key's navigator to jump by stable panel
+number or metadata.
 
-Keep the assignments exact. The navigation controls intentionally avoid
-`Ctrl+Shift+Arrow`, which macOS Mission Control and Spaces can intercept.
-Other modified function keys are not assumed to be distinguishable across
-every terminal.
+## Enable and test native input
 
-## Enable and test
+Native mode requires macOS and Python 3. Give the terminal application that
+launches Agents Commander permission under **System Settings > Privacy &
+Security > Input Monitoring**. Restart that terminal after changing the
+permission.
 
-Start the interactive control checklist in the project you will use on stage:
-
-```bash
-agents-commander --codex-micro-test /path/to/project
-```
-
-Press every programmed control. The overlay marks each semantic action as it reaches Commander. Use `R` to reset the checklist and `Esc` or `Q` to close it.
-
-The startup diagnostic can also confirm that hardware mode is enabled, while
-making the keyboard-HID limitation explicit:
+Connect the device, then run the bounded startup probe:
 
 ```bash
 agents-commander --doctor --codex-micro /path/to/project
 ```
 
-Doctor cannot identify the physical device; the interactive checklist is the
-actual end-to-end input test.
+Doctor reports whether the exact controller is connected and may show the
+transport, firmware version, and battery level. It never prints a device
+serial number. Next, open the interactive physical-input checklist:
 
-For a normal run, enable the integration explicitly:
+```bash
+agents-commander --codex-micro-test /path/to/project
+```
+
+Press and move every control you plan to use. The overlay shows connection
+state and marks each semantic action as it reaches Commander. Use `R` to reset
+the checklist, the arrow keys to scroll on a stage-sized terminal, and `Esc` or
+`Q` to close it. The overlay also states whether Approve/Reject actions are
+enabled; even while disabled, their raw inputs can still be tested safely.
+
+For a normal run, enable native input explicitly:
 
 ```bash
 agents-commander --codex-micro /path/to/project
@@ -68,30 +88,79 @@ The equivalent persistent configuration is:
   "hardware": {
     "codexMicro": {
       "enabled": true,
-      "decisionControls": true
+      "inputMode": "native",
+      "decisionControls": false
     }
   }
 }
 ```
 
-`--codex-micro-test` enables the integration for that run and opens the checklist. Conference Mode and Demo Mode do not enable it implicitly.
+`--codex-micro-test` enables the integration for that run and opens the
+checklist. Conference Mode and Demo Mode do not enable it implicitly.
 
 ## Approval and rejection safety
 
-The decision controls are intentionally conservative. Approval or rejection is available only for the active, managed Codex session and only when Commander can still recognize the corresponding currently selected prompt option. A confirmation remains required, and Commander checks the session and visible prompt again immediately before submitting Enter.
+Decision controls are disabled by default. Enable them only when the physical
+workflow has been rehearsed:
 
-The approval control is limited to a one-time approval. It never selects a persistent "always allow" choice. An unknown prompt, a changed prompt, a different selection, or a session change fails closed and sends nothing.
+```bash
+agents-commander --codex-micro --codex-micro-decisions /path/to/project
+```
 
-Set `hardware.codexMicro.decisionControls` to `false` for navigation-only use.
+Approval or rejection is available only for the active, managed Codex session
+and only while Commander still recognizes the corresponding selected prompt
+option. A human confirmation remains required, and Commander checks the
+device connection, session, and visible prompt again immediately before
+submitting Enter. A physical decision press opens a five-second confirmation
+window; press that same device key again before the dialog expires.
+
+The approval control is limited to a one-time approval. It never selects a
+persistent "always allow" choice. An unknown prompt, a changed prompt, a
+different selection, a disconnected controller, or a session change fails
+closed and sends nothing.
+
+## Legacy keyboard fallback
+
+Native input currently requires macOS. Linux users, or users who already have
+an Agents Commander layer in Work Louder Input, can enable the old
+programmed-shortcut path explicitly:
+
+```bash
+agents-commander --codex-micro-keyboard /path/to/project
+```
+
+| Work Louder Input shortcut | Agents Commander action |
+| --- | --- |
+| `Ctrl+Shift+PageUp` | Previous panel |
+| `Ctrl+Shift+PageDown` | Next panel |
+| `Ctrl+Shift+Home` | Previous panel page |
+| `Ctrl+Shift+End` | Next panel page |
+| `Ctrl+Shift+F5` through `Ctrl+Shift+F8` | Focus visible slots 1–4 |
+| `Ctrl+Shift+F9` | Panel navigator |
+| `Ctrl+Shift+F10` | Routed-message Activity |
+| `Ctrl+Shift+F11` | Guarded one-time approval |
+| `Ctrl+Shift+F12` | Guarded rejection |
+| `Ctrl+Shift+Insert` | Control test overlay |
+
+Keep these assignments exact. This mode receives ordinary terminal keyboard
+events, so Doctor cannot prove which physical device sent them; complete the
+interactive checklist instead.
 
 ## Conference rehearsal
 
-1. Connect the Codex Micro by USB-C. A wired connection is the preferred stage path; Bluetooth remains a convenience path.
-2. Open Work Louder Input and confirm the Agents Commander layer is active.
-3. Run `agents-commander --codex-micro-test` and complete all 13 checks.
-4. Start the actual conference command with `--codex-micro` added explicitly.
-5. Exercise page navigation with more panels than the visible density.
-6. Test approval and rejection against a disposable Codex task, then test an unrelated or changed prompt to confirm it fails closed.
-7. Keep a conventional keyboard connected and rehearse the normal F-key and `Tab` fallbacks.
+1. Connect the Codex Micro by USB-C and select its wired device mode. Keep a
+   conventional keyboard connected as the stage fallback.
+2. Run `agents-commander --doctor --codex-micro` and resolve every Codex Micro
+   warning, including Input Monitoring permission.
+3. Run `agents-commander --codex-micro-test` and exercise every control used in
+   the talk.
+4. Start the audience-facing command with `--codex-micro` added explicitly.
+5. Exercise navigation with more panels than the visible density.
+6. If decision controls are part of the demo, enable them explicitly and test
+   approval and rejection against a disposable Codex task. Confirm that an
+   unrelated, changed, or stale prompt sends nothing.
+7. Unplug and reconnect the controller once, confirm the status recovers, and
+   rehearse continuing with the keyboard if it does not.
 
-The checklist validates that the expected keyboard shortcuts reach Agents Commander. It cannot prove the identity, battery condition, connection quality, or RGB state of a physical device. Complete this rehearsal on the exact presentation computer, terminal, connection mode, and Codex CLI version that will be used on stage.
+Complete the rehearsal on the exact presentation computer, terminal,
+connection mode, and Codex CLI version that will be used on stage.

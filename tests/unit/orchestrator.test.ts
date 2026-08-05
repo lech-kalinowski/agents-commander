@@ -1969,6 +1969,42 @@ describe('Orchestrator', () => {
     expect(tp.sendInput).not.toHaveBeenCalled();
   });
 
+  it('revalidates a trusted hardware origin inside the session input lane', async () => {
+    const tp = mockTerminalPanel(0);
+    const grid = [
+      'Do you want to run this command?',
+      '> 1. Allow once',
+      '  2. No',
+    ];
+    tp.getVisibleGridLines.mockReturnValue(grid);
+    const agents = mockAgentManager({ 0: 'codex' });
+    const orchestrator = new Orchestrator(mockLayout({ 0: tp }) as any, agents as any) as any;
+    let release!: () => void;
+    const blocker = new Promise<void>((resolve) => { release = resolve; });
+    orchestrator.inputLaneTails.set('codex-session-0', blocker);
+    let originCurrent = true;
+    const validateOrigin = vi.fn(() => originCurrent);
+
+    const pending = orchestrator.submitGuardedCodexDecision(tp, {
+      action: 'approve',
+      sessionId: 'codex-session-0',
+      sessionGeneration: 1,
+      inputGeneration: 0n,
+      fingerprint: fingerprintCodexVisibleGrid(grid),
+      validateOrigin,
+    });
+    await Promise.resolve();
+    expect(validateOrigin).not.toHaveBeenCalled();
+
+    originCurrent = false;
+    release();
+
+    await expect(pending).resolves.toBe(false);
+    expect(validateOrigin).toHaveBeenCalledOnce();
+    expect(tp.getVisibleGridLines).not.toHaveBeenCalled();
+    expect(tp.sendInput).not.toHaveBeenCalled();
+  });
+
   it('rejects a Codex decision after either managed or PTY session identity changes', async () => {
     const tp = mockTerminalPanel(0);
     const grid = [

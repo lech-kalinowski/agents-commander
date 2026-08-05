@@ -69,7 +69,10 @@ describe('TerminalPanel input isolation', () => {
     while (isDialogActive()) leaveDialog();
   });
 
-  function createInputHarness(microEnabled = false) {
+  function createInputHarness(
+    microEnabled = false,
+    inputMode: 'native' | 'keyboard' = 'native',
+  ) {
     const outputBox = new EventEmitter() as any;
     outputBox.height = 10;
     outputBox.aleft = 0;
@@ -87,7 +90,7 @@ describe('TerminalPanel input isolation', () => {
       screen: { render: vi.fn() },
       config: {
         hardware: {
-          codexMicro: { enabled: microEnabled, decisionControls: true },
+          codexMicro: { enabled: microEnabled, inputMode, decisionControls: true },
         },
       },
       vterm: { mouseEnabled: true },
@@ -156,7 +159,7 @@ describe('TerminalPanel input isolation', () => {
     }
   });
 
-  it('reserves Codex Micro chords only while the integration is enabled', () => {
+  it('reserves Codex Micro chords only in explicit keyboard fallback mode', () => {
     const cases = [
       [{ name: 'pageup', full: 'C-S-pageup', ctrl: true, shift: true }, '\x1b[5;6~'],
       [{ name: 'pagedown', full: 'C-S-pagedown', ctrl: true, shift: true }, '\x1b[6;6~'],
@@ -170,10 +173,14 @@ describe('TerminalPanel input isolation', () => {
     for (const [key] of cases) disabled.outputBox.emit('keypress', undefined, key);
     expect(disabled.stdin.write.mock.calls).toEqual(cases.map(([, bytes]) => [bytes]));
 
-    const enabled = createInputHarness(true);
-    for (const [key] of cases) enabled.outputBox.emit('keypress', undefined, key);
-    expect(enabled.stdin.write).not.toHaveBeenCalled();
-    expect(enabled.panel.onUserInput).not.toHaveBeenCalled();
+    const native = createInputHarness(true, 'native');
+    for (const [key] of cases) native.outputBox.emit('keypress', undefined, key);
+    expect(native.stdin.write.mock.calls).toEqual(cases.map(([, bytes]) => [bytes]));
+
+    const keyboard = createInputHarness(true, 'keyboard');
+    for (const [key] of cases) keyboard.outputBox.emit('keypress', undefined, key);
+    expect(keyboard.stdin.write).not.toHaveBeenCalled();
+    expect(keyboard.panel.onUserInput).not.toHaveBeenCalled();
   });
 
   it('returns a detached visible-grid snapshot for guarded decisions', () => {

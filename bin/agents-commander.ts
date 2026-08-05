@@ -26,6 +26,8 @@ interface CliOptions {
   conference?: boolean;
   demo?: boolean;
   codexMicro?: boolean;
+  codexMicroKeyboard?: boolean;
+  codexMicroDecisions?: boolean;
   codexMicroTest?: boolean;
 }
 
@@ -46,8 +48,11 @@ program
   .option('--doctor', 'Run startup diagnostics and exit')
   .option('--conference', 'Use presentation-safe Conference Mode defaults')
   .option('--demo', 'Launch the deterministic offline conference demo')
-  .option('--codex-micro', 'Enable Codex Micro keyboard controls for this launch')
-  .option('--no-codex-micro', 'Disable Codex Micro keyboard controls for this launch')
+  .option('--codex-micro', 'Enable native Codex Micro controls for this launch')
+  .option('--no-codex-micro', 'Disable Codex Micro controls for this launch')
+  .option('--codex-micro-keyboard', 'Use legacy programmed keyboard shortcuts instead of native input')
+  .option('--codex-micro-decisions', 'Enable guarded approve/reject controls for this launch')
+  .option('--no-codex-micro-decisions', 'Disable guarded approve/reject controls for this launch')
   .option('--codex-micro-test', 'Enable Codex Micro controls and open the input checklist')
   .action(async (directory: string, options: CliOptions, command: Command) => {
     const requestedWorkingDir = path.resolve(directory);
@@ -58,9 +63,18 @@ program
         const config = loadConfig();
         if (command.getOptionValueSource('codexMicro') === 'cli') {
           config.hardware.codexMicro.enabled = options.codexMicro === true;
+          if (options.codexMicro) config.hardware.codexMicro.inputMode = 'native';
         }
         if (options.codexMicroTest) {
           config.hardware.codexMicro.enabled = true;
+          if (!options.codexMicroKeyboard) config.hardware.codexMicro.inputMode = 'native';
+        }
+        if (options.codexMicroKeyboard && options.codexMicro !== false) {
+          config.hardware.codexMicro.enabled = true;
+          config.hardware.codexMicro.inputMode = 'keyboard';
+        }
+        if (command.getOptionValueSource('codexMicroDecisions') === 'cli') {
+          config.hardware.codexMicro.decisionControls = options.codexMicroDecisions === true;
         }
         const report = await runDoctor({ workingDirectory: requestedWorkingDir, config });
         process.stdout.write(`${formatDoctorReport(report)}\n`);
@@ -113,6 +127,10 @@ program
         conference: options.conference,
         demo: options.demo,
         codexMicro,
+        codexMicroKeyboard: codexMicro === false ? false : options.codexMicroKeyboard,
+        codexMicroDecisions: command.getOptionValueSource('codexMicroDecisions') === 'cli'
+          ? options.codexMicroDecisions
+          : undefined,
         codexMicroTest: options.codexMicroTest,
         onShutdown: demoWorkspace?.cleanup,
         onSignalOwnership: demoWorkspace

@@ -12,7 +12,10 @@ import { LayoutManager } from './screen/layout-manager.js';
 import { createFunctionBar } from './screen/function-bar.js';
 import { createStatusBar, updateStatusBar } from './screen/status-bar.js';
 import { showHelpDialog } from './screen/dialog/help-dialog.js';
-import { showConfirmDialog } from './screen/dialog/confirm-dialog.js';
+import {
+  showConfirmDialog,
+  type ConfirmDialogController,
+} from './screen/dialog/confirm-dialog.js';
 import { showInputDialog } from './screen/dialog/input-dialog.js';
 import { showAgentDialog } from './screen/dialog/agent-dialog.js';
 import { showLogDialog } from './screen/dialog/log-dialog.js';
@@ -70,6 +73,11 @@ import {
   type CodexMicroAction,
 } from './hardware/codex-micro.js';
 import {
+  CodexMicroNativeBridge,
+  type CodexMicroDeviceStatus,
+  type CodexMicroHardwareEvent,
+} from './hardware/codex-micro-native.js';
+import {
   detectCodexDecision,
   type CodexDecisionAction,
 } from './hardware/codex-decision.js';
@@ -80,6 +88,16 @@ import {
 
 const RECOMMENDED_CONFERENCE_COLUMNS = 100;
 const RECOMMENDED_CONFERENCE_ROWS = 24;
+const CODEX_MICRO_DECISION_LEASE_MS = 5_000;
+const CODEX_MICRO_CLOCK_SKEW_MS = 1_000;
+
+interface PendingCodexMicroDecision {
+  action: CodexDecisionAction;
+  event: CodexMicroHardwareEvent;
+  controller: ConfirmDialogController | null;
+  expiresAt: number;
+  timeout: ReturnType<typeof setTimeout> | null;
+}
 
 export interface AppLaunchOptions extends ExplicitLaunchOptions {
   onShutdown?: () => void | Promise<void>;
@@ -109,6 +127,15 @@ export class App {
   private demoRollbackPromise: Promise<void> | null = null;
   private activityDialog: ActivityDialogHandle | null = null;
   private codexMicroTestDialog: CodexMicroTestDialogHandle | null = null;
+  private codexMicroBridge: CodexMicroNativeBridge | null = null;
+  private codexMicroStatus: CodexMicroDeviceStatus = {
+    state: 'starting',
+    transport: 'unknown',
+    connectionEpoch: null,
+  };
+  private pendingCodexMicroDecision: PendingCodexMicroDecision | null = null;
+  private unsubscribeCodexMicroStatus: (() => void) | null = null;
+  private unsubscribeCodexMicroInput: (() => void) | null = null;
   private unsubscribeAgentLifecycle: (() => void) | null = null;
   private watcherStarted = false;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -240,6 +267,7 @@ export class App {
     appEvents.on('file:changed', this.fileChangedHandler);
 
     this.setupGlobalKeys();
+    this.startCodexMicroNativeInput();
     this.updateStatus();
 
     this.screen.on('resize', () => {
@@ -277,9 +305,114 @@ export class App {
   }
 
   private openCodexMicroTest(markHardwareAction = true): void {
-    this.codexMicroTestDialog = showCodexMicroTestDialog(this.screen, this.theme);
+    this.codexMicroTestDialog = showCodexMicroTestDialog(this.screen, this.theme, {
+      inputMode: this.config.hardware.codexMicro.inputMode,
+      initialStatus: this.codexMicroStatus,
+      decisionControls: this.config.hardware.codexMicro.decisionControls,
+    });
     if (markHardwareAction) {
       this.codexMicroTestDialog.recordAction('open-test-overlay');
+    }
+  }
+
+  private startCodexMicroNativeInput(): void {
+    const micro = this.config.hardware.codexMicro;
+    if (!micro.enabled || micro.inputMode !== 'native' || this.codexMicroBridge) return;
+
+    const bridge = new CodexMicroNativeBridge();
+    this.codexMicroBridge = bridge;
+    this.unsubscribeCodexMicroStatus = bridge.onStatus((status) => {
+      this.handleCodexMicroStatus(status);
+    });
+    this.unsubscribeCodexMicroInput = bridge.onInput((event) => {
+      this.handleCodexMicroHardwareEvent(event);
+    });
+    bridge.start();
+  }
+
+  private handleCodexMicroStatus(status: CodexMicroDeviceStatus): void {
+    const previous = this.codexMicroStatus;
+    this.codexMicroStatus = status;
+    this.codexMicroTestDialog?.setDeviceStatus(status);
+
+    const pending = this.pendingCodexMicroDecision;
+    if (
+      pending
+      && (
+        status.state !== 'connected'
+        || status.connectionEpoch !== pending.event.connectionEpoch
+      )
+    ) {
+      if (pending.timeout) clearTimeout(pending.timeout);
+      pending.controller?.cancel();
+      this.pendingCodexMicroDecision = null;
+    }
+
+    if (!this.disposalStarted && previous.state !== 'connected' && status.state === 'connected') {
+      const transport = status.transport === 'unknown' ? '' : ` (${status.transport.toUpperCase()})`;
+      showToast(this.screen, `Codex Micro connected${transport}`, 2000);
+    } else if (
+      !this.disposalStarted
+      && previous.state === 'connected'
+      && status.state !== 'connected'
+    ) {
+      showErrorToast(this.screen, 'Codex Micro disconnected; hardware actions are paused');
+    }
+
+    if (this.layout && this.statusBar && this.screen) this.updateStatus();
+  }
+
+  private isCurrentCodexMicroEvent(event: CodexMicroHardwareEvent): boolean {
+    const now = Date.now();
+    return this.codexMicroStatus.state === 'connected'
+      && this.codexMicroStatus.connectionEpoch === event.connectionEpoch
+      && event.receivedAt <= now + CODEX_MICRO_CLOCK_SKEW_MS
+      && now - event.receivedAt <= CODEX_MICRO_DECISION_LEASE_MS;
+  }
+
+  private handleCodexMicroHardwareEvent(event: CodexMicroHardwareEvent): void {
+    if (this.disposalStarted || !this.isCurrentCodexMicroEvent(event)) return;
+
+    if (this.codexMicroTestDialog?.isOpen()) {
+      this.codexMicroTestDialog.recordHardwareInput(event.input, event.action);
+      return;
+    }
+
+    const pending = this.pendingCodexMicroDecision;
+    if (pending) {
+      if (Date.now() > pending.expiresAt) {
+        if (pending.timeout) clearTimeout(pending.timeout);
+        this.pendingCodexMicroDecision = null;
+        pending.controller?.cancel();
+        showErrorToast(this.screen, 'Codex Micro confirmation expired; press the decision key again');
+        return;
+      }
+      if (
+        pending.action === event.action
+        && pending.event.connectionEpoch === event.connectionEpoch
+        && (event.action === 'approve' || event.action === 'reject')
+      ) {
+        pending.event = event;
+        pending.controller?.confirm();
+      }
+      return;
+    }
+
+    if (
+      this.destructiveTransitionInProgress
+      || isDialogActive()
+      || this.fullScreenOverlayActive
+    ) return;
+
+    try {
+      const result = this.runCodexMicroAction(event.action, event);
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        (result as Promise<void>).catch((error) => {
+          logger.error('Codex Micro hardware action failed', error);
+        });
+      }
+    } catch (error) {
+      logger.error('Codex Micro hardware action failed', error);
     }
   }
 
@@ -314,11 +447,15 @@ export class App {
     };
   }
 
-  private async actionCodexMicroDecision(action: CodexDecisionAction): Promise<void> {
+  private async actionCodexMicroDecision(
+    action: CodexDecisionAction,
+    hardwareEvent?: CodexMicroHardwareEvent,
+  ): Promise<void> {
     if (!this.config.hardware?.codexMicro.decisionControls) {
       showErrorToast(this.screen, 'Codex Micro decision controls are disabled in configuration');
       return;
     }
+    if (hardwareEvent && !this.isCurrentCodexMicroEvent(hardwareEvent)) return;
 
     const expected = this.currentCodexDecision(action);
     if (!expected) {
@@ -331,13 +468,58 @@ export class App {
       return;
     }
 
-    const confirmed = await showConfirmDialog(
-      this.screen,
-      this.theme,
-      action === 'approve' ? 'Codex Micro — Approve Once' : 'Codex Micro — Reject',
-      `Submit the currently selected Codex option “${expected.selectedLabel}”? Commander will send Enter only if the complete prompt is still unchanged.`,
-    );
+    const title = action === 'approve' ? 'Codex Micro — Approve Once' : 'Codex Micro — Reject';
+    const message = `Submit the currently selected Codex option “${expected.selectedLabel}”? `
+      + 'Commander will send Enter only if the complete prompt is still unchanged.'
+      + (hardwareEvent ? ' Press the same device key again within 5 seconds to confirm.' : '');
+    let pending: PendingCodexMicroDecision | null = null;
+    let confirmed: boolean;
+    if (hardwareEvent) {
+      pending = {
+        action,
+        event: hardwareEvent,
+        controller: null,
+        expiresAt: Date.now() + CODEX_MICRO_DECISION_LEASE_MS,
+        timeout: null,
+      };
+      this.pendingCodexMicroDecision = pending;
+      const decision = pending;
+      decision.timeout = setTimeout(() => {
+        if (this.pendingCodexMicroDecision !== decision) return;
+        this.pendingCodexMicroDecision = null;
+        decision.controller?.cancel();
+        if (!this.disposalStarted) {
+          showErrorToast(this.screen, 'Codex Micro confirmation expired; press the decision key again');
+        }
+      }, CODEX_MICRO_DECISION_LEASE_MS);
+      decision.timeout.unref?.();
+      try {
+        confirmed = await showConfirmDialog(this.screen, this.theme, title, message, {
+          onReady: (controller) => {
+            if (this.pendingCodexMicroDecision === pending) pending!.controller = controller;
+          },
+        });
+      } finally {
+        if (pending.timeout) clearTimeout(pending.timeout);
+        pending.timeout = null;
+        if (this.pendingCodexMicroDecision === pending) this.pendingCodexMicroDecision = null;
+      }
+    } else {
+      confirmed = await showConfirmDialog(this.screen, this.theme, title, message);
+    }
     if (!confirmed || this.disposalStarted) return;
+
+    const confirmedHardwareEvent = pending?.event;
+    if (
+      confirmedHardwareEvent
+      && (
+        Date.now() > pending!.expiresAt
+        || !this.isCurrentCodexMicroEvent(confirmedHardwareEvent)
+      )
+    ) {
+      showErrorToast(this.screen, 'Codex Micro confirmation expired or disconnected; no input was sent');
+      return;
+    }
 
     const current = this.currentCodexDecision(action);
     if (
@@ -360,6 +542,14 @@ export class App {
         sessionGeneration: expected.sessionGeneration,
         inputGeneration: expected.inputGeneration,
         fingerprint: expected.fingerprint,
+        ...(confirmedHardwareEvent
+          ? {
+              validateOrigin: () => (
+                Date.now() <= pending!.expiresAt
+                && this.isCurrentCodexMicroEvent(confirmedHardwareEvent)
+              ),
+            }
+          : {}),
       },
     );
     if (!submitted) {
@@ -372,7 +562,10 @@ export class App {
     );
   }
 
-  private runCodexMicroAction(action: CodexMicroAction): void | Promise<void> {
+  private runCodexMicroAction(
+    action: CodexMicroAction,
+    hardwareEvent?: CodexMicroHardwareEvent,
+  ): void | Promise<void> {
     switch (action) {
       case 'previous-panel':
         this.layout.focusPanelOffset(-1);
@@ -396,6 +589,22 @@ export class App {
         }
         break;
       }
+      case 'focus-panel-1':
+      case 'focus-panel-2':
+      case 'focus-panel-3':
+      case 'focus-panel-4':
+      case 'focus-panel-5':
+      case 'focus-panel-6': {
+        const slot = Number(action.at(-1));
+        if (!this.layout.focusWorkspaceSlot(slot)) {
+          showErrorToast(this.screen, `Active workspace slot ${slot} is unavailable`);
+        }
+        break;
+      }
+      case 'add-panel':
+        return this.actionAddPanel();
+      case 'cycle-density':
+        return this.actionCyclePanelDensity();
       case 'open-navigator':
         return this.actionNavigatePanel();
       case 'open-activity':
@@ -403,7 +612,7 @@ export class App {
         return;
       case 'approve':
       case 'reject':
-        return this.actionCodexMicroDecision(action);
+        return this.actionCodexMicroDecision(action, hardwareEvent);
       case 'open-test-overlay':
         this.openCodexMicroTest();
         return;
@@ -1438,10 +1647,12 @@ export class App {
     // Shift+F12 - protocol guide (F12 itself is reserved for Activity).
     screen.key(['S-f12'], guard(() => showProtocolGuide(screen, this.theme)));
 
-    // Codex Micro is a generic keyboard-HID surface. Its modified chords are
-    // reserved and dispatched only when explicitly enabled. While the test
-    // overlay is open, controls are recorded without executing their actions.
-    if (this.config?.hardware?.codexMicro.enabled) {
+    // Programmed keyboard shortcuts remain an explicit compatibility mode.
+    // Shipping devices are handled through the isolated native bridge.
+    if (
+      this.config?.hardware?.codexMicro.enabled
+      && this.config.hardware.codexMicro.inputMode === 'keyboard'
+    ) {
       for (const binding of CODEX_MICRO_BINDINGS) {
         const runAction = guard(() => this.runCodexMicroAction(binding.action));
         screen.key([binding.key], () => {
@@ -1552,8 +1763,28 @@ export class App {
 
   private conferenceStatus(): { modeLabel?: string; warning?: string } {
     const microEnabled = this.config?.hardware?.codexMicro.enabled === true;
+    let microLabel = '';
+    if (microEnabled) {
+      if (this.config.hardware.codexMicro.inputMode === 'keyboard') {
+        microLabel = 'MICRO:KEYS';
+      } else if (!this.codexMicroStatus) {
+        microLabel = 'MICRO';
+      } else if (this.codexMicroStatus.state === 'connected') {
+        microLabel = this.codexMicroStatus.transport === 'usb'
+          ? 'MICRO:USB'
+          : this.codexMicroStatus.transport === 'bluetooth'
+            ? 'MICRO:BT'
+            : 'MICRO:ON';
+      } else if (this.codexMicroStatus.state === 'starting') {
+        microLabel = 'MICRO:WAIT';
+      } else if (this.codexMicroStatus.state === 'disconnected') {
+        microLabel = 'MICRO:LOST';
+      } else {
+        microLabel = 'MICRO:!';
+      }
+    }
     if (!this.launch.conference) {
-      return microEnabled ? { modeLabel: 'MICRO' } : {};
+      return microLabel ? { modeLabel: microLabel } : {};
     }
     const columns = typeof this.screen.width === 'number' ? this.screen.width : 80;
     const rows = typeof this.screen.height === 'number' ? this.screen.height : 24;
@@ -1561,7 +1792,7 @@ export class App {
       ? `screen ${columns}x${rows}; use ${RECOMMENDED_CONFERENCE_COLUMNS}x${RECOMMENDED_CONFERENCE_ROWS}+`
       : undefined;
     return {
-      modeLabel: [this.launch.demo ? 'OFFLINE DEMO' : 'CONFERENCE', microEnabled ? 'MICRO' : '']
+      modeLabel: [this.launch.demo ? 'OFFLINE DEMO' : 'CONFERENCE', microLabel]
         .filter(Boolean)
         .join(' + '),
       warning,
@@ -1653,6 +1884,10 @@ export class App {
 
     const performDispose = async (): Promise<void> => {
       const failures: unknown[] = [];
+      const pendingDecision = this.pendingCodexMicroDecision;
+      this.pendingCodexMicroDecision = null;
+      if (pendingDecision?.timeout) clearTimeout(pendingDecision.timeout);
+      pendingDecision?.controller?.cancel();
       try {
         if (this.screen) closeDialogsForScreen(this.screen);
       } catch (error) {
@@ -1666,6 +1901,17 @@ export class App {
         logger.error('Failed to unsubscribe application lifecycle listener', error);
       }
       this.unsubscribeAgentLifecycle = null;
+      try {
+        this.unsubscribeCodexMicroStatus?.();
+        this.unsubscribeCodexMicroInput?.();
+        await this.codexMicroBridge?.stop();
+      } catch (error) {
+        failures.push(error);
+        logger.error('Failed to stop Codex Micro input bridge', error);
+      }
+      this.unsubscribeCodexMicroStatus = null;
+      this.unsubscribeCodexMicroInput = null;
+      this.codexMicroBridge = null;
       this.demoStarted = false;
       this.demoPanelRoles.clear();
       if (this.activityDialog) {

@@ -47,6 +47,7 @@ function createDecisionHarness(grid = approvedGrid) {
     focusPanelOffset: vi.fn(() => true),
     focusPageOffset: vi.fn(() => true),
     focusVisibleSlot: vi.fn(() => true),
+    focusWorkspaceSlot: vi.fn(() => true),
   };
   const agentManager = {
     getAgentType: vi.fn(() => 'codex'),
@@ -59,7 +60,7 @@ function createDecisionHarness(grid = approvedGrid) {
   Object.assign(app, {
     config: {
       hardware: {
-        codexMicro: { enabled: true, decisionControls: true },
+        codexMicro: { enabled: true, inputMode: 'native', decisionControls: true },
       },
     },
     layout,
@@ -71,6 +72,12 @@ function createDecisionHarness(grid = approvedGrid) {
     destructiveTransitionInProgress: false,
     fullScreenOverlayActive: false,
     codexMicroTestDialog: null,
+    codexMicroStatus: {
+      state: 'connected',
+      transport: 'usb',
+      connectionEpoch: 'micro-epoch-1',
+    },
+    pendingCodexMicroDecision: null,
     updateStatus: vi.fn(),
   });
   return { app, terminal, layout, agentManager, orchestrator };
@@ -156,9 +163,12 @@ describe('App Codex Micro integration', () => {
 
   it('records test-overlay controls without executing their normal actions', () => {
     const { app, layout } = createDecisionHarness();
+    app.config.hardware.codexMicro.inputMode = 'keyboard';
     const recordAction = vi.fn(() => true);
     const handle = {
       recordAction,
+      recordHardwareInput: vi.fn(() => true),
+      setDeviceStatus: vi.fn(),
       reset: vi.fn(),
       close: vi.fn(),
       isOpen: vi.fn(() => true),
@@ -186,17 +196,232 @@ describe('App Codex Micro integration', () => {
     app.runCodexMicroAction('previous-page');
     app.runCodexMicroAction('next-page');
     app.runCodexMicroAction('focus-slot-4');
+    app.runCodexMicroAction('focus-panel-6');
 
     expect(layout.focusPanelOffset.mock.calls).toEqual([[-1], [1]]);
     expect(layout.focusPageOffset.mock.calls).toEqual([[-1], [1]]);
     expect(layout.focusVisibleSlot).toHaveBeenCalledWith(4);
-    expect(app.updateStatus).toHaveBeenCalledTimes(5);
+    expect(layout.focusWorkspaceSlot).toHaveBeenCalledWith(6);
+    expect(app.updateStatus).toHaveBeenCalledTimes(6);
+  });
+
+  it('routes current native events and intercepts them while the hardware checklist is open', () => {
+    const { app, layout } = createDecisionHarness();
+    const event = {
+      source: 'native',
+      input: 'AG02',
+      action: 'focus-panel-3',
+      connectionEpoch: 'micro-epoch-1',
+      sequence: 1,
+      receivedAt: Date.now(),
+    };
+
+    app.handleCodexMicroHardwareEvent(event);
+    expect(layout.focusWorkspaceSlot).toHaveBeenCalledWith(3);
+
+    const recordHardwareInput = vi.fn(() => true);
+    app.codexMicroTestDialog = {
+      recordAction: vi.fn(() => true),
+      recordHardwareInput,
+      setDeviceStatus: vi.fn(),
+      reset: vi.fn(),
+      close: vi.fn(),
+      isOpen: vi.fn(() => true),
+      testedActions: vi.fn(() => []),
+    };
+    app.handleCodexMicroHardwareEvent({ ...event, sequence: 2, input: 'AG03' });
+
+    expect(recordHardwareInput).toHaveBeenCalledWith('AG03', 'focus-panel-3');
+    expect(layout.focusWorkspaceSlot).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores expired and prior-connection hardware events', () => {
+    const { app, layout } = createDecisionHarness();
+    const base = {
+      source: 'native',
+      input: 'AG00',
+      action: 'focus-panel-1',
+      sequence: 1,
+    };
+
+    app.handleCodexMicroHardwareEvent({
+      ...base,
+      connectionEpoch: 'prior-epoch',
+      receivedAt: Date.now(),
+    });
+    app.handleCodexMicroHardwareEvent({
+      ...base,
+      connectionEpoch: 'micro-epoch-1',
+      receivedAt: Date.now() - 5_001,
+    });
+
+    expect(layout.focusWorkspaceSlot).not.toHaveBeenCalled();
+  });
+
+  it('requires a second current physical decision press and carries origin validation forward', async () => {
+    const { app, terminal, orchestrator } = createDecisionHarness();
+    let resolveDialog!: (confirmed: boolean) => void;
+    const controller = {
+      confirm: vi.fn(() => resolveDialog(true)),
+      cancel: vi.fn(() => resolveDialog(false)),
+      isOpen: vi.fn(() => true),
+    };
+    vi.mocked(showConfirmDialog).mockImplementation((
+      _screen,
+      _theme,
+      _title,
+      _message,
+      options,
+    ) => new Promise<boolean>((resolve) => {
+      resolveDialog = resolve;
+      options?.onReady?.(controller);
+    }));
+    const first = {
+      source: 'native',
+      input: 'ACT07',
+      action: 'approve',
+      connectionEpoch: 'micro-epoch-1',
+      sequence: 1,
+      receivedAt: Date.now(),
+    };
+
+    app.handleCodexMicroHardwareEvent(first);
+    await Promise.resolve();
+    expect(showConfirmDialog).toHaveBeenCalledWith(
+      app.screen,
+      app.theme,
+      'Codex Micro — Approve Once',
+      expect.stringContaining('same device key again within 5 seconds'),
+      expect.objectContaining({ onReady: expect.any(Function) }),
+    );
+    expect(orchestrator.submitGuardedCodexDecision).not.toHaveBeenCalled();
+
+    const second = { ...first, sequence: 2, receivedAt: Date.now() };
+    app.handleCodexMicroHardwareEvent(second);
+    await vi.waitFor(() => {
+      expect(orchestrator.submitGuardedCodexDecision).toHaveBeenCalledOnce();
+    });
+
+    expect(controller.confirm).toHaveBeenCalledOnce();
+    const [submittedTerminal, expected] = orchestrator.submitGuardedCodexDecision.mock.calls[0];
+    expect(submittedTerminal).toBe(terminal);
+    expect(expected).toMatchObject({
+      action: 'approve',
+      sessionId: 'codex-session-0',
+      validateOrigin: expect.any(Function),
+    });
+    expect(expected.validateOrigin()).toBe(true);
+
+    app.codexMicroStatus = {
+      state: 'disconnected',
+      transport: 'unknown',
+      connectionEpoch: null,
+    };
+    expect(expected.validateOrigin()).toBe(false);
+  });
+
+  it('expires the physical decision dialog and treats a late press as a new request', async () => {
+    vi.useFakeTimers();
+    try {
+      const { app, orchestrator } = createDecisionHarness();
+      let resolveDialog!: (confirmed: boolean) => void;
+      const controller = {
+        confirm: vi.fn(() => resolveDialog(true)),
+        cancel: vi.fn(() => resolveDialog(false)),
+        isOpen: vi.fn(() => true),
+      };
+      vi.mocked(showConfirmDialog).mockImplementation((
+        _screen,
+        _theme,
+        _title,
+        _message,
+        options,
+      ) => new Promise<boolean>((resolve) => {
+        resolveDialog = resolve;
+        options?.onReady?.(controller);
+      }));
+      const first = {
+        source: 'native',
+        input: 'ACT07',
+        action: 'approve',
+        connectionEpoch: 'micro-epoch-1',
+        sequence: 1,
+        receivedAt: Date.now(),
+      };
+
+      app.handleCodexMicroHardwareEvent(first);
+      await vi.advanceTimersByTimeAsync(5_001);
+
+      expect(controller.cancel).toHaveBeenCalledOnce();
+      expect(orchestrator.submitGuardedCodexDecision).not.toHaveBeenCalled();
+      expect(app.pendingCodexMicroDecision).toBeNull();
+
+      app.handleCodexMicroHardwareEvent({
+        ...first,
+        sequence: 2,
+        receivedAt: Date.now(),
+      });
+      await Promise.resolve();
+
+      expect(showConfirmDialog).toHaveBeenCalledTimes(2);
+      expect(controller.confirm).not.toHaveBeenCalled();
+      expect(orchestrator.submitGuardedCodexDecision).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5_001);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels a pending physical decision when the device epoch disconnects', () => {
+    const { app } = createDecisionHarness();
+    const cancel = vi.fn();
+    app.pendingCodexMicroDecision = {
+      action: 'approve',
+      event: {
+        source: 'native',
+        input: 'ACT07',
+        action: 'approve',
+        connectionEpoch: 'micro-epoch-1',
+        sequence: 1,
+        receivedAt: Date.now(),
+      },
+      controller: { cancel, confirm: vi.fn(), isOpen: vi.fn(() => true) },
+      expiresAt: Date.now() + 5_000,
+      timeout: null,
+    };
+    app.codexMicroTestDialog = {
+      recordAction: vi.fn(),
+      recordHardwareInput: vi.fn(),
+      setDeviceStatus: vi.fn(),
+      reset: vi.fn(),
+      close: vi.fn(),
+      isOpen: vi.fn(() => false),
+      testedActions: vi.fn(() => []),
+    };
+
+    app.handleCodexMicroStatus({
+      state: 'disconnected',
+      transport: 'unknown',
+      connectionEpoch: null,
+    });
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(app.pendingCodexMicroDecision).toBeNull();
+    expect(app.codexMicroTestDialog.setDeviceStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'disconnected' }),
+    );
+    expect(showErrorToast).toHaveBeenCalledWith(
+      app.screen,
+      'Codex Micro disconnected; hardware actions are paused',
+    );
   });
 
   it('does not pre-check the overlay action when test mode opens automatically', () => {
     const { app } = createDecisionHarness();
     const handle = {
       recordAction: vi.fn(() => true),
+      recordHardwareInput: vi.fn(() => true),
+      setDeviceStatus: vi.fn(),
       reset: vi.fn(),
       close: vi.fn(),
       isOpen: vi.fn(() => true),

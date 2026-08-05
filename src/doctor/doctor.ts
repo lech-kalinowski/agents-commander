@@ -8,6 +8,7 @@ import { resolveExecutablePath } from '../utils/command-resolution.js';
 import {
   listBuiltinTemplateFiles,
   resolveBuiltinTemplateDirectory,
+  resolveCodexMicroBridgePath,
   resolveDemoAgentPath,
   resolvePtyHelperPath,
   runtimeAssetLookupForModule,
@@ -24,6 +25,8 @@ const RECOMMENDED_COLUMNS = 100;
 const RECOMMENDED_ROWS = 24;
 const EXPECTED_TEMPLATE_FLOOR = 100;
 const MINIMUM_NODE_MAJOR = 22;
+const CODEX_MICRO_PROBE_TIMEOUT_MS = 3_000;
+const CODEX_MICRO_PROBE_OUTPUT_BYTES = 8 * 1024;
 
 export interface DoctorEnvironment {
   nodeVersion: string;
@@ -72,6 +75,208 @@ function buildReport(rows: DoctorRow[]): DoctorReport {
     warnings: rows.filter((entry) => entry.status === 'warn').length,
     failures: rows.filter((entry) => entry.status === 'fail').length,
   };
+}
+
+type CodexMicroProbeState =
+  | 'connected'
+  | 'absent'
+  | 'unsupported'
+  | 'unavailable';
+
+interface CodexMicroProbeStatus {
+  state: CodexMicroProbeState;
+  reason?: string;
+  transport?: 'usb' | 'bluetooth' | 'unknown';
+  firmware?: string;
+  battery?: number;
+  charging?: boolean;
+}
+
+function parseCodexMicroProbe(stdout: string): CodexMicroProbeStatus | null {
+  for (const line of stdout.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed || Buffer.byteLength(trimmed, 'utf8') > CODEX_MICRO_PROBE_OUTPUT_BYTES) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!value || typeof value !== 'object') continue;
+    const record = value as Record<string, unknown>;
+    if (record.version !== 1 || record.type !== 'probe') continue;
+    if (
+      record.status !== 'connected'
+      && record.status !== 'absent'
+      && record.status !== 'unsupported'
+      && record.status !== 'unavailable'
+    ) continue;
+
+    const status: CodexMicroProbeStatus = { state: record.status };
+    if (
+      record.transport === 'usb'
+      || record.transport === 'bluetooth'
+      || record.transport === 'unknown'
+    ) {
+      status.transport = record.transport;
+    }
+    if (
+      typeof record.reason === 'string'
+      && /^[a-z][a-z0-9_]{0,63}$/u.test(record.reason)
+    ) status.reason = record.reason;
+    const device = record.device && typeof record.device === 'object'
+      ? record.device as Record<string, unknown>
+      : null;
+    if (
+      typeof device?.firmwareVersion === 'string'
+      && /^v?[0-9]+(?:\.[0-9]+){1,3}$/u.test(device.firmwareVersion)
+    ) status.firmware = device.firmwareVersion;
+    if (
+      typeof device?.batteryPercent === 'number'
+      && Number.isFinite(device.batteryPercent)
+      && device.batteryPercent >= 0
+      && device.batteryPercent <= 100
+    ) status.battery = Math.round(device.batteryPercent);
+    if (typeof device?.charging === 'boolean') status.charging = device.charging;
+    return status;
+  }
+  return null;
+}
+
+function codexMicroConnectedDetail(status: CodexMicroProbeStatus): string | undefined {
+  const details: string[] = [];
+  if (status.firmware) details.push(`Firmware ${status.firmware}`);
+  if (status.battery !== undefined) {
+    details.push(`Battery ${status.battery}%${status.charging ? ' (charging)' : ''}`);
+  }
+  return details.length > 0 ? details.join('; ') : undefined;
+}
+
+async function diagnoseCodexMicro(options: {
+  config: AppConfig;
+  platform: NodeJS.Platform;
+  pythonPath: string | null;
+  assetLookup: RuntimeAssetLookupOptions;
+  probe: NonNullable<RunDoctorOptions['probe']>;
+}): Promise<DoctorRow | null> {
+  const microConfig = options.config.hardware?.codexMicro;
+  if (!microConfig?.enabled) return null;
+
+  if ((microConfig.inputMode ?? 'native') === 'keyboard') {
+    return row(
+      'codex-micro',
+      'Codex Micro',
+      'warn',
+      'Legacy keyboard fallback enabled; physical device identity is not checked',
+      'Program the reserved shortcuts, then run agents-commander --codex-micro-test.',
+    );
+  }
+
+  if (options.platform !== 'darwin') {
+    return row(
+      'codex-micro',
+      'Codex Micro',
+      'warn',
+      'Native device input currently requires macOS',
+      'Use --codex-micro-keyboard for the programmed-shortcut fallback.',
+    );
+  }
+
+  if (!options.pythonPath || !path.isAbsolute(options.pythonPath)) {
+    return row(
+      'codex-micro',
+      'Codex Micro',
+      'warn',
+      'Native device probe requires Python 3',
+    );
+  }
+
+  const bridgePath = resolveCodexMicroBridgePath(options.assetLookup);
+  if (!bridgePath) {
+    return row(
+      'codex-micro',
+      'Codex Micro',
+      'warn',
+      'Packaged native bridge was not found or is unreadable',
+    );
+  }
+
+  const result = await options.probe(options.pythonPath, [bridgePath, '--probe'], {
+    timeoutMs: CODEX_MICRO_PROBE_TIMEOUT_MS,
+    maxOutputBytes: CODEX_MICRO_PROBE_OUTPUT_BYTES,
+  });
+  if (result.timedOut) {
+    return row('codex-micro', 'Codex Micro', 'warn', 'Native device probe timed out');
+  }
+  if (result.truncated) {
+    return row('codex-micro', 'Codex Micro', 'warn', 'Native device probe returned too much data');
+  }
+  const status = parseCodexMicroProbe(result.stdout);
+  if (!status) {
+    return row(
+      'codex-micro',
+      'Codex Micro',
+      'warn',
+      'Native device probe failed',
+      'Reconnect the controller or use --codex-micro-keyboard as a fallback.',
+    );
+  }
+
+  if (status.state === 'connected' && !result.ok) {
+    const outcome = result.signal
+      ? `Probe stopped with ${result.signal}`
+      : `Probe exited with code ${result.exitCode ?? 'unknown'}`;
+    return row(
+      'codex-micro',
+      'Codex Micro',
+      'warn',
+      'Native device probe ended unexpectedly',
+      `${outcome}; reconnect the controller and run Doctor again.`,
+    );
+  }
+
+  if (status.state === 'connected') {
+    const transport = status.transport === 'bluetooth'
+      ? 'Bluetooth'
+      : status.transport === 'usb' ? 'USB' : 'unknown transport';
+    return row(
+      'codex-micro',
+      'Codex Micro',
+      'pass',
+      `Connected over ${transport}`,
+      codexMicroConnectedDetail(status),
+    );
+  }
+  if (
+    status.state === 'unavailable'
+    && (status.reason === 'permission_denied' || status.reason === 'open_failed')
+  ) {
+    return row(
+      'codex-micro',
+      'Codex Micro',
+      'warn',
+      status.reason === 'permission_denied'
+        ? 'Input Monitoring permission is required'
+        : 'The device was found but could not be opened',
+      'Allow your terminal in System Settings > Privacy & Security > Input Monitoring, then reconnect it.',
+    );
+  }
+  if (status.state === 'absent') {
+    return row(
+      'codex-micro',
+      'Codex Micro',
+      'warn',
+      'No Codex Micro is connected',
+      'Connect by USB or Bluetooth, then rerun Doctor.',
+    );
+  }
+  return row(
+    'codex-micro',
+    'Codex Micro',
+    'warn',
+    status.state === 'unsupported' ? 'Native device input is unsupported here' : 'Native device input is unavailable',
+    'Reconnect the controller or use --codex-micro-keyboard as a fallback.',
+  );
 }
 
 function runtimeEnvironment(overrides: Partial<DoctorEnvironment> = {}): DoctorEnvironment {
@@ -166,16 +371,6 @@ export async function runDoctor(options: RunDoctorOptions): Promise<DoctorReport
     rows.push(row('terminal-size', 'Terminal size', 'pass', `${columns}x${terminalRows}`));
   }
 
-  if (config.hardware?.codexMicro.enabled) {
-    rows.push(row(
-      'codex-micro',
-      'Codex Micro',
-      'warn',
-      'Keyboard-HID controls enabled; device identity cannot be verified',
-      'Run agents-commander --codex-micro-test and press every mapped control.',
-    ));
-  }
-
   const pythonPath = resolveExecutable('python3');
   if (!pythonPath || !path.isAbsolute(pythonPath)) {
     rows.push(row('python', 'Python 3', 'fail', 'python3 executable was not found'));
@@ -200,6 +395,15 @@ export async function runDoctor(options: RunDoctorOptions): Promise<DoctorReport
   rows.push(helperPath
     ? row('pty-helper', 'PTY helper', 'pass', helperPath)
     : row('pty-helper', 'PTY helper', 'fail', 'Packaged pty-helper.py was not found or is unreadable'));
+
+  const codexMicroRow = await diagnoseCodexMicro({
+    config,
+    platform: environment.platform,
+    pythonPath,
+    assetLookup,
+    probe,
+  });
+  if (codexMicroRow) rows.push(codexMicroRow);
 
   if (pythonPath && path.isAbsolute(pythonPath) && helperPath) {
     const ptyProbe = await probe(

@@ -56,4 +56,39 @@ describe('confirmation dialog terminal input shield', () => {
       output.destroy();
     }
   });
+
+  it('accepts a trusted external confirmation without leaking terminal input', async () => {
+    const input = terminalStream(100, 30);
+    const output = terminalStream(100, 30);
+    const screen = blessed.screen({
+      input,
+      output,
+      terminal: 'xterm-256color',
+      smartCSR: false,
+    });
+    const terminal = blessed.box({ parent: screen, keys: true, input: true });
+    const leakedKeys: string[] = [];
+    terminal.on('keypress', (_character, key) => leakedKeys.push(key.name));
+    terminal.focus();
+
+    try {
+      let confirm!: () => void;
+      const decision = showConfirmDialog(
+        screen,
+        getTheme('midnight'),
+        'Hardware confirmation',
+        'A second validated device press confirms this action.',
+        { onReady: (controller) => { confirm = controller.confirm; } },
+      );
+      confirm();
+
+      await expect(decision).resolves.toBe(true);
+      expect(leakedKeys).toEqual([]);
+      expect(isDialogActive()).toBe(false);
+    } finally {
+      screen.destroy();
+      input.destroy();
+      output.destroy();
+    }
+  });
 });

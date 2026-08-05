@@ -381,6 +381,18 @@ These are file-panel actions. On terminal panels they pass through to the runnin
 
 Agents Commander can read the shipping Codex Micro controls directly over USB or Bluetooth on macOS. The native bridge is bundled, uses Python 3 and the device's vendor-HID channel, and does not require reprogramming the factory layer in Work Louder Input. The integration remains opt-in; native input is the default mode after it is enabled.
 
+Native mode uses a sole-reader conflict guard. Before accepting each event, it
+checks that no other active direct HID reader is attached. If ChatGPT Desktop,
+Work Louder Input, or another client is reading the device, Commander shows
+`MICRO:BUSY` and discards its input. This is an observational safety guard, not
+an OS-enforced exclusive lock. Fully quit ChatGPT Desktop before starting
+Commander. You can instead disable ChatGPT under **System Settings > Privacy &
+Security > Input Monitoring**, restart ChatGPT, leave that permission enabled
+for the terminal that launches Commander, and confirm that Doctor passes. Do
+not use `sudo`. On the tested firmware 0.4.1, selecting Layer 2 did not isolate
+the vendor events: another active client still received the same physical
+press.
+
 | Physical control | Agents Commander action |
 |-----|--------|
 | Agent keys 1–6 (`AG00`–`AG05`) | Focus active workspace slots 1–6 |
@@ -394,6 +406,10 @@ Agents Commander can read the shipping Codex Micro controls directly over USB or
 | Dial press | Open routed-message Activity |
 | Joystick up / down | Previous / next panel page |
 | Joystick left / right | Focus previous / next panel |
+
+The names above describe the factory keycap arrangement. The keycaps are
+swappable; Commander routes the fixed `AG00`–`AG05` and `ACT06`–`ACT12`
+positions, regardless of which cap is installed.
 
 First allow your terminal application in **System Settings > Privacy & Security > Input Monitoring**, then verify the connection:
 
@@ -416,7 +432,7 @@ agents-commander --codex-micro --codex-micro-decisions .
 
 `--codex-micro-test` enables the controls for that run and opens the physical-input checklist. `--no-codex-micro` explicitly disables them. `--conference` and `--demo` do **not** enable Codex Micro automatically. Approval and rejection remain human-confirmed, fail-closed operations: a first press opens a five-second window, the same decision key confirms, and submission occurs only while the active session is Codex and the selected prompt still matches the requested one-time action. They never choose a persistent "always allow" option.
 
-Native device input currently requires macOS. On Linux, or for a controller layer already programmed with the reserved shortcuts, use `--codex-micro-keyboard` as the legacy fallback. For the stage, prefer a wired USB-C connection and keep a conventional keyboard available. The bridge reads controls and safe device status only; it does not read or store device serial numbers, update firmware, or control RGB lighting. See [Codex Micro setup and rehearsal](docs/codex-micro.md).
+Native device input currently requires macOS. On Linux, or for a controller layer already programmed with the reserved shortcuts, use `--codex-micro-keyboard` as the legacy fallback. That fallback cannot run the sole-reader guard or decision controls, so keep ChatGPT Desktop fully quit for the entire keyboard-mode session. For the stage, prefer a wired USB-C connection, ensure `MICRO:BUSY` is not displayed, and keep a conventional keyboard available. The bridge reads controls and safe device status only; it does not read or store device serial numbers, update firmware, or control RGB lighting. See [Codex Micro setup and rehearsal](docs/codex-micro.md).
 
 ## Configuration
 

@@ -48,8 +48,11 @@ The offline demo seeds two bundled local demo roles and a deterministic routed
 handoff. It requires no network access, API key, or external agent CLI.
 
 For the optional experimental Codex Micro segment, allow the presentation
-terminal under macOS Input Monitoring, verify the native device probe, and
-complete the physical-control checklist before opening the audience-facing run:
+terminal under macOS Input Monitoring. Fully quit ChatGPT Desktop first, or
+disable ChatGPT's Input Monitoring permission and restart it while leaving the
+presentation terminal permitted. Never use `sudo`. Then verify the native
+device probe and complete the physical-control checklist before opening the
+audience-facing run:
 
 ```bash
 node dist/bin/agents-commander.js --doctor --codex-micro .
@@ -58,12 +61,18 @@ node dist/bin/agents-commander.js --conference --codex-micro .
 ```
 
 Conference and Demo modes do not enable the controller automatically. Prefer a
-wired USB-C connection on stage and keep a normal keyboard ready. Native input
-can verify the exact device and read safe status metadata; it does not read
-serial numbers, update firmware, or control RGB lighting. Guarded Approve and
-Reject controls remain off unless `--codex-micro-decisions` is added. See [the
-Codex Micro rehearsal guide](../docs/codex-micro.md) for the physical mapping,
-keyboard fallback, and rehearsal.
+wired USB-C connection on stage and keep a normal keyboard ready. `MICRO:BUSY`
+means another active HID event reader was detected; Commander fails closed and
+discards its device input. This sole-reader check is not an OS-enforced
+exclusive lock. On the tested firmware 0.4.1, switching to Layer 2 did not
+isolate the shared vendor events. Native input can verify the exact device and
+read safe status metadata; it does not read serial numbers, update firmware,
+or control RGB lighting.
+Guarded Approve and Reject controls remain off unless
+`--codex-micro-decisions` is added. Physical labels describe the factory
+arrangement and the keycaps are swappable. See [the Codex Micro rehearsal
+guide](../docs/codex-micro.md) for the fixed switch-position mapping, keyboard
+fallback, and rehearsal.
 
 ## On-stage recovery
 
@@ -75,8 +84,11 @@ keyboard fallback, and rehearsal.
 - `Ctrl+K` stops the active session; `F10` exits and cleans up agent processes.
 - If any external agent or conference network is unreliable, switch to
   `--demo` and continue with the same protocol story.
-- If Codex Micro input is unreliable, disconnect it and continue with the
-  documented keyboard shortcuts; no agent session depends on the device.
+- If `MICRO:BUSY` appears, do not keep pressing controls. Quit the competing
+  HID client and restart Commander; otherwise disconnect the Micro and continue
+  with a conventional keyboard. No agent session depends on the device.
+- If the legacy keyboard fallback is used, keep ChatGPT fully quit for the
+  entire session; that mode has no reader guard and disables decisions.
 
 ## Deck quality checks
 

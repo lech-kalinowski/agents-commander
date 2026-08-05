@@ -79,12 +79,14 @@ function buildReport(rows: DoctorRow[]): DoctorReport {
 
 type CodexMicroProbeState =
   | 'connected'
+  | 'busy'
   | 'absent'
   | 'unsupported'
   | 'unavailable';
 
 interface CodexMicroProbeStatus {
   state: CodexMicroProbeState;
+  ownership?: 'guarded';
   reason?: string;
   transport?: 'usb' | 'bluetooth' | 'unknown';
   firmware?: string;
@@ -107,12 +109,14 @@ function parseCodexMicroProbe(stdout: string): CodexMicroProbeStatus | null {
     if (record.version !== 1 || record.type !== 'probe') continue;
     if (
       record.status !== 'connected'
+      && record.status !== 'busy'
       && record.status !== 'absent'
       && record.status !== 'unsupported'
       && record.status !== 'unavailable'
     ) continue;
 
     const status: CodexMicroProbeStatus = { state: record.status };
+    if (record.ownership === 'guarded') status.ownership = 'guarded';
     if (
       record.transport === 'usb'
       || record.transport === 'bluetooth'
@@ -168,7 +172,7 @@ async function diagnoseCodexMicro(options: {
       'Codex Micro',
       'warn',
       'Legacy keyboard fallback enabled; physical device identity is not checked',
-      'Program the reserved shortcuts, then run agents-commander --codex-micro-test.',
+      'Keep ChatGPT Desktop fully quit for the entire session, program the reserved shortcuts, then run agents-commander --codex-micro-test. The guard and decision controls are unavailable in keyboard mode.',
     );
   }
 
@@ -236,6 +240,15 @@ async function diagnoseCodexMicro(options: {
   }
 
   if (status.state === 'connected') {
+    if (status.ownership !== 'guarded') {
+      return row(
+        'codex-micro',
+        'Codex Micro',
+        'warn',
+        'Sole-reader safety check was not confirmed; hardware input is disabled',
+        'Rebuild Agents Commander and rerun Doctor before using the controller.',
+      );
+    }
     const transport = status.transport === 'bluetooth'
       ? 'Bluetooth'
       : status.transport === 'usb' ? 'USB' : 'unknown transport';
@@ -243,8 +256,17 @@ async function diagnoseCodexMicro(options: {
       'codex-micro',
       'Codex Micro',
       'pass',
-      `Connected over ${transport}`,
+      `Sole-reader guard active over ${transport}`,
       codexMicroConnectedDetail(status),
+    );
+  }
+  if (status.state === 'busy') {
+    return row(
+      'codex-micro',
+      'Codex Micro',
+      'warn',
+      'Another app is reading Codex Micro; Commander input is paused',
+      'Fully quit ChatGPT Desktop, close other Agents Commander sessions, and rerun Doctor. If you disable ChatGPT Input Monitoring instead, restart ChatGPT completely and verify Doctor again.',
     );
   }
   if (
@@ -268,6 +290,15 @@ async function diagnoseCodexMicro(options: {
       'warn',
       'No Codex Micro is connected',
       'Connect by USB or Bluetooth, then rerun Doctor.',
+    );
+  }
+  if (status.state === 'unavailable' && status.reason === 'ownership_check_failed') {
+    return row(
+      'codex-micro',
+      'Codex Micro',
+      'warn',
+      'The sole-reader safety check is unavailable; hardware input is disabled',
+      'Do not run Agents Commander with sudo. Reconnect the controller and rerun Doctor.',
     );
   }
   return row(

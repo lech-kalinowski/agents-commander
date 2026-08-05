@@ -78,11 +78,89 @@ describe('confirmation dialog terminal input shield', () => {
         getTheme('midnight'),
         'Hardware confirmation',
         'A second validated device press confirms this action.',
-        { onReady: (controller) => { confirm = controller.confirm; } },
+        {
+          externalConfirmOnly: true,
+          onReady: (controller) => { confirm = controller.confirm; },
+        },
       );
       confirm();
 
       await expect(decision).resolves.toBe(true);
+      expect(leakedKeys).toEqual([]);
+      expect(isDialogActive()).toBe(false);
+    } finally {
+      screen.destroy();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it('ignores keyboard approval in external-only mode but permits keyboard cancellation', async () => {
+    const input = terminalStream(100, 30);
+    const output = terminalStream(100, 30);
+    const screen = blessed.screen({
+      input,
+      output,
+      terminal: 'xterm-256color',
+      smartCSR: false,
+    });
+    const terminal = blessed.box({ parent: screen, keys: true, input: true });
+    const leakedKeys: string[] = [];
+    terminal.on('keypress', (_character, key) => leakedKeys.push(key.name));
+    terminal.focus();
+
+    try {
+      let settled = false;
+      const decision = showConfirmDialog(
+        screen,
+        getTheme('midnight'),
+        'Hardware confirmation',
+        'Only a second validated device press may confirm.',
+        { externalConfirmOnly: true },
+      );
+      void decision.then(() => { settled = true; });
+
+      input.write('y');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+
+      input.write('n');
+      await expect(decision).resolves.toBe(false);
+      expect(leakedKeys).toEqual([]);
+      expect(isDialogActive()).toBe(false);
+    } finally {
+      screen.destroy();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it('keeps keyboard selection on No in external-only mode', async () => {
+    const input = terminalStream(100, 30);
+    const output = terminalStream(100, 30);
+    const screen = blessed.screen({
+      input,
+      output,
+      terminal: 'xterm-256color',
+      smartCSR: false,
+    });
+    const terminal = blessed.box({ parent: screen, keys: true, input: true });
+    const leakedKeys: string[] = [];
+    terminal.on('keypress', (_character, key) => leakedKeys.push(key.name));
+    terminal.focus();
+
+    try {
+      const decision = showConfirmDialog(
+        screen,
+        getTheme('midnight'),
+        'Hardware confirmation',
+        'Arrow keys cannot select keyboard approval.',
+        { externalConfirmOnly: true },
+      );
+      input.write('\u001b[C');
+      input.write('\r');
+
+      await expect(decision).resolves.toBe(false);
       expect(leakedKeys).toEqual([]);
       expect(isDialogActive()).toBe(false);
     } finally {

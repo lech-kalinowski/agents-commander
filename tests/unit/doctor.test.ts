@@ -218,6 +218,7 @@ describe('Agents Commander Doctor', () => {
           version: 1,
           type: 'probe',
           status: 'connected',
+          ownership: 'guarded',
           transport: 'usb',
           serial: 'must-not-appear',
           device: {
@@ -252,7 +253,7 @@ describe('Agents Commander Doctor', () => {
     const microRow = report.rows.find((entry) => entry.id === 'codex-micro');
     expect(microRow).toMatchObject({
       status: 'pass',
-      summary: 'Connected over USB',
+      summary: 'Sole-reader guard active over USB',
       detail: 'Firmware v0.4.1; Battery 100% (charging)',
     });
     expect(JSON.stringify(microRow)).not.toContain('must-not-appear');
@@ -299,6 +300,71 @@ describe('Agents Commander Doctor', () => {
     expect(report.rows.find((entry) => entry.id === 'codex-micro')).toMatchObject({
       status: 'warn',
       summary: 'No Codex Micro is connected',
+    });
+    expect(doctorExitCode(report)).toBe(0);
+  });
+
+  it.each([
+    {
+      title: 'reports another active reader as an actionable busy warning',
+      microResult: unsuccessfulProbe(
+        '{"version":1,"type":"probe","status":"busy","reason":"another_hid_client","transport":"usb"}\n',
+        5,
+      ),
+      summary: 'Another app is reading Codex Micro; Commander input is paused',
+      detail: 'Fully quit ChatGPT Desktop',
+    },
+    {
+      title: 'rejects a connected record without guard attestation',
+      microResult: successfulProbe(
+        '{"version":1,"type":"probe","status":"connected","transport":"usb"}\n',
+      ),
+      summary: 'Sole-reader safety check was not confirmed; hardware input is disabled',
+      detail: 'Rebuild Agents Commander',
+    },
+    {
+      title: 'fails closed when the ownership safety check is unavailable',
+      microResult: unsuccessfulProbe(
+        '{"version":1,"type":"probe","status":"unavailable","reason":"ownership_check_failed"}\n',
+        5,
+      ),
+      summary: 'The sole-reader safety check is unavailable; hardware input is disabled',
+      detail: 'Do not run Agents Commander with sudo',
+    },
+  ])('$title', async ({ microResult, summary, detail }) => {
+    const root = temporaryDirectory();
+    const layout = createInstalledLayout(root);
+    const config = structuredClone(defaultConfig);
+    config.hardware.codexMicro.enabled = true;
+    const probe = vi.fn(async (
+      _command: string,
+      args: readonly string[],
+    ): Promise<ProcessProbeResult> => {
+      if (args[0] === '--version') return successfulProbe('Python 3.12.4');
+      if (args[0] === layout.microBridgePath) return microResult;
+      return successfulProbe('pty-ok');
+    });
+
+    const report = await runDoctor({
+      workingDirectory: root,
+      environment: {
+        nodeVersion: '22.19.0',
+        platform: 'darwin',
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        columns: 120,
+        rows: 30,
+      },
+      config,
+      assetLookup: { mode: 'installed', packageRoot: root },
+      resolveExecutable: () => process.execPath,
+      probe,
+    });
+
+    expect(report.rows.find((entry) => entry.id === 'codex-micro')).toMatchObject({
+      status: 'warn',
+      summary,
+      detail: expect.stringContaining(detail),
     });
     expect(doctorExitCode(report)).toBe(0);
   });

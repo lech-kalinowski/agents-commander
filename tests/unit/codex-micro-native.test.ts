@@ -93,6 +93,7 @@ describe('CodexMicroNativeBridge', () => {
     send(children[0], {
       type: 'status',
       state: 'connected',
+      ownership: 'guarded',
       transport: 'USB',
       firmware: 'v0.4.1',
       battery: 104.6,
@@ -104,6 +105,7 @@ describe('CodexMicroNativeBridge', () => {
       state: 'connected',
       transport: 'usb',
       connectionEpoch: 'epoch-1',
+      ownership: 'guarded',
       firmware: 'v0.4.1',
       battery: 100,
       charging: true,
@@ -124,7 +126,7 @@ describe('CodexMicroNativeBridge', () => {
     bridge.onInput((event) => events.push(event));
     bridge.start();
     const [child] = children;
-    send(child, { type: 'status', state: 'connected', transport: 'usb' });
+    send(child, { type: 'status', state: 'connected', ownership: 'guarded', transport: 'usb' });
 
     send(child, { type: 'input', input: 'AG00', act: 1 });
     send(child, { type: 'input', input: 'AG00', act: 1 });
@@ -164,9 +166,13 @@ describe('CodexMicroNativeBridge', () => {
     bridge.start();
     const [child] = children;
 
-    send(child, { type: 'status', state: 'connected', transport: 'usb', firmware: 'v0.4.1' });
+    send(child, {
+      type: 'status', state: 'connected', ownership: 'guarded', transport: 'usb', firmware: 'v0.4.1',
+    });
     expect(bridge.status.connectionEpoch).toBe('first-epoch');
-    send(child, { type: 'status', state: 'connected', transport: 'usb', firmware: 'v0.4.2' });
+    send(child, {
+      type: 'status', state: 'connected', ownership: 'guarded', transport: 'usb', firmware: 'v0.4.2',
+    });
     expect(bridge.status.connectionEpoch).toBe('first-epoch');
     send(child, { type: 'input', input: 'AG01', act: 1 });
 
@@ -178,7 +184,7 @@ describe('CodexMicroNativeBridge', () => {
       detail: 'unplugged',
     });
 
-    send(child, { type: 'status', state: 'connected', transport: 'ble' });
+    send(child, { type: 'status', state: 'connected', ownership: 'guarded', transport: 'ble' });
     send(child, { type: 'input', input: 'AG02', act: 1 });
 
     expect(bridge.status).toMatchObject({
@@ -192,6 +198,73 @@ describe('CodexMicroNativeBridge', () => {
     ]);
   });
 
+  it('pauses without restarting while another reader is active and resumes with a fresh epoch', async () => {
+    vi.useFakeTimers();
+    const { bridge, children, spawnProcess } = createHarness({
+      epochs: ['first-epoch', 'second-epoch'],
+    });
+    const statuses: Array<{ state: string; detail?: string }> = [];
+    const events: Array<{ input: string; connectionEpoch: string }> = [];
+    bridge.onStatus((status) => statuses.push(status));
+    bridge.onInput((event) => events.push(event));
+    bridge.start();
+    const [child] = children;
+
+    send(child, {
+      type: 'status', state: 'busy', transport: 'usb', detail: 'another_hid_client\u0007',
+    });
+    send(child, { type: 'status', state: 'busy', transport: 'usb', detail: 'another_hid_client' });
+    send(child, { type: 'input', input: 'AG00', act: 1 });
+    send(child, { type: 'joystick', angle: 0, distance: 1 });
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(bridge.status).toMatchObject({
+      state: 'busy',
+      transport: 'usb',
+      connectionEpoch: null,
+      detail: 'another_hid_client',
+    });
+    expect(statuses.filter(({ state }) => state === 'busy')).toHaveLength(1);
+    expect(events).toEqual([]);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
+
+    send(child, {
+      type: 'status', state: 'connected', ownership: 'guarded', transport: 'usb',
+    });
+    send(child, { type: 'input', input: 'AG00', act: 1 });
+    send(child, { type: 'status', state: 'busy', transport: 'usb', detail: 'another_hid_client' });
+    send(child, { type: 'input', input: 'AG01', act: 1 });
+    send(child, {
+      type: 'status', state: 'connected', ownership: 'guarded', transport: 'usb',
+    });
+    send(child, { type: 'input', input: 'AG00', act: 1 });
+
+    expect(events.map(({ input, connectionEpoch }) => ({ input, connectionEpoch }))).toEqual([
+      { input: 'AG00', connectionEpoch: 'first-epoch' },
+      { input: 'AG00', connectionEpoch: 'second-epoch' },
+    ]);
+  });
+
+  it('rejects a connected helper record without the sole-reader guard attestation', () => {
+    const { bridge, children } = createHarness();
+    const events: unknown[] = [];
+    bridge.onInput((event) => events.push(event));
+    bridge.start();
+    const [child] = children;
+
+    send(child, { type: 'status', state: 'connected', transport: 'usb' });
+    send(child, { type: 'input', input: 'AG00', act: 1 });
+
+    expect(bridge.status).toEqual({
+      state: 'error',
+      transport: 'usb',
+      connectionEpoch: null,
+      detail: 'Native helper did not confirm the sole-reader guard',
+    });
+    expect(events).toEqual([]);
+  });
+
   it('ignores malformed and oversized records and terminates an unbounded stream', () => {
     const { bridge, children } = createHarness();
     bridge.start();
@@ -201,7 +274,7 @@ describe('CodexMicroNativeBridge', () => {
     child.stdout.write(`${JSON.stringify({ version: 2, type: 'status', state: 'connected' })}\n`);
     expect(bridge.status.state).toBe('starting');
     child.stdout.write(`${'x'.repeat(9 * 1024)}\n`);
-    send(child, { type: 'status', state: 'connected', transport: 'usb' });
+    send(child, { type: 'status', state: 'connected', ownership: 'guarded', transport: 'usb' });
     expect(bridge.status.state).toBe('connected');
     expect(child.kill).not.toHaveBeenCalled();
 
@@ -214,7 +287,7 @@ describe('CodexMicroNativeBridge', () => {
     const { bridge, children, spawnProcess } = createHarness();
     bridge.start();
     const [child] = children;
-    send(child, { type: 'status', state: 'connected', transport: 'usb' });
+    send(child, { type: 'status', state: 'connected', ownership: 'guarded', transport: 'usb' });
 
     await bridge.stop();
     await vi.advanceTimersByTimeAsync(20_000);
@@ -252,7 +325,7 @@ describe('CodexMicroNativeBridge', () => {
     bridge.onInput((event) => events.push(event));
     bridge.start();
     const [child] = children;
-    send(child, { type: 'status', state: 'connected', transport: 'usb' });
+    send(child, { type: 'status', state: 'connected', ownership: 'guarded', transport: 'usb' });
     expect(bridge.status.connectionEpoch).toBe('epoch-1');
     child.kill.mockImplementation((signal: NodeJS.Signals = 'SIGTERM') => {
       if (signal !== 'SIGKILL') return true;
@@ -269,7 +342,7 @@ describe('CodexMicroNativeBridge', () => {
     });
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
 
-    send(child, { type: 'status', state: 'connected', transport: 'usb' });
+    send(child, { type: 'status', state: 'connected', ownership: 'guarded', transport: 'usb' });
     send(child, { type: 'input', input: 'AG00', act: 1 });
     expect(bridge.status.state).toBe('error');
     expect(events).toEqual([]);

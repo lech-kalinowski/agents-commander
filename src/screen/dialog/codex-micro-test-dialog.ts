@@ -104,17 +104,24 @@ function safeInline(value: unknown, maxLength = 120): string | undefined {
 
 function formatDeviceStatus(status: CodexMicroDeviceStatus): string[] {
   const state = status.state;
-  const stateText = state === 'connected'
-    ? '{green-fg}Connected{/green-fg}'
-    : state === 'starting'
-      ? '{yellow-fg}Starting…{/yellow-fg}'
-      : state === 'disconnected'
-        ? '{yellow-fg}Waiting for device{/yellow-fg}'
-        : state === 'permission-denied'
-          ? '{red-fg}Input Monitoring permission needed{/red-fg}'
-          : state === 'unavailable'
-            ? '{red-fg}Native input unavailable{/red-fg}'
-            : '{red-fg}Bridge error{/red-fg}';
+  const guarded = state === 'connected'
+    && status.ownership === 'guarded'
+    && status.connectionEpoch !== null;
+  const stateText = guarded
+    ? '{green-fg}Connected · sole-reader guard active{/green-fg}'
+    : state === 'connected'
+      ? '{red-fg}Safety guard not confirmed · controls paused{/red-fg}'
+      : state === 'busy'
+        ? '{yellow-fg}In use by another app · controls paused{/yellow-fg}'
+        : state === 'starting'
+          ? '{yellow-fg}Starting…{/yellow-fg}'
+          : state === 'disconnected'
+            ? '{yellow-fg}Waiting for device{/yellow-fg}'
+            : state === 'permission-denied'
+              ? '{red-fg}Input Monitoring permission needed{/red-fg}'
+              : state === 'unavailable'
+                ? '{red-fg}Native input unavailable{/red-fg}'
+                : '{red-fg}Bridge error{/red-fg}';
   const transport = status.transport === 'usb'
     ? 'USB'
     : status.transport === 'bluetooth'
@@ -128,8 +135,12 @@ function formatDeviceStatus(status: CodexMicroDeviceStatus): string[] {
     metadata.push(`battery ${battery}%${status.charging ? ' (charging)' : ''}`);
   }
   const rows = [`{bold}Device:{/bold} ${stateText} · ${metadata.join(' · ')}`];
-  const detail = safeInline(status.detail);
-  if (detail) rows.push(`  {gray-fg}${detail}{/gray-fg}`);
+  if (state === 'busy') {
+    rows.push('  {yellow-fg}Do not press controls. Quit ChatGPT and other Commander sessions, then retry.{/yellow-fg}');
+  } else {
+    const detail = safeInline(status.detail);
+    if (detail) rows.push(`  {gray-fg}${detail}{/gray-fg}`);
+  }
   return rows;
 }
 
@@ -139,18 +150,22 @@ function formatKeyboardContent(testedActions: ReadonlySet<CodexMicroAction>): st
     0,
   );
   const status = testedCount === CODEX_MICRO_BINDINGS.length
-    ? '{bold}{green-fg}All controls detected — ready for rehearsal.{/green-fg}{/bold}'
+    ? '{bold}{yellow-fg}All programmed shortcuts detected — mapping works; device/client safety remains unverified.{/yellow-fg}{/bold}'
     : `{bold}Detected ${testedCount}/${CODEX_MICRO_BINDINGS.length} controls{/bold}`;
   const rows = CODEX_MICRO_BINDINGS.map((binding) => {
     const marker = testedActions.has(binding.action)
       ? '{green-fg}[✓]{/green-fg}'
       : '{gray-fg}[ ]{/gray-fg}';
-    return `  ${marker} ${displayKey(binding.key).padEnd(22)} ${binding.label}`;
+    const label = binding.action === 'approve' || binding.action === 'reject'
+      ? 'Disabled — native guarded mode required'
+      : binding.label;
+    return `  ${marker} ${displayKey(binding.key).padEnd(22)} ${label}`;
   });
 
   return [
     '{bold}{cyan-fg}CODEX MICRO CONTROL TEST{/cyan-fg}{/bold}',
     'Mode: programmed keyboard shortcuts (legacy fallback).',
+    'Keep ChatGPT Desktop fully quit for this entire session; sharing cannot be detected here.',
     'Press each programmed control. This mode cannot verify the physical device connection.',
     '',
     status,
@@ -165,16 +180,23 @@ function formatNativeContent(
   lastHardwareInput: CodexMicroTestContentOptions['lastHardwareInput'],
   decisionControls: boolean,
 ): string {
+  const guardReady = deviceStatus.state === 'connected'
+    && deviceStatus.ownership === 'guarded'
+    && deviceStatus.connectionEpoch !== null;
   const testedCount = NATIVE_CONTROL_ROWS.reduce(
     (count, row) => count + Number(row.inputs.some((input) => testedInputs.has(input))),
     0,
   );
-  const status = testedCount === NATIVE_CONTROL_ROWS.length
+  const status = !guardReady
+    ? '{bold}{yellow-fg}Physical-input test paused until the sole-reader guard is active.{/yellow-fg}{/bold}'
+    : testedCount === NATIVE_CONTROL_ROWS.length
     ? decisionControls
       ? '{bold}{green-fg}All physical controls detected — ready for rehearsal.{/green-fg}{/bold}'
       : '{bold}{green-fg}All physical controls detected — hardware input is ready.{/green-fg}{/bold}'
     : `{bold}Detected ${testedCount}/${NATIVE_CONTROL_ROWS.length} physical controls{/bold}`;
-  const decisionStatus = decisionControls
+  const decisionStatus = !guardReady
+    ? '{red-fg}Commander discards all Codex Micro input while controls are paused.{/red-fg}'
+    : decisionControls
     ? '{green-fg}Decision actions: enabled (second matching press required).{/green-fg}'
     : '{yellow-fg}Decision actions: disabled; Approve/Reject are input-test only.{/yellow-fg}';
   const rows = NATIVE_CONTROL_ROWS.map((row) => {
@@ -188,10 +210,15 @@ function formatNativeContent(
     ? `Last input: ${lastHardwareInput.input} → ${getCodexMicroNativeBinding(lastHardwareInput.input).label}`
     : 'Last input: none yet';
 
+  const instruction = guardReady
+    ? 'Press each physical control. A check means its vendor-HID event reached Commander.'
+    : 'Wait for a guarded connection before testing any physical control.';
+
   return [
     '{bold}{cyan-fg}CODEX MICRO — DIRECT HARDWARE TEST{/cyan-fg}{/bold}',
     ...formatDeviceStatus(deviceStatus),
-    'Press each physical control. A check means its vendor-HID event reached Commander.',
+    instruction,
+    '{gray-fg}Labels are factory defaults; keycaps are swappable and fixed AG/ACT positions define the mapping.{/gray-fg}',
     '',
     status,
     decisionStatus,
@@ -329,6 +356,9 @@ export function showCodexMicroTestDialog(
     if (
       closed
       || inputMode !== 'native'
+      || deviceStatus.state !== 'connected'
+      || deviceStatus.ownership !== 'guarded'
+      || deviceStatus.connectionEpoch === null
       || !isCodexMicroNativeInput(input)
       || getCodexMicroNativeBinding(input).action !== action
     ) return false;
@@ -343,6 +373,22 @@ export function showCodexMicroTestDialog(
 
   const setDeviceStatus = (status: CodexMicroDeviceStatus): void => {
     if (closed) return;
+    const previousGuardedEpoch = deviceStatus.state === 'connected'
+      && deviceStatus.ownership === 'guarded'
+      && deviceStatus.connectionEpoch !== null
+      ? deviceStatus.connectionEpoch
+      : null;
+    const nextGuardedEpoch = status.state === 'connected'
+      && status.ownership === 'guarded'
+      && status.connectionEpoch !== null
+      ? status.connectionEpoch
+      : null;
+    if (previousGuardedEpoch && previousGuardedEpoch !== nextGuardedEpoch) {
+      tested.clear();
+      testedInputs.clear();
+      lastHardwareInput = null;
+      if (dialog) dialog.setScroll(0);
+    }
     deviceStatus = { ...status };
     renderContent();
   };

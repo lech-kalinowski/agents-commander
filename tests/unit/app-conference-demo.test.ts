@@ -24,6 +24,7 @@ import { showErrorToast, showToast } from '../../src/screen/toast.js';
 import { logger } from '../../src/utils/logger.js';
 
 function createDemoHarness() {
+  let capabilitySequence = 0;
   const terminals = [
     { panelIndex: 0, sendInput: vi.fn(() => true), isRunning: false },
     { panelIndex: 1, sendInput: vi.fn(() => true), isRunning: false },
@@ -49,6 +50,17 @@ function createDemoHarness() {
     },
     orchestrator: {
       connectPanel: vi.fn(),
+      createProtocolCapability: vi.fn(() => (
+        `${'a'.repeat(42)}${++capabilitySequence}`
+      )),
+      armInternalProtocol: vi.fn(() => true),
+      sendProgrammaticInput: vi.fn(async (
+        terminal: { sendInput(text: string): boolean },
+        text: string,
+        submit = false,
+      ) => (
+        terminal.sendInput(`${text}${submit ? '\r' : ''}`)
+      )),
     },
     screen: {
       render: vi.fn(),

@@ -3,7 +3,15 @@ import type { AgentType } from '../agents/types.js';
 import type { LayoutManager } from '../screen/layout-manager.js';
 import type { AgentLifecycleEvent, AgentManager, RunningAgentInfo } from '../agents/agent-manager.js';
 import type { TerminalPanel } from '../panels/terminal-panel.js';
-import { buildProtocolInstructions, type CommanderMessage, type MessageType } from './protocol.js';
+import {
+  bindTemplateProtocolCapability,
+  buildProtocolInstructions,
+  generateProtocolCapability,
+  hasLegacyProtocolMarkers,
+  isProtocolCapability,
+  type CommanderMessage,
+  type MessageType,
+} from './protocol.js';
 import {
   MessageLedger,
   type MessageRecord,
@@ -29,6 +37,12 @@ interface QueuedTask {
   source?: TaskSourceRef;
   /** When true, type directly to Claude (no bracketed paste = no bypass prompt). */
   directType?: boolean;
+  /** Automatic protocol traffic must never create, convert, or replace a target. */
+  allowTargetMutation?: boolean;
+  /** Bind trusted collaboration-template markers inside the target session lane. */
+  bindTemplateCapability?: boolean;
+  /** Exact panel/session state this task was authorized or resolved against. */
+  targetExpectation?: TaskTargetExpectation;
   kind?: MessageType;
   messageId?: string;
   threadId?: string;
@@ -69,6 +83,39 @@ interface ManagedTaskTarget {
   profileId: string;
 }
 
+/**
+ * Immutable snapshot of a task target at routing/confirmation time. Queued
+ * work may act only on this exact live session, or on a panel that was idle
+ * and remains idle. This prevents stale consent from applying to a session
+ * that arrived while another task was ahead in the panel queue.
+ */
+export type TaskTargetExpectation =
+  | {
+      panelIndex: number;
+      state: 'managed';
+      terminal: TerminalPanel | null;
+      sessionId: string;
+      agentType: AgentType;
+      profileId: string;
+    }
+  | {
+      panelIndex: number;
+      state: 'unmanaged';
+      terminal: TerminalPanel;
+      sessionName: string | null;
+      sessionGeneration: number;
+    }
+  | {
+      panelIndex: number;
+      state: 'idle';
+      panel: object;
+    };
+
+export interface PreparedTemplateTask {
+  content: string;
+  bindProtocolCapability: boolean;
+}
+
 const CLAUDE_DIRECT_TYPE_MAX_CHARS = 320;
 const CLAUDE_DIRECT_SUBMIT_DELAY_MS = 120;
 
@@ -104,6 +151,10 @@ export class Orchestrator {
   private connectedPanels = new Set<number>();
   /** Panels that have had protocol instructions injected. */
   private protocolInjected = new Set<number>();
+  /** Session-bound authorization; absence means protocol output is inert. */
+  private protocolCapabilities = new Map<string, string>();
+  /** One Commander-generated input lane per managed session. */
+  private inputLaneTails = new Map<string, Promise<void>>();
   /** Per-panel task queues to prevent concurrent sends to the same agent. */
   private panelQueues = new Map<number, PanelQueueState>();
   private panelProcessing = new Set<number>();
@@ -133,6 +184,7 @@ export class Orchestrator {
       ackTimeout: 60000,
       dedupWindow: 15000,
       maxContentLines: 500,
+      maxContentBytes: 262144,
       ...config?.orchestration,
     };
 
@@ -155,7 +207,7 @@ export class Orchestrator {
     // been recreated (e.g. after a file↔terminal conversion) even though
     // the panel index stayed the same.
     tp.onCommanderMessage = (msg: CommanderMessage) => {
-      this.handleAgentMessage(msg);
+      this.handlePanelAgentMessage(tp, msg);
     };
     tp.onUserInput = () => {
       this.markPanelUserEngaged(tp.panelIndex);
@@ -183,6 +235,7 @@ export class Orchestrator {
     if (sessionId) {
       this.ledger.closeSession(sessionId);
       this.protocolSessionState.delete(sessionId);
+      this.protocolCapabilities.delete(sessionId);
     }
     // Null out the callback on the terminal panel to prevent stale routing
     const tp = this.layout.getTerminalPanel(panelIndex);
@@ -216,6 +269,8 @@ export class Orchestrator {
     }
     this.connectedPanels.clear();
     this.protocolInjected.clear();
+    this.protocolCapabilities.clear();
+    this.inputLaneTails.clear();
     this.panelQueues.clear();
     this.panelProcessing.clear();
     this.injectionGrace.clear();
@@ -229,11 +284,13 @@ export class Orchestrator {
     if (event.previousSessionId) {
       this.ledger.closeSession(event.previousSessionId);
       this.protocolSessionState.delete(event.previousSessionId);
+      this.protocolCapabilities.delete(event.previousSessionId);
     }
 
     if (event.type === 'exited') {
       this.ledger.closeSession(event.sessionId);
       this.protocolSessionState.delete(event.sessionId);
+      this.protocolCapabilities.delete(event.sessionId);
     }
 
     this.protocolInjected.delete(event.panelIndex);
@@ -243,6 +300,92 @@ export class Orchestrator {
   private findRunningAgent(panelIndex: number): RunningAgentInfo | null {
     if (typeof this.agentManager.getRunningAgents !== 'function') return null;
     return this.agentManager.getRunningAgents().find((agent) => agent.panelIndex === panelIndex) ?? null;
+  }
+
+  /** Capture the exact target state that a user confirms or a route resolves. */
+  captureTaskTarget(panelIndex: number): TaskTargetExpectation | null {
+    if (
+      typeof this.layout.hasPanel === 'function'
+      && !this.layout.hasPanel(panelIndex)
+    ) return null;
+
+    const terminal = typeof this.layout.getTerminalPanel === 'function'
+      ? this.layout.getTerminalPanel(panelIndex)
+      : null;
+    const panel = typeof this.layout.getPanel === 'function'
+      ? this.layout.getPanel(panelIndex)
+      : terminal;
+    const running = this.findRunningAgent(panelIndex);
+    if (running) {
+      const profileId = running.profileId
+        ?? (typeof this.agentManager.getAgentProfileId === 'function'
+          ? this.agentManager.getAgentProfileId(panelIndex)
+          : null)
+        ?? running.type;
+      return {
+        panelIndex,
+        state: 'managed',
+        terminal,
+        sessionId: running.sessionId,
+        agentType: running.type,
+        profileId,
+      };
+    }
+
+    if (terminal?.isRunning) {
+      return {
+        panelIndex,
+        state: 'unmanaged',
+        terminal,
+        sessionName: terminal.sessionName,
+        sessionGeneration: terminal.sessionGeneration,
+      };
+    }
+
+    if (!panel) return null;
+    return { panelIndex, state: 'idle', panel };
+  }
+
+  private isTaskTargetExpectationCurrent(expectation: TaskTargetExpectation): boolean {
+    if (expectation.panelIndex < 0 || !this.layout.hasPanel(expectation.panelIndex)) return false;
+
+    const terminal = this.layout.getTerminalPanel(expectation.panelIndex);
+    const running = this.findRunningAgent(expectation.panelIndex);
+    if (expectation.state === 'managed') {
+      if (!running) return false;
+      if (expectation.terminal && terminal !== expectation.terminal) return false;
+      const profileId = running.profileId
+        ?? (typeof this.agentManager.getAgentProfileId === 'function'
+          ? this.agentManager.getAgentProfileId(expectation.panelIndex)
+          : null)
+        ?? running.type;
+      return running.sessionId === expectation.sessionId
+        && running.type === expectation.agentType
+        && profileId === expectation.profileId;
+    }
+
+    if (expectation.state === 'unmanaged') {
+      return !running
+        && terminal === expectation.terminal
+        && terminal.isRunning
+        && terminal.sessionName === expectation.sessionName
+        && terminal.sessionGeneration === expectation.sessionGeneration;
+    }
+
+    return this.layout.getPanel(expectation.panelIndex) === expectation.panel
+      && !running
+      && !terminal?.isRunning;
+  }
+
+  private targetExpectationUnavailable(
+    expectation: TaskTargetExpectation,
+  ): { success: false; error: string } {
+    return this.layout.hasPanel(expectation.panelIndex)
+      ? {
+          success: false,
+          error: `Panel ${expectation.panelIndex + 1} session changed after the task was authorized`,
+        }
+      : this.targetUnavailable(expectation.panelIndex);
   }
 
   private resolveSessionRefForPanel(panelIndex: number): SessionRef | null {
@@ -316,7 +459,10 @@ export class Orchestrator {
         this.markSessionEngaged(source.sessionId);
         return false;
       }
-      logger.info(`Orchestrator: suppressed startup QUERY from panel ${source.panelIndex + 1}: ${query}`);
+      logger.info(
+        `Orchestrator: suppressed startup QUERY from panel ${source.panelIndex + 1} ` +
+        `(${Buffer.byteLength(msg.content, 'utf8')} payload bytes)`,
+      );
       return true;
     }
 
@@ -347,6 +493,31 @@ export class Orchestrator {
   }
 
   // ── Inter-agent message handling ──────────────────────────────
+
+  /**
+   * Production entry point for parsed terminal output. A parser may recognize
+   * legacy markers for display compatibility, but routing remains inert until
+   * the current managed session has been explicitly armed with its capability.
+   */
+  private handlePanelAgentMessage(tp: TerminalPanel, msg: CommanderMessage): void {
+    if (msg.sourcePanel !== tp.panelIndex || !this.isCurrentTarget(tp.panelIndex, tp)) return;
+    const sessionId = this.agentManager.getAgentSessionId(tp.panelIndex);
+    const expectedCapability = sessionId
+      ? this.protocolCapabilities.get(sessionId)
+      : undefined;
+    if (
+      !sessionId
+      || !this.protocolInjected.has(tp.panelIndex)
+      || !expectedCapability
+      || msg.capability !== expectedCapability
+    ) {
+      logger.warn(
+        `Orchestrator: ignored unarmed or unauthorized protocol output from panel ${tp.panelIndex + 1}`,
+      );
+      return;
+    }
+    this.handleAgentMessage(msg);
+  }
 
   private handleAgentMessage(msg: CommanderMessage): void {
     switch (msg.type) {
@@ -382,6 +553,7 @@ export class Orchestrator {
     this.markSessionEngaged(source.sessionId);
 
     const targetAgentInfo = this.findRunningAgent(msg.targetPanel);
+    const targetExpectation = this.captureTaskTarget(msg.targetPanel);
     const targetName = targetAgentInfo?.name ?? msg.targetAgent;
     const record = this.ledger.createMessage({
       kind: 'send',
@@ -397,7 +569,8 @@ export class Orchestrator {
 
     logger.info(
       `Orchestrator: SEND from ${msg.sourceAgent} (panel ${msg.sourcePanel}) ` +
-      `→ ${msg.targetAgent} (panel ${msg.targetPanel + 1}) [${record.threadId}/${record.messageId}]: ${msg.content.slice(0, 80)}…`,
+      `→ ${msg.targetAgent} (panel ${msg.targetPanel + 1}) [${record.threadId}/${record.messageId}] ` +
+      `(${Buffer.byteLength(msg.content, 'utf8')} payload bytes)`,
     );
 
     const prefixed = this.formatForwardedMessage(source, record.messageId, record.threadId, msg.content);
@@ -412,6 +585,8 @@ export class Orchestrator {
         agentType: source.agentType,
       },
       directType: true,
+      allowTargetMutation: false,
+      ...(targetExpectation ? { targetExpectation } : {}),
       kind: 'send',
       messageId: record.messageId,
       threadId: record.threadId,
@@ -443,6 +618,7 @@ export class Orchestrator {
     }
 
     const targetInfo = this.findRunningAgent(returnPanel);
+    const targetExpectation = this.captureTaskTarget(returnPanel);
     const targetAgentType = targetInfo?.type ?? replyRoute.returnToAgentType;
     const targetAgentName = targetInfo?.name ?? replyRoute.returnToAgentName;
 
@@ -462,7 +638,8 @@ export class Orchestrator {
 
     logger.info(
       `Orchestrator: REPLY from ${msg.sourceAgent} (panel ${msg.sourcePanel}) ` +
-      `→ ${targetAgentName} (panel ${returnPanel}) [${record.threadId}/${record.messageId}]: ${msg.content.slice(0, 80)}…`,
+      `→ ${targetAgentName} (panel ${returnPanel}) [${record.threadId}/${record.messageId}] ` +
+      `(${Buffer.byteLength(msg.content, 'utf8')} payload bytes)`,
     );
 
     const prefixed = this.formatForwardedMessage(source, record.messageId, record.threadId, msg.content);
@@ -477,6 +654,8 @@ export class Orchestrator {
         agentType: source.agentType,
       },
       directType: true,
+      allowTargetMutation: false,
+      ...(targetExpectation ? { targetExpectation } : {}),
       kind: 'reply',
       messageId: record.messageId,
       threadId: record.threadId,
@@ -499,7 +678,7 @@ export class Orchestrator {
     const targets = [...this.connectedPanels].filter((p) => p !== msg.sourcePanel);
     logger.info(
       `Orchestrator: BROADCAST from ${msg.sourceAgent} (panel ${msg.sourcePanel}) ` +
-      `→ ${targets.length} panels: ${msg.content.slice(0, 80)}…`,
+      `→ ${targets.length} panels (${Buffer.byteLength(msg.content, 'utf8')} payload bytes)`,
     );
 
     if (targets.length === 0) {
@@ -513,6 +692,7 @@ export class Orchestrator {
 
     for (const panelIndex of targets) {
       const targetInfo = this.findRunningAgent(panelIndex);
+      const targetExpectation = this.captureTaskTarget(panelIndex);
       const agentType = targetInfo?.type ?? this.agentManager.getAgentType(panelIndex);
       if (!agentType) continue;
 
@@ -539,6 +719,8 @@ export class Orchestrator {
           agentType: source.agentType,
         },
         directType: true,
+        allowTargetMutation: false,
+        ...(targetExpectation ? { targetExpectation } : {}),
         kind: 'broadcast',
         messageId: record.messageId,
         threadId: record.threadId,
@@ -577,7 +759,10 @@ export class Orchestrator {
     this.markSessionEngaged(source.sessionId);
 
     const statusText = `${msg.sourceAgent} [P${msg.sourcePanel + 1}]: ${msg.content}`;
-    logger.info(`Orchestrator: STATUS — ${statusText}`);
+    logger.info(
+      `Orchestrator: STATUS from ${msg.sourceAgent} (panel ${msg.sourcePanel}) ` +
+      `(${Buffer.byteLength(msg.content, 'utf8')} payload bytes)`,
+    );
 
     if (this.screen) {
       showToast(this.screen, statusText, 3000);
@@ -601,7 +786,10 @@ export class Orchestrator {
     if (this.shouldSuppressStartupMessage(source, msg)) return;
 
     const query = msg.content.toLowerCase().trim();
-    logger.info(`Orchestrator: QUERY from panel ${msg.sourcePanel}: ${query}`);
+    logger.info(
+      `Orchestrator: QUERY from panel ${msg.sourcePanel} ` +
+      `(${Buffer.byteLength(msg.content, 'utf8')} payload bytes)`,
+    );
 
     let response: string;
 
@@ -654,6 +842,58 @@ export class Orchestrator {
 
   // ── Panel messaging helpers ─────────────────────────────────────
 
+  /** Serialize all Commander-generated writes for one managed session. */
+  private async withSessionInputLane<T>(
+    target: ManagedTaskTarget,
+    operation: () => Promise<T> | T,
+  ): Promise<T> {
+    const previous = this.inputLaneTails.get(target.sessionId);
+    if (!previous) {
+      let releaseLane!: () => void;
+      const tail = new Promise<void>((resolve) => {
+        releaseLane = resolve;
+      });
+      this.inputLaneTails.set(target.sessionId, tail);
+      try {
+        return await operation();
+      } finally {
+        releaseLane();
+        if (this.inputLaneTails.get(target.sessionId) === tail) {
+          this.inputLaneTails.delete(target.sessionId);
+        }
+      }
+    }
+
+    const run = previous.then(operation, operation);
+    const tail = run.then(() => undefined, () => undefined);
+    this.inputLaneTails.set(target.sessionId, tail);
+    try {
+      return await run;
+    } finally {
+      if (this.inputLaneTails.get(target.sessionId) === tail) {
+        this.inputLaneTails.delete(target.sessionId);
+      }
+    }
+  }
+
+  /** Input-lane hook for trusted Commander controls and future approvals. */
+  async sendProgrammaticInput(
+    tp: TerminalPanel,
+    text: string,
+    submit = false,
+  ): Promise<boolean> {
+    const normalized = this.normalizeProgrammaticPayload(text);
+    if (!normalized.success) return false;
+    const agentType = this.agentManager.getAgentType(tp.panelIndex);
+    if (!agentType) return false;
+    const target = this.captureManagedTaskTarget(tp.panelIndex, tp, agentType);
+    if (!target) return false;
+    return this.withSessionInputLane(target, () => (
+      this.isManagedTaskTargetCurrent(target)
+      && tp.sendInput(`${normalized.text}${submit ? '\r' : ''}`)
+    ));
+  }
+
   /**
    * Send an ACK or NACK back to the source panel so the sender knows
    * whether its message was delivered successfully.
@@ -681,30 +921,96 @@ export class Orchestrator {
    * Other agents: bracketed paste for atomic multi-line delivery.
    */
   private sendInfoToPanel(panelIndex: number, text: string): void {
+    const normalized = this.normalizeProgrammaticPayload(text);
+    if (!normalized.success) {
+      logger.warn(`Orchestrator: refused unsafe info payload for panel ${panelIndex + 1}`);
+      return;
+    }
+    text = normalized.text;
     const tp = this.layout.getTerminalPanel(panelIndex);
     if (!tp?.isRunning) return;
 
     const agentType = this.agentManager.getAgentType(panelIndex);
+    if (!agentType) return;
+    const target = this.captureManagedTaskTarget(panelIndex, tp, agentType);
+    if (!target) return;
 
-    if (agentType === 'claude') {
-      // Type directly — no bracketed paste = no bypass permissions prompt.
-      // Flatten newlines so \n doesn't get misinterpreted by Ink.
-      // Truncate to terminal width to prevent line-wrap ghost artifacts:
-      // when Claude's Ink TUI redraws, it doesn't clear wrapped overflow
-      // rows from injected text, leaving ghost characters on screen.
-      const flat = text.replace(/\n/g, ' ');
-      const maxCols = tp.cols ?? 120;
-      const trimmed = flat.length > maxCols - 2 ? flat.slice(0, maxCols - 5) + '...' : flat;
-      tp.sendInput(trimmed + '\r');
-    } else {
-      // Single atomic write — prevents garbled output from concurrent sends.
-      tp.sendInput(`\x1b[200~${text}\x1b[201~\r`);
-    }
-
-    logger.info(`Orchestrator: info → panel ${panelIndex}: ${text.slice(0, 100)}`);
+    void this.withSessionInputLane(target, () => {
+      if (!this.isManagedTaskTargetCurrent(target)) return false;
+      let sent: boolean;
+      if (agentType === 'claude') {
+        // Type directly — no bracketed paste = no bypass permissions prompt.
+        // Flatten newlines so \n doesn't get misinterpreted by Ink.
+        // Truncate to terminal width to prevent line-wrap ghost artifacts:
+        // when Claude's Ink TUI redraws, it doesn't clear wrapped overflow
+        // rows from injected text, leaving ghost characters on screen.
+        const flat = text.replace(/\n/g, ' ');
+        const maxCols = tp.cols ?? 120;
+        const trimmed = flat.length > maxCols - 2 ? flat.slice(0, maxCols - 5) + '...' : flat;
+        sent = tp.sendInput(trimmed + '\r');
+      } else {
+        sent = tp.sendInput(`\x1b[200~${text}\x1b[201~\r`);
+      }
+      if (sent) {
+        logger.info(
+          `Orchestrator: info → panel ${panelIndex} (${Buffer.byteLength(text, 'utf8')} payload bytes)`,
+        );
+      }
+      return sent;
+    }).catch((error) => {
+      logger.error(`Orchestrator: failed to send info to panel ${panelIndex}`, error);
+    });
   }
 
   // ── Send protocol instructions to an agent ────────────────────
+
+  /** Create a capability for an explicitly trusted internal session. */
+  createProtocolCapability(): string {
+    return generateProtocolCapability();
+  }
+
+  /**
+   * Arm only the bundled internal demo profile. Normal agent sessions are
+   * armed exclusively by injectProtocol, which is invoked from Ctrl+P.
+   */
+  armInternalProtocol(tp: TerminalPanel, capability: string): boolean {
+    if (!isProtocolCapability(capability)) return false;
+    const agentType = this.agentManager.getAgentType(tp.panelIndex);
+    if (!agentType) return false;
+    const target = this.captureManagedTaskTarget(tp.panelIndex, tp, agentType, 'internal');
+    if (!target) return false;
+    this.armProtocolTarget(target, capability, true);
+    return true;
+  }
+
+  private armProtocolTarget(
+    target: ManagedTaskTarget,
+    capability: string,
+    engaged: boolean,
+  ): void {
+    this.protocolCapabilities.set(target.sessionId, capability);
+    this.protocolInjected.add(target.panelIndex);
+    this.protocolSessionState.set(target.sessionId, {
+      injectedAt: Date.now(),
+      engaged,
+      lastUserInputAt: 0,
+    });
+    this.injectionGrace.delete(target.panelIndex);
+  }
+
+  private disarmProtocolTarget(target: ManagedTaskTarget, capability: string): void {
+    if (this.protocolCapabilities.get(target.sessionId) !== capability) return;
+    this.protocolCapabilities.delete(target.sessionId);
+    this.protocolSessionState.delete(target.sessionId);
+    const currentSessionId = this.agentManager.getAgentSessionId(target.panelIndex);
+    if (
+      currentSessionId === target.sessionId
+      || !currentSessionId
+      || !this.protocolCapabilities.has(currentSessionId)
+    ) {
+      this.protocolInjected.delete(target.panelIndex);
+    }
+  }
 
   /**
    * Inject Commander protocol instructions into a running agent.
@@ -729,37 +1035,38 @@ export class Orchestrator {
       .filter((a) => a.panelIndex !== panelIndex)
       .map((a) => ({ name: a.name, type: a.type, panel: a.panelIndex }));
 
+    const capability = generateProtocolCapability();
     const instructions = buildProtocolInstructions(
       panelIndex,
       myInfo?.name ?? myAgent,
       others,
+      capability,
     );
 
     try {
-      if (!targetIsCurrent()) throw new Error('Managed session changed before protocol injection');
-      tp.markProtocolTextAsProcessed(instructions);
-      if (
-        await this.sendTextToAgent(tp, instructions, targetIsCurrent) === false
-        || !targetIsCurrent()
-      ) {
-        throw new Error('Terminal stopped accepting protocol input');
-      }
-      if (await this.submitInput(tp, targetIsCurrent) === false || !targetIsCurrent()) {
-        throw new Error('Terminal stopped accepting protocol input');
-      }
-      await this.delay(this.orchConfig.gridScanDelay);
-      if (!targetIsCurrent()) throw new Error('Managed session changed during protocol injection');
-      tp.snapshotVisibleProtocolAsProcessed();
-      this.protocolInjected.add(panelIndex);
-      this.protocolSessionState.set(targetGeneration.sessionId, {
-        injectedAt: Date.now(),
-        engaged: false,
-        lastUserInputAt: 0,
+      await this.withSessionInputLane(targetGeneration, async () => {
+        if (!targetIsCurrent()) throw new Error('Managed session changed before protocol injection');
+        // Rotation happens before the first byte is sent, invalidating every
+        // capability previously issued to this session.
+        this.armProtocolTarget(targetGeneration, capability, false);
+        tp.markProtocolTextAsProcessed(instructions);
+        if (
+          await this.sendTextToAgent(tp, instructions, targetIsCurrent) === false
+          || !targetIsCurrent()
+        ) {
+          throw new Error('Terminal stopped accepting protocol input');
+        }
+        if (await this.submitInput(tp, targetIsCurrent) === false || !targetIsCurrent()) {
+          throw new Error('Terminal stopped accepting protocol input');
+        }
+        await this.delay(this.orchConfig.gridScanDelay);
+        if (!targetIsCurrent()) throw new Error('Managed session changed during protocol injection');
+        tp.snapshotVisibleProtocolAsProcessed();
       });
-      this.injectionGrace.delete(panelIndex);
       logger.info(`Orchestrator: injected protocol instructions to panel ${panelIndex}`);
       return true;
     } catch (err) {
+      this.disarmProtocolTarget(targetGeneration, capability);
       logger.error(`Orchestrator: protocol injection failed for panel ${panelIndex}`, err);
       return false;
     }
@@ -921,6 +1228,9 @@ export class Orchestrator {
             task.task,
             task.directType,
             task.profileId,
+            task.allowTargetMutation,
+            task.bindTemplateCapability,
+            task.targetExpectation,
           );
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
@@ -933,13 +1243,20 @@ export class Orchestrator {
           result = { success: false, error: queueState.detachedReason };
         }
 
+        const effectivePanelIndex = currentPanelIndex ?? panelIndex;
+        if (
+          result.success
+          && task.targetExpectation
+          && task.messageId
+          && !this.isTaskTargetExpectationCurrent(task.targetExpectation)
+        ) {
+          result = this.targetExpectationUnavailable(task.targetExpectation);
+        }
         try {
           task.onComplete?.(result);
         } catch (err) {
-          logger.error(`Orchestrator: task completion callback failed for panel ${currentPanelIndex ?? panelIndex}`, err);
+          logger.error(`Orchestrator: task completion callback failed for panel ${effectivePanelIndex}`, err);
         }
-
-        const effectivePanelIndex = currentPanelIndex ?? panelIndex;
         const deliveredTarget = result.success
           ? this.resolveSessionRefForPanel(effectivePanelIndex)
           : null;
@@ -1029,6 +1346,46 @@ export class Orchestrator {
   }
 
   /**
+   * Capability-bind protocol blocks only for the explicit template workflow.
+   * A collaboration template is rejected with a clear Ctrl+P instruction when
+   * its target session has not been armed; ordinary task text is untouched.
+   */
+  prepareTemplateTask(
+    panelIndex: number,
+    content: string,
+    requiresProtocol = false,
+  ): ({ success: true } & PreparedTemplateTask) | { success: false; error: string } {
+    const bindProtocolCapability = requiresProtocol || hasLegacyProtocolMarkers(content);
+    if (!bindProtocolCapability) {
+      return { success: true, content, bindProtocolCapability: false };
+    }
+    const tp = this.layout.getTerminalPanel(panelIndex);
+    const sessionId = this.agentManager.getAgentSessionId(panelIndex);
+    const capability = sessionId
+      ? this.protocolCapabilities.get(sessionId)
+      : undefined;
+    if (
+      !tp?.isRunning
+      || !sessionId
+      || !capability
+      || !this.protocolInjected.has(panelIndex)
+    ) {
+      return {
+        success: false,
+        error: `Collaboration template requires an armed agent in Panel ${panelIndex + 1}; press Ctrl+P there, then send the template again`,
+      };
+    }
+    return {
+      success: true,
+      // Binding is deliberately deferred until this task owns the target
+      // session's input lane. A confirmation dialog or queue wait may outlive
+      // the capability that was current here.
+      content,
+      bindProtocolCapability: true,
+    };
+  }
+
+  /**
    * Send a task to an agent panel. Tasks targeting the same panel are
    * queued and processed sequentially to prevent interleaved input.
    */
@@ -1037,6 +1394,43 @@ export class Orchestrator {
     panelIndex: number,
     task: string,
     profileId?: string,
+    targetExpectation?: TaskTargetExpectation,
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.enqueueUserTask(
+      agentType,
+      panelIndex,
+      task,
+      profileId,
+      false,
+      targetExpectation,
+    );
+  }
+
+  /** Deliver a template prepared by prepareTemplateTask(). */
+  async sendTemplateTask(
+    agentType: AgentType,
+    panelIndex: number,
+    prepared: PreparedTemplateTask,
+    profileId?: string,
+    targetExpectation?: TaskTargetExpectation,
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.enqueueUserTask(
+      agentType,
+      panelIndex,
+      prepared.content,
+      profileId,
+      prepared.bindProtocolCapability,
+      targetExpectation,
+    );
+  }
+
+  private async enqueueUserTask(
+    agentType: AgentType,
+    panelIndex: number,
+    task: string,
+    profileId: string | undefined,
+    bindTemplateCapability: boolean,
+    targetExpectation: TaskTargetExpectation | undefined,
   ): Promise<{ success: boolean; error?: string }> {
     return new Promise((resolve) => {
       let settled = false;
@@ -1054,6 +1448,10 @@ export class Orchestrator {
         agentType,
         ...(profileId ? { profileId } : {}),
         task,
+        ...(bindTemplateCapability
+          ? { bindTemplateCapability: true, allowTargetMutation: false }
+          : {}),
+        ...(targetExpectation ? { targetExpectation } : {}),
         onComplete: (result) => {
           if (settled) return;
           settled = true;
@@ -1073,12 +1471,29 @@ export class Orchestrator {
     task: string,
     directType?: boolean,
     profileId?: string,
+    allowTargetMutation = true,
+    bindTemplateCapability = false,
+    targetExpectation?: TaskTargetExpectation,
   ): Promise<{ success: boolean; error?: string }> {
+    const normalizedTask = this.normalizeProgrammaticPayload(task);
+    if (!normalizedTask.success) {
+      return { success: false, error: normalizedTask.error };
+    }
+    task = normalizedTask.text;
     if (!this.layout.hasPanel(panelIndex)) {
       return {
         success: false,
         error: `Panel ${panelIndex + 1} is not available`,
       };
+    }
+    if (
+      targetExpectation
+      && (
+        targetExpectation.panelIndex !== panelIndex
+        || !this.isTaskTargetExpectationCurrent(targetExpectation)
+      )
+    ) {
+      return this.targetExpectationUnavailable(targetExpectation);
     }
 
     const existingTerminal = this.layout.getTerminalPanel(panelIndex);
@@ -1091,6 +1506,21 @@ export class Orchestrator {
       existingAgent === agentType &&
       (profileId === undefined || existingProfile === profileId),
     );
+    if (!allowTargetMutation && !reusesExisting) {
+      if (!existingTerminal || !existingTerminal.isRunning || !existingAgent) {
+        return {
+          success: false,
+          error: `Protocol routing requires Panel ${panelIndex + 1} to already run ${agentType}`,
+        };
+      }
+      const actualTarget = existingProfile && existingProfile !== existingAgent
+        ? `${existingAgent} profile ${existingProfile}`
+        : existingAgent;
+      return {
+        success: false,
+        error: `Protocol routing refused to replace ${actualTarget} in Panel ${panelIndex + 1} with ${agentType}`,
+      };
+    }
     const launchError = reusesExisting
       ? null
       : profileId !== undefined
@@ -1127,7 +1557,10 @@ export class Orchestrator {
         if (!this.isCurrentTarget(panelIndex, tp)) {
           return this.targetUnavailable(panelIndex);
         }
-        if (this.agentManager.getAgentSessionId(panelIndex) !== null) {
+        if (
+          this.agentManager.getAgentSessionId(panelIndex) !== null
+          || tp.isRunning
+        ) {
           return this.managedTargetUnavailable(panelIndex);
         }
       }
@@ -1179,37 +1612,58 @@ export class Orchestrator {
     //    Other agents / manual sends: bracketed paste preserves formatting.
     const currentAgentType = targetGeneration.agentType;
     const targetIsCurrent = () => this.isManagedTaskTargetCurrent(targetGeneration);
-    if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
-    tp.reserveProtocolTextForEcho(task);
-    if (currentAgentType === 'claude' && this.shouldDirectTypeToClaude(task, directType)) {
-      const flat = task.replace(/\n/g, ' ');
-      const sent = await this.sendTextChunked(tp, flat, targetIsCurrent);
-      if (sent === false || !targetIsCurrent()) {
-        return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
-      }
-      await this.delay(CLAUDE_DIRECT_SUBMIT_DELAY_MS);
-      if (!targetIsCurrent() || tp.sendInput('\r') === false) {
-        return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
-      }
+    const deliveryFailure = await this.withSessionInputLane<{
+      success: false;
+      error: string;
+    } | null>(targetGeneration, async () => {
       if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
-      tp.showCommanderActivity('Commander task received');
-      logger.info(`Orchestrator: typed short task directly to Claude on panel ${panelIndex} (${task.length} chars)`);
-    } else {
-      const sent = await this.sendTextToAgent(tp, task, targetIsCurrent);
-      if (sent === false || !targetIsCurrent()) {
-        return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+      if (bindTemplateCapability) {
+        const capability = this.protocolCapabilities.get(targetGeneration.sessionId);
+        if (
+          !capability
+          || !this.protocolInjected.has(panelIndex)
+          || !targetIsCurrent()
+        ) {
+          return {
+            success: false,
+            error: `Collaboration template requires the current agent in Panel ${panelIndex + 1} to be armed with Ctrl+P`,
+          };
+        }
+        task = bindTemplateProtocolCapability(task, capability);
       }
-      const submitted = await this.submitInput(tp, targetIsCurrent);
-      if (submitted === false || !targetIsCurrent()) {
-        return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+      tp.reserveProtocolTextForEcho(task);
+      if (currentAgentType === 'claude' && this.shouldDirectTypeToClaude(task, directType)) {
+        const flat = task.replace(/\n/g, ' ');
+        const sent = await this.sendTextChunked(tp, flat, targetIsCurrent);
+        if (sent === false || !targetIsCurrent()) {
+          return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+        }
+        await this.delay(CLAUDE_DIRECT_SUBMIT_DELAY_MS);
+        if (!targetIsCurrent() || tp.sendInput('\r') === false) {
+          return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+        }
+        if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
+        tp.showCommanderActivity('Commander task received');
+        logger.info(`Orchestrator: typed short task directly to Claude on panel ${panelIndex} (${task.length} chars)`);
+      } else {
+        const sent = await this.sendTextToAgent(tp, task, targetIsCurrent);
+        if (sent === false || !targetIsCurrent()) {
+          return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+        }
+        const submitted = await this.submitInput(tp, targetIsCurrent);
+        if (submitted === false || !targetIsCurrent()) {
+          return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+        }
+        if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
+        tp.showCommanderActivity('Commander task received');
+        logger.info(
+          `Orchestrator: sent task to ${agentType} on panel ${panelIndex} (${task.length} chars)` +
+          `${currentAgentType === 'claude' && directType ? ' using paste fallback' : ''}`,
+        );
       }
-      if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
-      tp.showCommanderActivity('Commander task received');
-      logger.info(
-        `Orchestrator: sent task to ${agentType} on panel ${panelIndex} (${task.length} chars)` +
-        `${currentAgentType === 'claude' && directType ? ' using paste fallback' : ''}`,
-      );
-    }
+      return null;
+    });
+    if (deliveryFailure) return deliveryFailure;
 
     // 6. Focus the target panel
     if (!targetIsCurrent()) {
@@ -1250,6 +1704,24 @@ export class Orchestrator {
   }
 
   /**
+   * Normalize portable line endings, then reject terminal control bytes that
+   * could escape bracketed paste or trigger an unintended submit/action.
+   * Tab and LF are the only allowed C0 characters in prompt payloads.
+   */
+  private normalizeProgrammaticPayload(
+    text: string,
+  ): { success: true; text: string } | { success: false; error: string } {
+    const normalized = text.replace(/\r\n/g, '\n');
+    const unsafe = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u.exec(normalized);
+    if (!unsafe) return { success: true, text: normalized };
+    const codePoint = unsafe[0].codePointAt(0) ?? 0;
+    return {
+      success: false,
+      error: `Payload contains unsafe terminal control U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}`,
+    };
+  }
+
+  /**
    * Send text wrapped in bracketed-paste escape sequences so that TUI agents
    * treat the entire block as pasted text and insert it verbatim — preserving
    * spaces, punctuation, and newlines.
@@ -1263,8 +1735,10 @@ export class Orchestrator {
     text: string,
     isStillValid: () => boolean = () => true,
   ): Promise<boolean> {
+    const normalized = this.normalizeProgrammaticPayload(text);
+    if (!normalized.success) return false;
     if (!isStillValid() || !tp.sendInput('\x1b[200~')) return false;
-    if (!await this.sendTextChunked(tp, text, isStillValid)) return false;
+    if (!await this.sendTextChunked(tp, normalized.text, isStillValid)) return false;
     return isStillValid() && tp.sendInput('\x1b[201~');
   }
 
@@ -1278,12 +1752,29 @@ export class Orchestrator {
     text: string,
     isStillValid: () => boolean = () => true,
   ): Promise<boolean> {
+    const normalized = this.normalizeProgrammaticPayload(text);
+    if (!normalized.success) return false;
     const CHUNK_SIZE = 1024;
-    for (let i = 0; i < text.length; i += CHUNK_SIZE) {
-      if (!isStillValid() || !tp.sendInput(text.slice(i, i + CHUNK_SIZE))) {
+    const chunks: string[] = [];
+    let chunk = '';
+    let chunkBytes = 0;
+    for (const codePoint of normalized.text) {
+      const codePointBytes = Buffer.byteLength(codePoint, 'utf8');
+      if (chunk && chunkBytes + codePointBytes > CHUNK_SIZE) {
+        chunks.push(chunk);
+        chunk = '';
+        chunkBytes = 0;
+      }
+      chunk += codePoint;
+      chunkBytes += codePointBytes;
+    }
+    if (chunk) chunks.push(chunk);
+
+    for (let i = 0; i < chunks.length; i++) {
+      if (!isStillValid() || !tp.sendInput(chunks[i])) {
         return false;
       }
-      if (i + CHUNK_SIZE < text.length) {
+      if (i + 1 < chunks.length) {
         await this.delay(15);
         if (!isStillValid()) return false;
       }

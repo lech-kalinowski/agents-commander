@@ -49,9 +49,9 @@ The Commander Protocol exposes five primary commands.
 Example:
 
 ```text
-===COMMANDER:SEND:codex:2===
+===COMMANDER:SEND:codex:2:<session-key>===
 Please review the API design and propose a simpler interface.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 Semantically, `SEND` opens a thread from one session to another. The Commander creates a message record, delivers the content to the destination panel, and returns a structured acknowledgement to the sender.
@@ -61,9 +61,9 @@ Semantically, `SEND` opens a thread from one session to another. The Commander c
 `REPLY` continues the latest open thread for the current session.
 
 ```text
-===COMMANDER:REPLY===
+===COMMANDER:REPLY:<session-key>===
 I agree with the refactor direction, but the caching layer still leaks concerns.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 In `v11`, `REPLY` is thread-aware. It does not rely on a fragile "last sender" heuristic. Instead, the protocol claims an open reply window from the message ledger and routes the reply back to the correct return session.
@@ -73,9 +73,9 @@ In `v11`, `REPLY` is thread-aware. It does not rely on a fragile "last sender" h
 `BROADCAST` sends one message to all connected sessions except the sender.
 
 ```text
-===COMMANDER:BROADCAST===
+===COMMANDER:BROADCAST:<session-key>===
 Standup: I am starting test hardening. Report blockers in one short reply.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 Broadcast is useful for coordination experiments, synchronization prompts, and shared-state announcements.
@@ -85,9 +85,9 @@ Broadcast is useful for coordination experiments, synchronization prompts, and s
 `STATUS` reports progress to Commander rather than to another agent.
 
 ```text
-===COMMANDER:STATUS===
+===COMMANDER:STATUS:<session-key>===
 Profiling complete. I am now investigating the slow query path.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 Commander displays the status in the UI and returns a local acknowledgement so the sender knows the update was accepted.
@@ -97,16 +97,16 @@ Commander displays the status in the UI and returns a local acknowledgement so t
 `QUERY` asks Commander for environment information such as active agents, panel layout, or protocol help.
 
 ```text
-===COMMANDER:QUERY===
+===COMMANDER:QUERY:<session-key>===
 agents
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 This gives agents a controlled way to inspect coordination state without inventing their own discovery logic.
 
 ## 4. Protocol Envelope and State
 
-The visible protocol syntax is intentionally simple, but the runtime model in `v11` is richer.
+The visible protocol syntax is intentionally simple, but the runtime model is richer. `Ctrl+P` arms one managed session with a fresh capability; `<session-key>` above represents that injected value. Headers and footers without the current session capability are parsed for display compatibility but never routed.
 
 ### 4.1 Session Identity
 
@@ -195,9 +195,9 @@ The protocol also has clear limitations, which are themselves useful from a rese
 
 The protocol operates through terminal rendering, PTY input, and screen scanning. This makes it realistic for command-line agents, but also vulnerable to prompt echo, UI formatting quirks, and timing issues.
 
-### 7.2 Human-readable syntax is easy to teach but easy to contaminate
+### 7.2 Human-readable syntax still requires containment
 
-Literal protocol markers can appear inside examples, templates, or help text. `v11` includes hardening to reduce false positives, but the risk is inherent to text-visible protocols.
+Literal protocol markers can appear inside examples, templates, or help text. Session-bound capabilities now make static or stale markers inert, and explicit template delivery binds trusted collaboration templates to the current session. Prompt-injection risk still exists after a human deliberately arms an agent, so routed output is also prohibited from replacing or killing an occupied target.
 
 ### 7.3 It is a coordination layer, not a semantic planner
 

@@ -115,6 +115,14 @@ const theme = {
   },
 } as any;
 
+function activityDialog(): FakeElement {
+  const result = blessedMocks.box.mock.results.find(
+    ({ value }) => (value as FakeElement).options.label?.includes('Routed Message Activity'),
+  );
+  if (!result) throw new Error('Activity dialog was not created');
+  return result.value as FakeElement;
+}
+
 describe('Activity dialog', () => {
   let handle: ActivityDialogHandle | null = null;
 
@@ -174,13 +182,19 @@ describe('Activity dialog', () => {
 
     handle = showActivityDialog(screen, theme, provider, { refreshIntervalMs: 250 });
     const duplicate = showActivityDialog(screen, theme, provider);
-    const dialog = blessedMocks.box.mock.results[0].value as FakeElement;
+    const dialog = activityDialog();
     const footer = blessedMocks.text.mock.results[0].value as FakeElement;
 
     expect(handle).not.toBeNull();
     expect(duplicate).toBeNull();
     expect(isDialogActive()).toBe(true);
-    expect(blessedMocks.box).toHaveBeenCalledOnce();
+    expect(blessedMocks.box).toHaveBeenCalledTimes(2);
+    expect(blessedMocks.box.mock.calls[0][0]).toMatchObject({
+      width: '100%',
+      height: '100%',
+      mouse: true,
+      transparent: true,
+    });
     expect(dialog.options.tags).toBe(false);
     expect(footer.options.tags).toBe(false);
     expect(dialog.options.label).toContain('SEND / REPLY / BROADCAST');
@@ -193,7 +207,7 @@ describe('Activity dialog', () => {
     const provider = vi.fn(() => records);
 
     handle = showActivityDialog(screen, theme, provider, { refreshIntervalMs: 250 });
-    const dialog = blessedMocks.box.mock.results[0].value as FakeElement;
+    const dialog = activityDialog();
 
     expect(provider).toHaveBeenCalledOnce();
     expect(screen.listenerCount('keypress')).toBe(1);
@@ -221,7 +235,7 @@ describe('Activity dialog', () => {
   it('closes on F12 without treating Shift+F12 as the Activity toggle', async () => {
     const screen = createScreen();
     handle = showActivityDialog(screen, theme, () => []);
-    const dialog = blessedMocks.box.mock.results[0].value as FakeElement;
+    const dialog = activityDialog();
 
     screen.emit('keypress', undefined, {
       name: 'f12',
@@ -250,7 +264,7 @@ describe('Activity dialog', () => {
     expect(() => showActivityDialog(screen, theme, () => []))
       .toThrow('initial render failed');
 
-    const dialog = blessedMocks.box.mock.results[0].value as FakeElement;
+    const dialog = activityDialog();
     expect(dialog.destroy).toHaveBeenCalledOnce();
     expect(isDialogActive()).toBe(false);
     expect(screen.listenerCount('keypress')).toBe(0);
@@ -265,7 +279,7 @@ describe('Activity dialog', () => {
     const screen = createScreen();
     const previousFocus = screen.focused;
     handle = showActivityDialog(screen, theme, () => []);
-    const dialog = blessedMocks.box.mock.results[0].value as FakeElement;
+    const dialog = activityDialog();
     dialog.destroy.mockImplementationOnce(() => {
       throw new TypeError('destroy failed');
     });

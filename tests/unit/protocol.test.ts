@@ -7,7 +7,18 @@ import {
   normalizeMarkerLine,
   isReplyMarker,
   isEndMarker,
+  bindTemplateProtocolCapability,
+  generateProtocolCapability,
+  hasLegacyProtocolMarkers,
 } from '../../src/orchestration/protocol.js';
+import { logger } from '../../src/utils/logger.js';
+import {
+  buildProtocolInstructions as buildPublicProtocolInstructions,
+  generateProtocolCapability as generatePublicProtocolCapability,
+  isProtocolCapability as isPublicProtocolCapability,
+} from '../../src/index.js';
+
+const TEST_CAPABILITY = 'a'.repeat(43);
 
 describe('stripAnsi', () => {
   it('removes CSI color codes', () => {
@@ -28,6 +39,57 @@ describe('stripAnsi', () => {
 });
 
 describe('ProtocolScanner', () => {
+  it('emits a capability only when the footer matches the armed header', () => {
+    const cb = vi.fn();
+    const scanner = new ProtocolScanner(0, 'Codex CLI', cb);
+    const otherCapability = 'b'.repeat(43);
+
+    scanner.feed(
+      `===COMMANDER:QUERY:${TEST_CAPABILITY}===\n`
+      + 'agents\n'
+      + `===COMMANDER:END:${otherCapability}===\n`,
+    );
+    expect(cb).not.toHaveBeenCalled();
+
+    scanner.feed(`===COMMANDER:END:${TEST_CAPABILITY}===\n`);
+    expect(cb).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'query',
+      content: expect.stringContaining('agents'),
+      capability: TEST_CAPABILITY,
+    }));
+  });
+
+  it('logs marker metadata without persisting agent-produced prefixes', () => {
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const secret = 'TOP_SECRET_ROUTED_PREFIX';
+    try {
+      const scanner = new ProtocolScanner(0, 'Test', vi.fn());
+      scanner.feed(`${secret} ===COMMANDER===\n`);
+      scanner.feed(`===COMMANDER:SEND:${secret}:1===\n`);
+
+      expect(debug).toHaveBeenCalled();
+      expect(debug.mock.calls.flat().join(' ')).not.toContain(secret);
+    } finally {
+      debug.mockRestore();
+    }
+  });
+
+  it('drops a block once its UTF-8 byte ceiling is exceeded', () => {
+    const cb = vi.fn();
+    const scanner = new ProtocolScanner(0, 'Test', cb, {
+      maxContentLines: 100_000,
+      maxContentBytes: 32,
+    });
+
+    scanner.feed(
+      '===COMMANDER:SEND:codex:1===\n'
+      + `${'🙂'.repeat(9)}\n`
+      + '===COMMANDER:END===\n',
+    );
+
+    expect(cb).not.toHaveBeenCalled();
+  });
+
   it('detects a complete SEND block', () => {
     const cb = vi.fn();
     const scanner = new ProtocolScanner(0, 'Codex CLI', cb);
@@ -478,30 +540,87 @@ describe('ProtocolScanner edge cases', () => {
 });
 
 describe('buildProtocolInstructions', () => {
+  it('generates a fresh high-entropy capability', () => {
+    const first = generateProtocolCapability();
+    const second = generateProtocolCapability();
+    expect(first).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second).not.toBe(first);
+  });
+
   it('includes agent name and panel', () => {
-    const text = buildProtocolInstructions(0, 'Claude Code', []);
+    const text = buildProtocolInstructions(0, 'Claude Code', [], TEST_CAPABILITY);
     expect(text).toContain('Claude Code');
     expect(text).toContain('Panel 1');
     expect(text).toContain('Panel numbers: 1-1000000');
   });
 
+  it('keeps the deprecated three-argument public API safe and callable', () => {
+    // This call intentionally exercises the public TypeScript overload as well
+    // as its runtime behavior through the package root.
+    const text = buildPublicProtocolInstructions(0, 'Claude Code', []);
+    const match = text.match(/Protocol capability: ([A-Za-z0-9_-]+)\./);
+
+    expect(match?.[1]).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(isPublicProtocolCapability(match?.[1] ?? '')).toBe(true);
+    expect(text).toContain(`COMMANDER:END:${match?.[1]}`);
+    expect(text).not.toContain('===COMMANDER:END===');
+  });
+
+  it('exports capability helpers from the package root', () => {
+    const capability = generatePublicProtocolCapability();
+    expect(isPublicProtocolCapability(capability)).toBe(true);
+    expect(isPublicProtocolCapability('legacy-static-marker')).toBe(false);
+  });
+
+  it('rejects an invalid explicitly supplied capability', () => {
+    expect(() => buildProtocolInstructions(0, 'Claude Code', [], 'too-short')).toThrow(
+      'Commander protocol capability is invalid',
+    );
+  });
+
   it('lists other running agents', () => {
     const text = buildProtocolInstructions(0, 'Claude Code', [
       { name: 'Codex CLI', type: 'codex', panel: 1 },
-    ]);
+    ], TEST_CAPABILITY);
     expect(text).toContain('Codex CLI');
     expect(text).toContain('Panel 2');
   });
 
   it('does not include literal parseable protocol markers in the instructions', () => {
-    const text = buildProtocolInstructions(0, 'Claude Code', []);
+    const text = buildProtocolInstructions(0, 'Claude Code', [], TEST_CAPABILITY);
     expect(text).not.toContain('===COMMANDER:SEND:');
     expect(text).not.toContain('===COMMANDER:REPLY===');
     expect(text).not.toContain('===COMMANDER:BROADCAST===');
     expect(text).not.toContain('===COMMANDER:STATUS===');
     expect(text).not.toContain('===COMMANDER:QUERY===');
     expect(text).not.toContain('===COMMANDER:END===');
-    expect(text).toContain('three "=" + "COMMANDER:SEND:<type>:<panel>" + three "="');
+    expect(text).toContain(
+      `three "=" + "COMMANDER:SEND:<type>:<panel>:${TEST_CAPABILITY}" + three "="`,
+    );
+  });
+
+  it('capability-binds complete, inline, placeholder, and old targeted REPLY markers', () => {
+    const template = [
+      'Mention COMMANDER:SEND in prose without changing it.',
+      '===COMMANDER:SEND:codex:2===',
+      'Review this and use ===COMMANDER:REPLY=== when done.',
+      'Template: ===COMMANDER:SEND:<type>:<panel>===',
+      'Old reply: ===COMMANDER:REPLY:codex:2===',
+      '===COMMANDER:END===',
+      'Composed footer uses COMMANDER:END:<session-key>.',
+    ].join('\n');
+
+    expect(hasLegacyProtocolMarkers(template)).toBe(true);
+    const bound = bindTemplateProtocolCapability(template, TEST_CAPABILITY);
+    expect(bound).toContain('Mention COMMANDER:SEND in prose without changing it.');
+    expect(bound).toContain(`===COMMANDER:SEND:codex:2:${TEST_CAPABILITY}===`);
+    expect(bound).toContain(`use ===COMMANDER:REPLY:${TEST_CAPABILITY}=== when done`);
+    expect(bound).toContain(`===COMMANDER:SEND:<type>:<panel>:${TEST_CAPABILITY}===`);
+    expect(bound).toContain(`Old reply: ===COMMANDER:REPLY:${TEST_CAPABILITY}===`);
+    expect(bound).toContain(`===COMMANDER:END:${TEST_CAPABILITY}===`);
+    expect(bound).toContain(`COMMANDER:END:${TEST_CAPABILITY}.`);
+    expect(hasLegacyProtocolMarkers(bound)).toBe(false);
   });
 });
 

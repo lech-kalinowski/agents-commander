@@ -38,5 +38,6 @@ export const defaultConfig: AppConfig = {
     ackTimeout: 60000,
     dedupWindow: 15000,
     maxContentLines: 500,
+    maxContentBytes: 262144,
   },
 };

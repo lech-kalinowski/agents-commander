@@ -11,11 +11,11 @@ export async function readDirectory(dirPath: string, showHidden: boolean): Promi
 
     const fullPath = path.join(dirPath, dirent.name);
     try {
-      const lstat = await fs.lstat(fullPath);
+      const lstat = await fs.lstat(fullPath, { bigint: true });
       let stat = lstat;
       if (lstat.isSymbolicLink()) {
         try {
-          stat = await fs.stat(fullPath);
+          stat = await fs.stat(fullPath, { bigint: true });
         } catch {
           // Keep broken symlinks visible so users can inspect or remove them.
         }
@@ -25,10 +25,14 @@ export async function readDirectory(dirPath: string, showHidden: boolean): Promi
         fullPath,
         isDirectory: stat.isDirectory(),
         isSymlink: lstat.isSymbolicLink(),
-        size: stat.size,
+        size: Number(stat.size),
         modified: stat.mtime,
-        permissions: formatPermissions(stat.mode),
+        permissions: formatPermissions(Number(stat.mode)),
         extension: path.extname(dirent.name).toLowerCase(),
+        deviceId: lstat.dev.toString(),
+        inode: lstat.ino.toString(),
+        identityMode: Number(lstat.mode),
+        ctimeNs: lstat.ctimeNs.toString(),
       });
     } catch {
       // Skip files we can't stat (broken symlinks, etc.)
@@ -48,11 +52,11 @@ function formatPermissions(mode: number): string {
 
 export async function getFileInfo(filePath: string): Promise<FileEntry | null> {
   try {
-    const lstat = await fs.lstat(filePath);
+    const lstat = await fs.lstat(filePath, { bigint: true });
     let stat = lstat;
     if (lstat.isSymbolicLink()) {
       try {
-        stat = await fs.stat(filePath);
+        stat = await fs.stat(filePath, { bigint: true });
       } catch {
         // Report metadata for the link itself when its target is missing.
       }
@@ -62,10 +66,14 @@ export async function getFileInfo(filePath: string): Promise<FileEntry | null> {
       fullPath: filePath,
       isDirectory: stat.isDirectory(),
       isSymlink: lstat.isSymbolicLink(),
-      size: stat.size,
+      size: Number(stat.size),
       modified: stat.mtime,
-      permissions: formatPermissions(stat.mode),
+      permissions: formatPermissions(Number(stat.mode)),
       extension: path.extname(filePath).toLowerCase(),
+      deviceId: lstat.dev.toString(),
+      inode: lstat.ino.toString(),
+      identityMode: Number(lstat.mode),
+      ctimeNs: lstat.ctimeNs.toString(),
     };
   } catch {
     return null;

@@ -1,7 +1,11 @@
 import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
 import type { MessageRecord } from '../../orchestration/message-ledger.js';
-import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../../utils/dialog-state.js';
 import { bindOverlayResize, truncateOverlayText } from './geometry.js';
 
 const DEFAULT_LIMIT = 100;
@@ -116,7 +120,6 @@ export function showActivityDialog(
   if (activityOpen) return null;
   activityOpen = true;
 
-  const previousFocus = screen.focused;
   const limit = Number.isFinite(options.limit)
     ? Math.max(1, Math.trunc(options.limit ?? DEFAULT_LIMIT))
     : DEFAULT_LIMIT;
@@ -129,6 +132,7 @@ export function showActivityDialog(
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let keyListenerAttached = false;
   let dialogStateEntered = false;
+  let unregisterCancellation = () => {};
   let closed = false;
   let lastContent = '';
 
@@ -136,6 +140,7 @@ export function showActivityDialog(
     if (closed) return;
     closed = true;
     activityOpen = false;
+    unregisterCancellation();
     const cleanupErrors: unknown[] = [];
     const cleanupStep = (step: () => void) => {
       try {
@@ -162,14 +167,10 @@ export function showActivityDialog(
       dialog = null;
     }
     if (dialogStateEntered) {
-      cleanupStep(leaveDialog);
+      cleanupStep(() => leaveDialog(screen));
       dialogStateEntered = false;
     }
 
-    const focusTarget = previousFocus as { destroyed?: boolean; focus?: () => void } | null;
-    if (focusTarget && !focusTarget.destroyed && typeof focusTarget.focus === 'function') {
-      cleanupStep(() => focusTarget.focus!());
-    }
     cleanupStep(() => screen.render());
 
     if (cleanupErrors.length > 0) {
@@ -178,8 +179,9 @@ export function showActivityDialog(
   };
 
   try {
-    enterDialog();
+    enterDialog(screen);
     dialogStateEntered = true;
+    unregisterCancellation = registerDialogCancellation(screen, close);
 
     dialog = blessed.box({
       parent: screen,

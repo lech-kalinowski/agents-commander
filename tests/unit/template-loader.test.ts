@@ -8,6 +8,10 @@ import {
   loadTemplates,
   refreshTemplates,
 } from '../../src/templates/loader.js';
+import {
+  bindTemplateProtocolCapability,
+  hasLegacyProtocolMarkers,
+} from '../../src/orchestration/protocol.js';
 
 const tempDirs: string[] = [];
 
@@ -23,6 +27,21 @@ describe('template loader', () => {
     refreshTemplates();
     const builtins = loadTemplates().filter((template) => template.source === 'builtin');
     expect(builtins).toHaveLength(121);
+  });
+
+  it('can capability-bind every built-in collaboration template', () => {
+    refreshTemplates();
+    const capability = 'c'.repeat(43);
+    const collaboration = loadTemplates().filter((template) => (
+      template.source === 'builtin' && template.category === 'collaboration'
+    ));
+
+    expect(collaboration.length).toBeGreaterThan(0);
+    for (const template of collaboration) {
+      const bound = bindTemplateProtocolCapability(template.content, capability);
+      expect(hasLegacyProtocolMarkers(bound), template.id).toBe(false);
+      expect(bound, template.id).not.toContain('<session-key>');
+    }
   });
 
   it('finds dist/templates relative to a bundled entry point', () => {

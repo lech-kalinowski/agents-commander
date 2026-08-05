@@ -16,7 +16,7 @@ describe('Orchestrator QUERY', () => {
       panelIndex: 0,
       isRunning: true,
       cols: 500,
-      sendInput: vi.fn(),
+      sendInput: vi.fn(() => true),
       updatePanelIndex: vi.fn(),
       markProtocolTextAsProcessed: vi.fn(),
       reserveProtocolTextForEcho: vi.fn(),
@@ -25,6 +25,7 @@ describe('Orchestrator QUERY', () => {
     mockLayout = {
       panelCount: 2,
       allPanels: [{ panelIndex: 0 }, { panelIndex: 2 }],
+      hasPanel: vi.fn((panelId: number) => panelId === 0),
       getTerminalPanel: vi.fn((panelId: number) => (
         panelId === 0 ? mockTerminalPanel : null
       )),
@@ -32,9 +33,25 @@ describe('Orchestrator QUERY', () => {
 
     mockAgentManager = {
       getAgentType: vi.fn((panelId: number) => panelId === 0 ? 'claude' : null),
+      getAgentProfileId: vi.fn((panelId: number) => panelId === 0 ? 'claude' : null),
+      getAgentSessionId: vi.fn((panelId: number) => panelId === 0 ? 'claude-session-0' : null),
       getRunningAgents: vi.fn().mockReturnValue([
-        { panelIndex: 0, name: 'Claude Code', type: 'claude', status: 'running' },
-        { panelIndex: 1, name: 'Codex CLI', type: 'codex', status: 'running' },
+        {
+          panelIndex: 0,
+          sessionId: 'claude-session-0',
+          profileId: 'claude',
+          name: 'Claude Code',
+          type: 'claude',
+          status: 'running',
+        },
+        {
+          panelIndex: 1,
+          sessionId: 'codex-session-1',
+          profileId: 'codex',
+          name: 'Codex CLI',
+          type: 'codex',
+          status: 'running',
+        },
       ]),
     };
 

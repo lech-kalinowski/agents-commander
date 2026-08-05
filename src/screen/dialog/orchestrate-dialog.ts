@@ -2,7 +2,11 @@ import blessed from 'blessed';
 import type { AgentCommandConfig, Theme } from '../../config/types.js';
 import type { AgentProfile, AgentType } from '../../agents/types.js';
 import { discoverAgents } from '../../agents/agent-registry.js';
-import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../../utils/dialog-state.js';
 import {
   adjacentPanelId,
   initialPanelId,
@@ -51,14 +55,14 @@ export function showOrchestrateDialog(
   const firstPanelId = initialPanelId(panelIds, activePanelIndex);
   if (firstPanelId === null) return Promise.resolve(null);
   dialogOpen = true;
-  enterDialog();
+  enterDialog(screen);
 
   return new Promise((resolve) => {
     const agents = getAvailableOrchestrationAgents(agentOverrides, agentProfiles);
 
     if (agents.length === 0) {
       dialogOpen = false;
-      leaveDialog();
+      leaveDialog(screen);
       showErrorToast(screen, 'No supported agent CLI is installed');
       resolve(null);
       return;
@@ -190,6 +194,7 @@ export function showOrchestrateDialog(
     });
 
     let resolved = false;
+    let unregisterCancellation = () => {};
     const unbindResize = bindOverlayResize(screen, dialog, 70, 22, (nextGeometry) => {
       pickerWidth = Math.max(12, nextGeometry.width - 10);
       if (currentStep === 2) renderPanelContent();
@@ -199,11 +204,19 @@ export function showOrchestrateDialog(
       resolved = true;
       dialogOpen = false;
       numberInput.dispose();
-      leaveDialog();
+      unregisterCancellation();
+      leaveDialog(screen);
       unbindResize();
       dialog.destroy();
       screen.render();
     };
+    unregisterCancellation = registerDialogCancellation(screen, () => {
+      try {
+        cleanup();
+      } finally {
+        resolve(null);
+      }
+    });
 
     // ── STEP 1: Agent selection ──
     const handleAgentSelect = (index: number) => {

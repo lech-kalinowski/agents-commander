@@ -16,6 +16,7 @@ describe('file system', () => {
     tempDirs.push(dir);
     const linkPath = path.join(dir, 'broken-link');
     await fs.symlink('missing-target', linkPath);
+    const linkStat = await fs.lstat(linkPath, { bigint: true });
 
     const entries = await readDirectory(dir, true);
     const link = entries.find((entry) => entry.name === 'broken-link');
@@ -24,10 +25,15 @@ describe('file system', () => {
       fullPath: linkPath,
       isDirectory: false,
       isSymlink: true,
+      deviceId: linkStat.dev.toString(),
+      inode: linkStat.ino.toString(),
+      identityMode: Number(linkStat.mode),
+      ctimeNs: linkStat.ctimeNs.toString(),
     });
     await expect(getFileInfo(linkPath)).resolves.toMatchObject({
       isDirectory: false,
       isSymlink: true,
+      ctimeNs: linkStat.ctimeNs.toString(),
     });
   });
 });

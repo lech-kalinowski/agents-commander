@@ -1562,14 +1562,14 @@
           </div>
           <div class="protocol-body">
 <pre><span class="comment">// SEND &mdash; direct message to an agent</span>
-<span class="marker">===COMMANDER:SEND:codex:2===</span>
+<span class="marker">===COMMANDER:SEND:codex:2:&lt;session-key&gt;===</span>
 <span class="message-content">Write unit tests for src/auth/</span>
-<span class="marker">===COMMANDER:END===</span>
+<span class="marker">===COMMANDER:END:&lt;session-key&gt;===</span>
 
 <span class="comment">// REPLY &mdash; respond to last sender</span>
-<span class="marker">===COMMANDER:REPLY===</span>
+<span class="marker">===COMMANDER:REPLY:&lt;session-key&gt;===</span>
 <span class="message-content">12 tests passing, 0 failing.</span>
-<span class="marker">===COMMANDER:END===</span>
+<span class="marker">===COMMANDER:END:&lt;session-key&gt;===</span>
 
 <span class="comment">// BROADCAST &bull; STATUS &bull; QUERY</span>
 <span class="comment">// 5 commands, fully bidirectional</span>
@@ -1684,10 +1684,10 @@
             <div class="output">Analyzing codebase...</div>
             <div class="output">Found auth vulnerability.</div>
             <br>
-            <div class="protocol-msg">===COMMANDER:SEND:codex:2===</div>
+            <div class="protocol-msg">===COMMANDER:SEND:codex:2:&lt;session-key&gt;===</div>
             <div class="output">Fix the SQL injection in</div>
             <div class="output">src/auth/login.ts line 42</div>
-            <div class="protocol-msg">===COMMANDER:END===</div>
+            <div class="protocol-msg">===COMMANDER:END:&lt;session-key&gt;===</div>
           </div>
         </div>
 

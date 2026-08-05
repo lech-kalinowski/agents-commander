@@ -110,6 +110,14 @@ const theme = {
   },
 } as any;
 
+function navigatorDialog(): FakeElement {
+  const result = blessedMocks.box.mock.results.find(
+    ({ value }) => (value as FakeElement).label.includes('Panel Navigator'),
+  );
+  if (!result) throw new Error('Panel Navigator dialog was not created');
+  return result.value as FakeElement;
+}
+
 describe('panel navigator pure helpers', () => {
   it('sorts deterministically without mutating the source', () => {
     const source = [
@@ -183,7 +191,7 @@ describe('Panel Navigator dialog', () => {
       [panel(1), panel(12, { panelId: 987654, title: 'Target' })],
       100,
     );
-    const dialog = blessedMocks.box.mock.results[0].value as FakeElement;
+    const dialog = navigatorDialog();
     const input = blessedMocks.textbox.mock.results[0].value as FakeElement;
     const list = blessedMocks.list.mock.results[0].value as FakeElement;
 
@@ -223,7 +231,7 @@ describe('Panel Navigator dialog', () => {
     const screen = createScreen(60, 14);
     const previousFocus = screen.focused;
     const promise = showPanelNavigatorDialog(screen, theme, [panel(1)]);
-    const dialog = blessedMocks.box.mock.results[0].value as FakeElement;
+    const dialog = navigatorDialog();
 
     expect(dialog.width).toBe(58);
     expect(dialog.height).toBe(12);

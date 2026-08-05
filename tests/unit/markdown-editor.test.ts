@@ -16,7 +16,19 @@ const toastMocks = vi.hoisted(() => ({
 const dialogMocks = vi.hoisted(() => ({
   showConfirmDialog: vi.fn(),
 }));
+const blessedMocks = vi.hoisted(() => ({
+  box: vi.fn(() => ({ destroy: vi.fn() })),
+}));
 
+vi.mock('blessed', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('blessed')>();
+  return {
+    default: {
+      ...actual.default,
+      box: blessedMocks.box,
+    },
+  };
+});
 vi.mock('../../src/screen/toast.js', () => toastMocks);
 vi.mock('../../src/screen/dialog/confirm-dialog.js', () => dialogMocks);
 vi.mock('../../src/utils/logger.js', () => ({
@@ -132,6 +144,25 @@ describe('MarkdownEditor safe lifecycle', () => {
     expect(editor.baseline).toBe(loadedBaseline);
     expect(editor.setupKeys).toHaveBeenCalledOnce();
     expect(container.focus).toHaveBeenCalledOnce();
+  });
+
+  it('does not revive the editor when disposal wins a pending open', async () => {
+    let resolveLoad!: (value: { content: string; baseline: EditorFileBaseline }) => void;
+    const load = vi.fn(() => new Promise<{ content: string; baseline: EditorFileBaseline }>(
+      (resolve) => { resolveLoad = resolve; },
+    ));
+    const { editor, screen, container } = createHarness({ load });
+
+    const opening = editor.open();
+    (MarkdownEditor.prototype as any).destroyAndRestoreFocus.call(editor);
+    screen.render.mockClear();
+    container.focus.mockClear();
+    resolveLoad({ content: 'late content', baseline: baseline() });
+
+    await expect(opening).resolves.toBe(false);
+    expect(editor.setupKeys).not.toHaveBeenCalled();
+    expect(container.focus).not.toHaveBeenCalled();
+    expect(screen.render).not.toHaveBeenCalled();
   });
 
   it('collapses concurrent saves and updates the baseline once', async () => {
@@ -300,8 +331,8 @@ describe('MarkdownEditor safe lifecycle', () => {
   });
 
   it('releases its shared dialog state exactly once when destroyed', () => {
-    const { editor } = createHarness({});
-    enterDialog();
+    const { editor, screen } = createHarness({});
+    enterDialog(screen);
     editor.dialogStateOwned = true;
     expect(isDialogActive()).toBe(true);
 

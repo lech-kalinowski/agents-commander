@@ -1,6 +1,10 @@
 import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
-import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../../utils/dialog-state.js';
 
 export const HELP_TEXT = `
 {bold}{cyan-fg}AGENTS COMMANDER{/cyan-fg}{/bold}
@@ -45,13 +49,15 @@ Multi-panel AI Agent Manager & File Browser
 
 {bold}{yellow-fg}INTER-AGENT PROTOCOL{/yellow-fg}{/bold}
 
-  5 commands (all end with {cyan-fg}===COMMANDER:END==={/cyan-fg}):
+  Ctrl+P gives the current agent a private {cyan-fg}<session-key>{/cyan-fg}.
+  Every header and footer must include that same key:
 
-  {cyan-fg}SEND:agent:panel{/cyan-fg}  Direct message
-  {cyan-fg}REPLY{/cyan-fg}             Reply to last sender
-  {cyan-fg}BROADCAST{/cyan-fg}         Message all other agents
-  {cyan-fg}STATUS{/cyan-fg}            Progress toast + local ACK
-  {cyan-fg}QUERY{/cyan-fg}             Ask who's running
+  {cyan-fg}SEND:agent:panel:<session-key>{/cyan-fg}  Direct message
+  {cyan-fg}REPLY:<session-key>{/cyan-fg}             Reply to last sender
+  {cyan-fg}BROADCAST:<session-key>{/cyan-fg}         Message all other agents
+  {cyan-fg}STATUS:<session-key>{/cyan-fg}            Progress toast + local ACK
+  {cyan-fg}QUERY:<session-key>{/cyan-fg}             Ask who's running
+  Footer: {cyan-fg}===COMMANDER:END:<session-key>==={/cyan-fg}
 
   Sender gets an ACK after delivery.
   F12 shows routed SEND/REPLY/BROADCAST history.
@@ -97,7 +103,7 @@ let helpOpen = false;
 export function showHelpDialog(screen: blessed.Widgets.Screen, theme: Theme): void {
   if (helpOpen) return;
   helpOpen = true;
-  enterDialog();
+  enterDialog(screen);
 
   const dialog = blessed.box({
     parent: screen,
@@ -138,15 +144,18 @@ export function showHelpDialog(screen: blessed.Widgets.Screen, theme: Theme): vo
   dialog.key(['pagedown'], () => { dialog.scroll((dialog.height as number) - 4); screen.render(); });
 
   let closed = false;
+  let unregisterCancellation = () => {};
   const close = () => {
     if (closed) return;
     closed = true;
     helpOpen = false;
-    leaveDialog();
+    unregisterCancellation();
+    leaveDialog(screen);
     screen.removeListener('keypress', onScreenKey);
     dialog.destroy();
     screen.render();
   };
+  unregisterCancellation = registerDialogCancellation(screen, close);
 
   // Close on dialog-level keys
   dialog.key(['escape', 'enter', 'q', 'f1'], close);

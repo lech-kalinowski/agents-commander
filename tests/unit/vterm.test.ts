@@ -69,6 +69,36 @@ describe('VTerm', () => {
     expect(terminal.getTailLogicalLines(10)).toContain('abcde');
   });
 
+  it('keeps an absolute scrollback window through rollover and clear', () => {
+    const terminal = new VTerm(8, 2, 2);
+
+    terminal.write('one\r\ntwo\r\nthree\r\nfour\r\nfive');
+    expect(terminal.scrollbackLength).toBe(2);
+    expect(terminal.primaryScrollbackStartIndex).toBeGreaterThan(0);
+    const endBeforeClear = terminal.primaryScrollbackEndIndex;
+    expect(terminal.getPrimaryScrollbackPlainRowAt(terminal.primaryScrollbackStartIndex)?.text).toBe('two');
+
+    terminal.write('\x1b[3J');
+    expect(terminal.scrollbackLength).toBe(0);
+    expect(terminal.primaryScrollbackStartIndex).toBe(endBeforeClear);
+    expect(terminal.primaryScrollbackEndIndex).toBe(endBeforeClear);
+
+    terminal.write('six\r\nseven');
+    expect(terminal.primaryScrollbackEndIndex).toBeGreaterThan(endBeforeClear);
+    expect(terminal.getPrimaryScrollbackPlainRowAt(endBeforeClear)).not.toBeNull();
+  });
+
+  it('exposes primary scrollback created immediately before an alternate-screen switch', () => {
+    const terminal = new VTerm(8, 2, 10);
+
+    terminal.write('one\r\ntwo\r\nthree\x1b[?1049h');
+
+    expect(terminal.inAltScreen).toBe(true);
+    expect(terminal.scrollbackLength).toBe(0);
+    expect(terminal.primaryScrollbackEndIndex).toBeGreaterThan(0);
+    expect(terminal.getPrimaryScrollbackPlainRowAt(0)?.text).toBe('one');
+  });
+
   it('preserves a bottom-row continuation when delayed autowrap scrolls', () => {
     const terminal = new VTerm(4, 2);
 

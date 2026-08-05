@@ -1,6 +1,10 @@
 import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
-import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../../utils/dialog-state.js';
 import {
   bindOverlayResize,
   screenGeometry,
@@ -132,11 +136,7 @@ export function showPanelNavigatorDialog(
   if (panelNavigatorOpen) return Promise.resolve(null);
   panelNavigatorOpen = true;
 
-  const previousFocus = screen.focused as {
-    destroyed?: boolean;
-    focus?: () => void;
-  } | null;
-  enterDialog();
+  enterDialog(screen);
 
   return new Promise<number | null>((resolve, reject) => {
     let dialog: blessed.Widgets.BoxElement | null = null;
@@ -149,6 +149,7 @@ export function showPanelNavigatorDialog(
     let keyListenerAttached = false;
     let f11ListenerAttached = false;
     let dialogStateEntered = true;
+    let unregisterCancellation = () => {};
     let closed = false;
     let query = '';
     let selectedIndex = 0;
@@ -164,6 +165,7 @@ export function showPanelNavigatorDialog(
       if (closed) return [];
       closed = true;
       panelNavigatorOpen = false;
+      unregisterCancellation();
       const errors: unknown[] = [];
       const cleanupStep = (step: () => void) => {
         try {
@@ -190,16 +192,8 @@ export function showPanelNavigatorDialog(
         dialog = null;
       }
       if (dialogStateEntered) {
-        cleanupStep(leaveDialog);
+        cleanupStep(() => leaveDialog(screen));
         dialogStateEntered = false;
-      }
-      if (
-        previousFocus
-        && !previousFocus.destroyed
-        && typeof previousFocus.focus === 'function'
-      ) {
-        const restoreFocus = previousFocus.focus;
-        cleanupStep(() => restoreFocus.call(previousFocus));
       }
       cleanupStep(() => screen.render());
       return errors;
@@ -214,6 +208,7 @@ export function showPanelNavigatorDialog(
         resolve(result);
       }
     };
+    unregisterCancellation = registerDialogCancellation(screen, () => finish(null));
 
     const renderFooter = (): void => {
       if (!footer) return;

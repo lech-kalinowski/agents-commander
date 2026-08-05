@@ -24,7 +24,7 @@ You are about to engage in a philosophical debate with another AI agent. This is
 **Begin by sending the opening question to the other agent. Output one real 3-line Commander SEND block, but do not quote the protocol literally in your planning text.**
 
 Line 1:
-three "=" characters + `COMMANDER:SEND:codex:2` + three "=" characters
+three "=" characters + `COMMANDER:SEND:codex:2:<session-key>` + three "=" characters
 
 Line 2 body:
 [Philosophical Debate] Let's have a genuine philosophical exchange about consciousness and understanding.
@@ -38,6 +38,6 @@ Do you agree? If so, what does that "extra something" consist of? If not, what's
 Keep your response to 2-4 paragraphs. Ask the other agent to use the Commander REPLY wrapper when sending the response back.
 
 Line 3:
-three "=" characters + `COMMANDER:END` + three "=" characters
+three "=" characters + `COMMANDER:END:<session-key>` + three "=" characters
 
 After receiving the REPLY, continue using REPLY for all subsequent rounds. After 4-5 rounds, write a joint summary of the key insights and unresolved questions.

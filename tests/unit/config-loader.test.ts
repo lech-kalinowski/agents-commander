@@ -64,7 +64,7 @@ describe('loadConfig', () => {
       agents: {
         codex: { command: '', args: 'fast', env: { VALID: 'yes', INVALID: 1 } },
       },
-      orchestration: { ackTimeout: 'forever', maxContentLines: 0 },
+      orchestration: { ackTimeout: 'forever', maxContentLines: 0, maxContentBytes: 512 },
     }) as never);
 
     const config = loadConfig();

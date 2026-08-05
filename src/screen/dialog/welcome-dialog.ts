@@ -1,6 +1,10 @@
 import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
-import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../../utils/dialog-state.js';
 import { loadTemplates } from '../../templates/loader.js';
 import { getPackageVersion } from '../../utils/package-info.js';
 import { bindOverlayResize, type OverlayGeometry } from './geometry.js';
@@ -71,7 +75,7 @@ Press any key to start...
 
 export function showWelcomeDialog(screen: blessed.Widgets.Screen, theme: Theme): Promise<void> {
   return new Promise((resolve) => {
-    enterDialog();
+    enterDialog(screen);
 
     const dialog = blessed.box({
       parent: screen,
@@ -100,17 +104,23 @@ export function showWelcomeDialog(screen: blessed.Widgets.Screen, theme: Theme):
     const unbindResize = bindOverlayResize(screen, dialog, 60, 42, updateContent);
 
     let closed = false;
+    let unregisterCancellation = () => {};
     const close = () => {
       if (closed) return;
       closed = true;
-      leaveDialog();
-      unbindResize();
-      screen.removeListener('keypress', onKey);
-      screen.removeListener('mouse', onMouse);
-      dialog.destroy();
-      screen.render();
-      resolve();
+      try {
+        unregisterCancellation();
+        leaveDialog(screen);
+        unbindResize();
+        screen.removeListener('keypress', onKey);
+        screen.removeListener('mouse', onMouse);
+        dialog.destroy();
+        screen.render();
+      } finally {
+        resolve();
+      }
     };
+    unregisterCancellation = registerDialogCancellation(screen, close);
 
     const onKey = () => { close(); };
     const onMouse = (data: any) => {

@@ -157,6 +157,7 @@ interface SavedScreen {
   gridWrapsToNext: boolean[];
   scrollback: string[];
   scrollbackWrapsToNext: boolean[];
+  scrollbackStartIndex: number;
   cursorRow: number;
   cursorCol: number;
   wrapPending: boolean;
@@ -183,6 +184,8 @@ export class VTerm {
   private cursorCol = 0;
   private scrollback: string[] = [];
   private scrollbackWrapsToNext: boolean[] = [];
+  /** Absolute index of the first retained scrollback row. */
+  private _scrollbackStartIndex = 0;
   private maxScrollback: number;
   private buf = '';
   private style: CellStyle = { ...DEFAULT_STYLE };
@@ -416,6 +419,23 @@ export class VTerm {
 
   /** Number of lines that have scrolled off the visible grid. */
   get scrollbackLength(): number { return this.scrollback.length; }
+  /**
+   * Absolute half-open primary-buffer scrollback window. While an alternate
+   * screen is active, this still exposes primary rows that arrived in the
+   * same PTY chunk immediately before the buffer switch.
+   */
+  get primaryScrollbackStartIndex(): number {
+    return this._inAltScreen && this.altScreenSaved
+      ? this.altScreenSaved.scrollbackStartIndex
+      : this._scrollbackStartIndex;
+  }
+  get primaryScrollbackEndIndex(): number {
+    const start = this.primaryScrollbackStartIndex;
+    const rows = this._inAltScreen && this.altScreenSaved
+      ? this.altScreenSaved.scrollback
+      : this.scrollback;
+    return start + rows.length;
+  }
   get colCount(): number { return this.cols; }
 
   /** Get a scrollback line as plain text (SGR stripped). */
@@ -430,6 +450,23 @@ export class VTerm {
     return {
       text: raw.replace(/\x1b\[[0-9;]*m/g, ''),
       wrapsToNext: this.scrollbackWrapsToNext[index] ?? false,
+    };
+  }
+
+  /** Get a retained row by its absolute scrollback index. */
+  getPrimaryScrollbackPlainRowAt(index: number): VTermPlainRow | null {
+    const start = this.primaryScrollbackStartIndex;
+    const rows = this._inAltScreen && this.altScreenSaved
+      ? this.altScreenSaved.scrollback
+      : this.scrollback;
+    const wraps = this._inAltScreen && this.altScreenSaved
+      ? this.altScreenSaved.scrollbackWrapsToNext
+      : this.scrollbackWrapsToNext;
+    const localIndex = index - start;
+    if (localIndex < 0 || localIndex >= rows.length) return null;
+    return {
+      text: rows[localIndex].replace(/\x1b\[[0-9;]*m/g, ''),
+      wrapsToNext: wraps[localIndex] ?? false,
     };
   }
 
@@ -865,6 +902,7 @@ export class VTerm {
       if (this.scrollback.length > this.maxScrollback) {
         this.scrollback.shift();
         this.scrollbackWrapsToNext.shift();
+        this._scrollbackStartIndex++;
       }
     }
     // Remove top row of scroll region
@@ -913,6 +951,7 @@ export class VTerm {
       gridWrapsToNext: this.gridWrapsToNext,
       scrollback: this.scrollback,
       scrollbackWrapsToNext: this.scrollbackWrapsToNext,
+      scrollbackStartIndex: this._scrollbackStartIndex,
       cursorRow: this.cursorRow,
       cursorCol: this.cursorCol,
       wrapPending: this.wrapPending,
@@ -924,6 +963,8 @@ export class VTerm {
     this.gridWrapsToNext = this.makeWrapFlags();
     this.scrollback = [];
     this.scrollbackWrapsToNext = [];
+    this._scrollbackStartIndex = this.altScreenSaved.scrollbackStartIndex
+      + this.altScreenSaved.scrollback.length;
     this.cursorRow = 0;
     this.cursorCol = 0;
     this.wrapPending = false;
@@ -941,6 +982,7 @@ export class VTerm {
     );
     this.scrollback = this.altScreenSaved.scrollback;
     this.scrollbackWrapsToNext = this.altScreenSaved.scrollbackWrapsToNext;
+    this._scrollbackStartIndex = this.altScreenSaved.scrollbackStartIndex;
     const cursor = this.clampCursor(
       this.altScreenSaved.cursorRow,
       this.altScreenSaved.cursorCol,
@@ -1250,6 +1292,7 @@ export class VTerm {
       case 3: // Entire display + scrollback (xterm)
         this.grid = this.makeGrid();
         this.gridWrapsToNext = this.makeWrapFlags();
+        this._scrollbackStartIndex += this.scrollback.length;
         this.scrollback = [];
         this.scrollbackWrapsToNext = [];
         break;

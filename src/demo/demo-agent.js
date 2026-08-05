@@ -11,6 +11,7 @@ const DEFAULT_PHASE_DELAY_MS = 1200;
 function parseArguments(arguments_) {
   let role = null;
   let delay = DEFAULT_PHASE_DELAY_MS;
+  let protocolCapability = null;
 
   for (let index = 0; index < arguments_.length; index += 1) {
     const value = arguments_[index];
@@ -24,6 +25,12 @@ function parseArguments(arguments_) {
       }
       delay = parsed;
       index += 1;
+    } else if (value === '--protocol-capability') {
+      protocolCapability = arguments_[index + 1] ?? null;
+      if (!/^[A-Za-z0-9_-]{32,64}$/.test(protocolCapability ?? '')) {
+        throw new Error('--protocol-capability must be a valid Commander capability');
+      }
+      index += 1;
     } else {
       throw new Error(`Unknown argument: ${value}`);
     }
@@ -32,7 +39,7 @@ function parseArguments(arguments_) {
   if (!(role in ROLE_NAMES)) {
     throw new Error('--role must be coordinator or reviewer');
   }
-  return { role, delay };
+  return { role, delay, protocolCapability };
 }
 
 function normalizeInput(value) {
@@ -43,11 +50,14 @@ function normalizeInput(value) {
     .trim();
 }
 
-function protocol(kind, content, target) {
+function protocol(kind, content, target, capability) {
+  const capabilitySuffix = capability ? `:${capability}` : '';
   const marker = kind === 'SEND'
-    ? `===COMMANDER:SEND:generic:${target}===`
-    : `===COMMANDER:${kind}===`;
-  process.stdout.write(`${marker}\n${content}\n===COMMANDER:END===\n`);
+    ? `===COMMANDER:SEND:generic:${target}${capabilitySuffix}===`
+    : `===COMMANDER:${kind}${capabilitySuffix}===`;
+  process.stdout.write(
+    `${marker}\n${content}\n===COMMANDER:END${capabilitySuffix}===\n`,
+  );
 }
 
 function finishAfter(delay) {
@@ -65,7 +75,7 @@ try {
   process.exit(2);
 }
 
-const { role, delay } = options;
+const { role, delay, protocolCapability } = options;
 let state = role === 'coordinator' ? 'waiting-start' : 'waiting-task';
 let inputBuffer = '';
 process.stdout.write(
@@ -97,6 +107,7 @@ input.on('line', (rawLine) => {
         'SEND',
         'Review brief.md and confirm that the deterministic total is 42.',
         2,
+        protocolCapability,
       );
       return;
     }
@@ -108,7 +119,12 @@ input.on('line', (rawLine) => {
       && compactInput.includes('equals42.')
     ) {
       state = 'complete';
-      protocol('STATUS', 'Conference demo complete: SEND, STATUS, and REPLY verified.');
+      protocol(
+        'STATUS',
+        'Conference demo complete: SEND, STATUS, and REPLY verified.',
+        undefined,
+        protocolCapability,
+      );
       input.close();
       finishAfter(delay);
     }
@@ -123,12 +139,19 @@ input.on('line', (rawLine) => {
   ) {
     state = 'reporting';
     inputBuffer = '';
-    protocol('STATUS', 'Demo Reviewer checked the seeded workspace: total is 42.');
+    protocol(
+      'STATUS',
+      'Demo Reviewer checked the seeded workspace: total is 42.',
+      undefined,
+      protocolCapability,
+    );
     setTimeout(() => {
       state = 'complete';
       protocol(
         'REPLY',
         'Deterministic review passed: calculateTotal([19, 23]) equals 42.',
+        undefined,
+        protocolCapability,
       );
       input.close();
       finishAfter(delay);

@@ -14,21 +14,25 @@ slide before committing it.
 
 | Segment | Time |
 | --- | ---: |
-| Problem and core loop | 6 minutes |
-| Commander protocol and stream contract | 9 minutes |
+| Problem and core loop | 7 minutes |
+| Commander protocol and stream contract | 6 minutes |
 | Deterministic two-agent demo | 12 minutes |
-| Implementation and product surface | 7 minutes |
-| Safety, adapters, and controls | 6 minutes |
+| Implementation and product surface | 6 minutes |
+| Codex Micro physical control | 3 minutes |
+| Safety and adapters | 4 minutes |
+| Close | 2 minutes |
 | Questions | 5 minutes |
+| **Total** | **45 minutes** |
 
 ## Demo preflight
 
 Use Node.js 22 or newer and Python 3.
 
 ```bash
+nvm install
+nvm use
 npm ci
 npm run verify
-npm run build
 node dist/bin/agents-commander.js --doctor .
 ```
 
@@ -57,7 +61,7 @@ audience-facing run:
 ```bash
 node dist/bin/agents-commander.js --doctor --codex-micro .
 node dist/bin/agents-commander.js --codex-micro-test .
-node dist/bin/agents-commander.js --conference --codex-micro .
+node dist/bin/agents-commander.js --conference --panels 12 --density auto --codex-micro .
 ```
 
 Conference and Demo modes do not enable the controller automatically. Prefer a
@@ -77,7 +81,9 @@ fallback, and rehearsal.
 ## On-stage recovery
 
 - `F12` opens routed activity; `Shift+F12` opens the protocol guide.
-- `Ctrl+O` reruns orchestration if the seeded exchange needs to be replayed.
+- When no demo role remains live, `Ctrl+O` can offer a fresh seeded demo. While
+  either role is live it opens normal Orchestrate; relaunch `--demo` for a clean
+  reset.
 - Press `Tab` to focus a file panel, then `Ctrl+E` returns to a two-panel
   baseline after confirming any live sessions. A running terminal receives the
   key instead of resetting the layout.
@@ -85,8 +91,9 @@ fallback, and rehearsal.
 - If any external agent or conference network is unreliable, switch to
   `--demo` and continue with the same protocol story.
 - If `MICRO:BUSY` appears, do not keep pressing controls. Quit the competing
-  HID client and restart Commander; otherwise disconnect the Micro and continue
-  with a conventional keyboard. No agent session depends on the device.
+  HID client and wait for `MICRO:USB/GUARD` to return. Restart Commander only
+  if guarded status does not recover; otherwise continue with a conventional
+  keyboard. No agent session depends on the device.
 - If the legacy keyboard fallback is used, keep ChatGPT fully quit for the
   entire session; that mode has no reader guard and disables decisions.
 
@@ -95,7 +102,7 @@ fallback, and rehearsal.
 Before replacing the committed PowerPoint:
 
 1. Render the exported `.pptx`, not only the editor preview.
-2. Inspect all 12 slides at presentation resolution.
+2. Inspect all 13 slides at presentation resolution.
 3. Check for slide-canvas overflow and unintended overlaps.
 4. Confirm the speaker notes still total 45 minutes and retain recovery cues.
 5. Run `npm run verify` so the commands and product claims in the deck remain

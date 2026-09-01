@@ -4,6 +4,13 @@
 It includes presenter notes, recovery cues, and source references for technical
 claims.
 
+Published session topic:
+[No Framework, No Server: Making AI Agents Collaborate in One Terminal](https://codeeurope.pl/speakers).
+The deck follows the public promise: multiple CLI agents working side by side,
+local collaboration through observed terminal output and injected terminal
+input, visible challenge and refinement, and practical human control without a
+central orchestration server or heavyweight agent framework.
+
 The previous Keynote export and Python generators were removed because they had
 drifted from the product. They described an older release and could recreate
 claims that are no longer accurate. Update the canonical PowerPoint directly,
@@ -14,12 +21,14 @@ slide before committing it.
 
 | Segment | Time |
 | --- | ---: |
-| Problem and core loop | 7 minutes |
-| Commander protocol and stream contract | 6 minutes |
-| Deterministic two-agent demo | 12 minutes |
-| Implementation and product surface | 6 minutes |
-| Codex Micro physical control | 3 minutes |
-| Safety and adapters | 4 minutes |
+| Opening: isolated CLI handoffs | 4 minutes |
+| Local terminal transport and protocol | 9 minutes |
+| Scripted offline transport proof | 6 minutes |
+| Real-agent challenge/refinement branch | 9 minutes |
+| One-terminal visibility | 3 minutes |
+| Human control | 2 minutes |
+| Failure modes and guardrails | 3 minutes |
+| Agent CLI edges | 2 minutes |
 | Close | 2 minutes |
 | Questions | 5 minutes |
 | **Total** | **45 minutes** |
@@ -49,7 +58,54 @@ node dist/bin/agents-commander.js --demo
 ```
 
 The offline demo seeds two bundled local demo roles and a deterministic routed
-handoff. It requires no network access, API key, or external agent CLI.
+handoff. These roles are scripted transport fixtures, not LLM reasoning. The
+proof requires no network access, API key, or external agent CLI and shows the
+complete `SEND` to local `STATUS` to `REPLY` sequence with visible
+acknowledgement and provenance. `STATUS` is observed locally and does not
+route. The on-screen role names remain `Demo Coordinator` and `Demo Reviewer`;
+both are deterministic transport fixtures.
+
+### Primary real-agent branch
+
+Use exactly two authenticated real CLI sessions and one read-only repository
+task:
+
+```bash
+node dist/bin/agents-commander.js --conference --panels 2 .
+```
+
+- Panel 1: Codex CLI.
+- Panel 2: Claude Code.
+- File under review: `src/orchestration/message-ledger.ts`.
+- Before the audience enters: start both CLIs, finish authentication, press
+  `Ctrl+P` in both panels, and verify that `F12` opens.
+
+Type this exact prompt in panel 1:
+
+> Read `src/orchestration/message-ledger.ts`. Do not edit files. In at most five
+> bullets, propose a minimal opt-in design that persists routed Activity across
+> restarts. Say whether message content is stored and name one security
+> assumption. End the proposal with `PROPOSAL_READY`. Then use Commander `SEND`
+> to Claude Code in panel 2 with this exact request: Challenge the assumption
+> that full message content should be persisted. Cite two concrete controls
+> already present in `message-ledger.ts`, give one testable acceptance criterion,
+> end with `CHALLENGE_READY`, and `REPLY` to me. When the challenge returns,
+> refine or reject your proposal with evidence from the file, name one test, and
+> end with `REFINED_READY`.
+
+Expect the challenge to identify that durable full-content storage may retain
+sensitive prompts and bypass the current bounded in-memory design. It should
+cite `maxMessages` plus the content-byte limits or truncation behavior. The
+refinement should keep persistence opt-in, default to metadata-only or redacted
+content, rotate within a bound, and name a test.
+
+The branch succeeds when panel 2 challenges through a routed reply, panel 1
+reaches `REFINED_READY`, and `F12` shows delivered `SEND` and `REPLY` records on
+the same thread with the expected source and target. Allow 45 seconds per agent
+response. On timeout, authentication failure, provider failure, or routing
+error, open `F12` once, name the visible failure, stop waiting, and narrate the
+prepared challenge/refinement from slide 7. Do not debug credentials on stage.
+Never present the scripted offline roles as reasoning agents.
 
 For the optional experimental Codex Micro segment, allow the presentation
 terminal under macOS Input Monitoring. Fully quit ChatGPT Desktop first, or
@@ -87,7 +143,9 @@ fallback, and rehearsal.
 - Press `Tab` to focus a file panel, then `Ctrl+E` returns to a two-panel
   baseline after confirming any live sessions. A running terminal receives the
   key instead of resetting the layout.
-- `Ctrl+K` stops the active session; `F10` exits and cleans up agent processes.
+- `Ctrl+K` stops the active session. `F10` escalates tracked process groups from
+  `SIGINT` to `SIGTERM` to `SIGKILL`, waits for their termination, and then
+  restores the terminal.
 - If any external agent or conference network is unreliable, switch to
   `--demo` and continue with the same protocol story.
 - If `MICRO:BUSY` appears, do not keep pressing controls. Quit the competing

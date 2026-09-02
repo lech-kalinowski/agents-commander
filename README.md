@@ -1,6 +1,6 @@
 <p align="center">
   <br>
-  <img width="180" src="https://github.com/lech-kalinowski/agents-commander/blob/main/assets/logo.png" alt="Agents Commander">
+  <img width="160" src="assets/logo.png" alt="Agents Commander — retro terminal mark">
   <br>
   <br>
 </p>
@@ -40,13 +40,46 @@
 
 ## Quick Start
 
+This README describes the **source development version 0.1.5**. The public npm
+release is still **0.1.4**, verified on 2026-09-02. A git push does not publish a
+new npm package.
+
+### Current source version
+
+Use Node.js 22+ and build the current development branch:
+
 ```bash
-npm install -g agents-commander
-agents-commander --doctor .
-agents-commander .
+git clone --branch codex/review-and-release-0.1.5 https://github.com/lech-kalinowski/agents-commander.git
+cd agents-commander
+npm install
+npm run build
+node dist/bin/agents-commander.js --doctor .
+node dist/bin/agents-commander.js .
 ```
 
-`--doctor` checks the runtime, PTY bridge, packaged assets, and working directory before the TUI starts.
+If you already have this source checkout, skip cloning. Run the commands from
+the checkout; replace `.` with your project directory. The source examples
+below use the built entrypoint so an older global installation cannot shadow it.
+`npm start -- <options> <directory>` is an equivalent source launch command.
+
+`--doctor` checks the runtime, PTY bridge, packaged assets, and working directory
+before the TUI starts. Commander is a local terminal application; the website is
+a landing page, not a browser-hosted Commander interface.
+
+### Published npm release (legacy 0.1.4)
+
+```bash
+npm install -g agents-commander@0.1.4
+agents-commander --version
+agents-commander --panels 2 .
+```
+
+Published 0.1.4 advertises Node.js 18+ and supports `--theme`, `--panels` (2, 3,
+or 4), and `--show-hidden`, plus help/version. It does **not** include the source
+version's `--doctor`, `--conference`, `--demo`, `--density`, 100-panel workspace,
+OpenCode adapter, or Codex Micro integration. Use the source build for those
+features. Check the [npm package](https://www.npmjs.com/package/agents-commander)
+for later releases; this documentation update does not publish one.
 
 ---
 
@@ -58,10 +91,12 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 
 ## Requirements
 
+For source 0.1.5:
+
 - Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
 - macOS, Linux, or WSL2
-- For live AI sessions: Claude Code, Codex CLI, or Gemini CLI. The supported Shell adapter can launch a local interactive shell or a configured command.
+- For live AI sessions: Claude Code, Codex CLI, Gemini CLI, or OpenCode. The supported Shell adapter can launch a local interactive shell or a configured command.
 
 The deterministic offline demo does not require an AI agent CLI, API credentials, or network access.
 
@@ -70,13 +105,13 @@ The deterministic offline demo does not require an AI agent CLI, API credentials
 Use the presentation-safe preset with live agent CLIs:
 
 ```bash
-agents-commander --conference .
+node dist/bin/agents-commander.js --conference .
 ```
 
 Conference Mode uses the `midnight` theme, starts with two panels, hides dotfiles, and skips the welcome dialog. To rehearse without external services, launch the bundled deterministic demo:
 
 ```bash
-agents-commander --demo
+node dist/bin/agents-commander.js --demo
 ```
 
 Demo Mode creates a temporary seeded workspace, applies the Conference Mode defaults, and offers to launch two bundled local demo roles. The workspace is cleaned up when Commander exits.
@@ -117,7 +152,7 @@ The workspace size and the visible layout are separate:
 For example, this creates a 12-panel workspace while showing no more than four panels at once:
 
 ```bash
-agents-commander --panels 12 --density 4 .
+node dist/bin/agents-commander.js --panels 12 --density 4 .
 ```
 
 Panel numbers are stable for the lifetime of the workspace. Removing Panel 2 does not renumber Panel 3, so gaps are normal and protocol routes keep pointing at the same panel. Newly added panels receive new numbers; `Ctrl+E` is the explicit reset to fresh Panels 1 and 2.
@@ -176,12 +211,16 @@ Please write unit tests for the auth module.
 ===COMMANDER:END:<session-key>===
 ```
 
-**REPLY** -- respond to whoever last messaged you (no panel number needed):
+**REPLY** -- continue your latest open reply thread (no panel number needed):
 ```
 ===COMMANDER:REPLY:<session-key>===
 Tests written. 12 passing, 0 failing.
 ===COMMANDER:END:<session-key>===
 ```
+
+Commander claims the newest open reply window and resolves its return session.
+A successful delivery consumes that window; a failed delivery can restore it
+if the route is still valid. This is not a permanent "last sender" address.
 
 **BROADCAST** -- send to every other connected agent at once:
 ```
@@ -215,7 +254,31 @@ After delivery, the sender gets an **ACK**:
 [Commander ACK] status=delivered msg=m1 thread=t1 target="Codex CLI" panel=2
 ```
 
+`delivered` means the input was submitted to the target PTY; it does not mean
+the model accepted the task or completed it. Failed deliveries return
+`status=failed` with an error. BROADCAST's ACK reports queue admission only;
+subsequent per-target delivery outcomes appear in F12 Activity. STATUS returns
+a local `kind=status status=accepted` ACK.
+
 Routing is bidirectional between connected supported sessions.
+
+### Activity, diagnostics, and recording limits
+
+- `F12` shows SEND, REPLY, and BROADCAST delivery attempts from an in-memory
+  ledger, not a persistent archive. Default retention is up to 1,000 records /
+  8 MiB of content, with a 256 KiB per-record content cap; the dialog shows the
+  latest 100 summaries. Evicted records and history are not restored on restart.
+- STATUS and QUERY are live-only and are not retained in Activity.
+- `Ctrl+L` from a file panel opens the diagnostic log at
+  `~/.agents-commander/debug.log`. It rotates at 1 MiB with one backup. Routed
+  payloads are represented by metadata and byte counts, not complete message
+  bodies. Diagnostics can still contain names and error details; review them
+  before sharing.
+- Durable communication capture, terminal transcripts, dataset export, session
+  restore, and replay are **not implemented**. The
+  [session capture and training-data plan](https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/session-capture-plan.md) is a
+  proposal for opt-in local recording and reviewed datasets, not an available
+  feature or an active collection process.
 
 ### Manual Orchestration
 
@@ -414,20 +477,20 @@ positions, regardless of which cap is installed.
 First allow your terminal application in **System Settings > Privacy & Security > Input Monitoring**, then verify the connection:
 
 ```bash
-agents-commander --doctor --codex-micro .
-agents-commander --codex-micro-test .
+node dist/bin/agents-commander.js --doctor --codex-micro .
+node dist/bin/agents-commander.js --codex-micro-test .
 ```
 
 For normal opt-in operation:
 
 ```bash
-agents-commander --codex-micro .
+node dist/bin/agents-commander.js --codex-micro .
 ```
 
 Guarded Approve and Reject controls are disabled by default. Enable them explicitly only for a rehearsed session:
 
 ```bash
-agents-commander --codex-micro --codex-micro-decisions .
+node dist/bin/agents-commander.js --codex-micro --codex-micro-decisions .
 ```
 
 `--codex-micro-test` enables the controls for that run and opens the physical-input checklist. `--no-codex-micro` explicitly disables them. `--conference` and `--demo` do **not** enable Codex Micro automatically. Approval and rejection remain human-confirmed, fail-closed operations: a first press opens a five-second window, the same decision key confirms, and submission occurs only while the active session is Codex and the selected prompt still matches the requested one-time action. They never choose a persistent "always allow" option.
@@ -502,6 +565,7 @@ src/
   orchestration/
     protocol.ts             # Inter-agent protocol scanner & builder
     orchestrator.ts         # Task routing, agent lifecycle management
+    message-ledger.ts       # Bounded in-memory routed messages and reply windows
   agents/
     agent-manager.ts        # Agent process lifecycle
     agent-registry.ts       # Auto-discovery of installed CLI agents
@@ -565,7 +629,8 @@ Agents Commander combines several local workflows in one TUI:
 - [ ] Agent memory -- persistent context across sessions
 - [ ] Plugin system for custom agents
 - [ ] Session save/restore
-- [ ] Conversation logging & replay
+- [ ] [Opt-in session capture and reviewed dataset export](https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/session-capture-plan.md) (proposed)
+- [ ] Conversation replay
 
 ## License
 

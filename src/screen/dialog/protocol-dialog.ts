@@ -53,14 +53,16 @@ with another agent running in a different panel.
     {white-fg}your message or task{/white-fg}
     {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
 
-  {bold}2. REPLY{/bold} — respond to whoever last messaged you:
+  {bold}2. REPLY{/bold} — continue your newest open reply window:
 
     {cyan-fg}===COMMANDER:REPLY:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
     {white-fg}your response{/white-fg}
     {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
 
-    No need to know the sender's panel number.
-    Commander routes it back automatically.
+    Commander claims the newest open window for this session
+    and resolves its return session, thread and prior message.
+    A claimed window is consumed; a failed delivery restores it
+    only while both sessions remain active. No window means no route.
 
   {bold}3. BROADCAST{/bold} — send to all other connected agents:
 
@@ -68,7 +70,8 @@ with another agent running in a different panel.
     {white-fg}message for everyone{/white-fg}
     {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
 
-    Delivered to every panel except the sender.
+    Queued for other connected running agents, not file panels.
+    Each target is checked independently; no agent is auto-launched.
 
   {bold}4. STATUS{/bold} — report progress (shown in UI and acknowledged in your panel):
 
@@ -93,13 +96,40 @@ with another agent running in a different panel.
 
 {bold}{yellow-fg}ACKNOWLEDGMENTS{/yellow-fg}{/bold}
 
-  After SEND, REPLY, BROADCAST, or STATUS, the sender gets an ACK:
-    {green-fg}[Commander] Message delivered to codex in Panel 2 (OK){/green-fg}
+  SEND/REPLY report the routed message's delivery result:
+    {green-fg}[Commander ACK] status=delivered msg=msg_000001 thread=thr_000001 target="Codex CLI" panel=2{/green-fg}
 
-  Or on failure:
-    {red-fg}[Commander] Failed to deliver to codex in Panel 2: reason{/red-fg}
+  Or, if that delivery fails:
+    {red-fg}[Commander ACK] status=failed msg=msg_000001 thread=thr_000001 target="Codex CLI" panel=2 error="reason"{/red-fg}
 
-  Agents should wait for the ACK before sending again.
+  Delivered means PTY input submitted, not task completed.
+  It does not prove the model accepted or acted on the task.
+
+  BROADCAST sends one combined queue-admission ACK, not
+  per-target delivery ACKs. Check each delivery in F12 Activity:
+    {green-fg}[Commander ACK] kind=broadcast queued=1 targets=Codex CLI in Panel 2{/green-fg}
+  Capacity rejection adds status=partial or status=failed,
+  rejected counts, rejectedTargets and an error.
+
+  STATUS accepts a progress update, not a completed task:
+    {green-fg}[Commander ACK] kind=status status=accepted text="Processing file 5 of 10..."{/green-fg}
+
+  QUERY returns environment text, such as [Commander] PONG.
+  Rejected, unarmed or orphaned frames may have no ACK.
+  Feedback may be shortened for a CLI's input UI.
+  Use REPLY to report work results; do not infer completion from ACKs.
+
+
+{bold}{yellow-fg}ACTIVITY AND LOGGING{/yellow-fg}{/bold}
+
+  F12 shows the latest 100 routed-message summaries.
+  The in-memory ledger defaults to 1,000 records / 8 MiB,
+  with 256 KiB per-record content; older history is evicted.
+  STATUS and QUERY are live-only, not ledger history.
+  Ctrl+L (from a file panel) opens a rotating diagnostic log,
+  not a complete conversation archive.
+  Durable capture and dataset export are proposed, not implemented.
+  See docs/session-capture-plan.md in the source repository.
 
 
 {bold}{yellow-fg}SUPPORTED SEND TARGETS{/yellow-fg}{/bold}
@@ -134,8 +164,8 @@ with another agent running in a different panel.
 
   {bold}Divide and conquer:{/bold}
     "Split this refactor: SEND backend to Codex in Panel 2,
-     SEND frontend to Gemini in Panel 3, then QUERY agents
-     to check who's done."
+     SEND frontend to Gemini in Panel 3. Ask each to REPLY
+     with results; QUERY agents only checks who's running."
 
 
 {bold}{yellow-fg}KEYBOARD SHORTCUTS{/yellow-fg}{/bold}
@@ -155,8 +185,8 @@ with another agent running in a different panel.
 
   - Press Ctrl+P on each agent after launch. You only
     need to inject once per agent per session.
-  - Use REPLY instead of SEND when responding — it's
-    simpler and the agent doesn't need panel numbers.
+  - Use REPLY for the newest open reply window. Use SEND
+    for an explicit target when no suitable window is open.
   - Use BROADCAST for coordinator patterns where one
     agent needs to instruct all others at once.
   - STATUS is great for long tasks — you see progress

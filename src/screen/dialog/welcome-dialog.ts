@@ -23,7 +23,7 @@ export const WELCOME_TEXT = `
 
   {bold}{yellow-fg}Run multiple AI agents side by side{/yellow-fg}{/bold}
 
-  Launch {green-fg}Claude{/green-fg}, {green-fg}Codex{/green-fg}, and {green-fg}Gemini{/green-fg} in parallel panels.
+  Launch {green-fg}Claude{/green-fg}, {green-fg}Codex{/green-fg}, {green-fg}Gemini{/green-fg}, {green-fg}OpenCode{/green-fg}, or {green-fg}Shell{/green-fg}.
   Agents talk to each other via the Commander protocol
   — one delegates, another executes, results flow back.
 
@@ -36,10 +36,11 @@ export const WELCOME_TEXT = `
     {cyan-fg}F12{/cyan-fg}      Routed-message activity
     {cyan-fg}Shift+F12{/cyan-fg} Protocol guide
 
-  {bold}{yellow-fg}File Manager{/yellow-fg}{/bold}
+  {bold}{yellow-fg}Multi-panel Workspace{/yellow-fg}{/bold}
 
-    Built-in dual-panel file browser with copy, move,
-    delete, Markdown editor, and Vim ({cyan-fg}Ctrl+G{/cyan-fg}).
+    Up to 100 active panels; auto-fit and paged views.
+    Hidden terminal sessions keep running; {cyan-fg}F11{/cyan-fg} jumps panels.
+    File browsing, copy, move, delete, Markdown and Vim.
 
   {bold}{yellow-fg}Quick Start{/yellow-fg}{/bold}
 
@@ -58,8 +59,9 @@ export const COMPACT_WELCOME_TEXT = `
 {bold}{cyan-fg}AGENTS COMMANDER{/cyan-fg}{/bold}
 {bold}v${getPackageVersion()}{/bold} — Multi-Agent Terminal Manager
 
-Run Claude, Codex, and Gemini side by side.
-Agents coordinate through the visible Commander protocol.
+Run Claude, Codex, Gemini, OpenCode, or Shell.
+Up to 100 active panels; auto-fit and paged views.
+Hidden terminal sessions keep running; F11 jumps panels.
 
 {cyan-fg}F2{/cyan-fg}       Launch an agent
 {cyan-fg}Ctrl+O{/cyan-fg}   Send a task

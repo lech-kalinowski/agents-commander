@@ -1398,7 +1398,7 @@
   <!-- ==================== NAVIGATION ==================== -->
   <nav>
     <div class="container">
-      <div class="nav-logo"><img src="logo.png" alt="AC" style="height:28px;vertical-align:middle;margin-right:8px;border-radius:4px"><span>&gt;_</span> agents-commander</div>
+      <div class="nav-logo"><img src="logo.png" alt="Agents Commander" style="height:28px;vertical-align:middle;margin-right:8px;border-radius:2px"> agents-commander</div>
       <ul class="nav-links">
         <li><a href="#problem">Problem</a></li>
         <li><a href="#features">Features</a></li>
@@ -1406,7 +1406,7 @@
         <li><a href="#comparison">Modes</a></li>
         <li><a href="#install">Install</a></li>
       </ul>
-      <span class="nav-version">v0.1.5</span>
+      <span class="nav-version">source v0.1.5</span>
     </div>
   </nav>
 
@@ -1414,8 +1414,8 @@
   <section class="hero">
     <div class="container">
       <div class="hero-content">
-        <div class="hero-badge">Source-Available &mdash; Available Now</div>
-        <img src="logo.png" alt="Agents Commander" style="display:block;margin:0 auto 32px;width:220px;border-radius:24px;filter:drop-shadow(0 0 40px rgba(0,255,65,0.3));animation:fadeInUp 0.7s ease-out 0.05s both">
+        <div class="hero-badge">Source v0.1.5 &mdash; npm v0.1.4</div>
+        <img src="logo.png" alt="Agents Commander — two pixel prompts exchanging a command" style="display:block;margin:0 auto 32px;width:160px;border-radius:4px;animation:fadeInUp 0.7s ease-out 0.05s both">
         <h1>AGENTS<br>COMMANDER</h1>
         <p class="hero-tagline">A terminal-native interface for multi-agent AI collaboration</p>
         <p class="hero-subtext">Run Claude, Codex, and Gemini side by side. Make them talk to each other.</p>
@@ -1566,14 +1566,15 @@
 <span class="message-content">Write unit tests for src/auth/</span>
 <span class="marker">===COMMANDER:END:&lt;session-key&gt;===</span>
 
-<span class="comment">// REPLY &mdash; respond to last sender</span>
+<span class="comment">// REPLY &mdash; continue the latest open thread</span>
 <span class="marker">===COMMANDER:REPLY:&lt;session-key&gt;===</span>
 <span class="message-content">12 tests passing, 0 failing.</span>
 <span class="marker">===COMMANDER:END:&lt;session-key&gt;===</span>
 
 <span class="comment">// BROADCAST &bull; STATUS &bull; QUERY</span>
 <span class="comment">// 5 commands, fully bidirectional</span>
-<span class="comment">// Sender gets ACK after delivery</span></pre>
+<span class="comment">// SEND/REPLY ACK reports delivery outcome</span>
+<span class="comment">// BROADCAST ACK reports queue admission</span></pre>
           </div>
         </div>
 
@@ -1646,8 +1647,8 @@
 
         <div class="feature-card animate-in animate-in-delay-5">
           <div class="feature-icon green">&#9673;</div>
-          <h3>4 Supported Adapters</h3>
-          <p>Launch Claude Code, Codex CLI, Gemini CLI, or Shell. Six additional presets &mdash; Aider, Cline, OpenCode, Goose, Kiro, and Amp &mdash; are catalogued for future support.</p>
+          <h3>5 Supported Adapters</h3>
+          <p>Source v0.1.5 launches Claude Code, Codex CLI, Gemini CLI, OpenCode, or Shell. Five additional presets &mdash; Aider, Cline, Goose, Kiro, and Amp &mdash; are catalogued for future support.</p>
           <span class="feature-tag">F2 Agent Selector</span>
         </div>
 
@@ -1669,7 +1670,7 @@
       <div class="section-header">
         <span class="section-label">Architecture</span>
         <h2 class="section-title">See it in action</h2>
-        <p class="section-subtitle">Messages move between local PTY sessions as text, with thread and message IDs for traceability.</p>
+        <p class="section-subtitle">Messages move between local PTY sessions as text, with thread and message IDs. REPLY claims the latest open reply window; a delivered ACK means PTY input was submitted, not that the task is complete.</p>
       </div>
 
       <div class="flow-diagram">
@@ -1732,14 +1733,15 @@
       <div class="flow-message-detail">
         <div class="flow-message-title">Protocol Message Format</div>
         <div class="flow-message-format">
-          <span class="fmt-marker">===COMMANDER</span><span class="fmt-dim">:</span><span class="fmt-keyword">SEND</span><span class="fmt-dim">:</span><span class="fmt-agent">{target_agent}</span><span class="fmt-dim">:</span><span class="fmt-panel">{panel_number}</span><span class="fmt-marker">===</span><br>
+          <span class="fmt-marker">===COMMANDER</span><span class="fmt-dim">:</span><span class="fmt-keyword">SEND</span><span class="fmt-dim">:</span><span class="fmt-agent">{target_agent}</span><span class="fmt-dim">:</span><span class="fmt-panel">{panel_number}</span><span class="fmt-dim">:</span><span class="fmt-agent">{session_key}</span><span class="fmt-marker">===</span><br>
           <span class="fmt-content">{bounded multiline message content}</span><br>
-          <span class="fmt-marker">===COMMANDER</span><span class="fmt-dim">:</span><span class="fmt-keyword">END</span><span class="fmt-marker">===</span>
+          <span class="fmt-marker">===COMMANDER</span><span class="fmt-dim">:</span><span class="fmt-keyword">END</span><span class="fmt-dim">:</span><span class="fmt-agent">{session_key}</span><span class="fmt-marker">===</span>
           <br><br>
           <span class="fmt-dim">Fields: &nbsp;</span>
           <span class="fmt-keyword">SEND</span> <span class="fmt-dim">&mdash; action &nbsp;|&nbsp; </span>
           <span class="fmt-agent">codex</span> <span class="fmt-dim">&mdash; target agent &nbsp;|&nbsp; </span>
-          <span class="fmt-panel">2</span> <span class="fmt-dim">&mdash; target panel number</span>
+          <span class="fmt-panel">2</span> <span class="fmt-dim">&mdash; stable target panel number &nbsp;|&nbsp; </span>
+          <span class="fmt-agent">session_key</span> <span class="fmt-dim">&mdash; fresh value supplied by Ctrl+P; repeat it in header and footer. Static or stale keys do not route.</span>
         </div>
       </div>
     </div>
@@ -1753,7 +1755,7 @@
       <div class="section-header">
         <span class="section-label">Launch Modes</span>
         <h2 class="section-title">Choose the right mode for the moment</h2>
-        <p class="section-subtitle">Use your saved setup, switch to presentation-safe defaults, or rehearse the complete routing flow offline.</p>
+        <p class="section-subtitle">From a built source v0.1.5 checkout, use your saved setup, switch to presentation-safe defaults, or rehearse offline. These source commands do not use an older global npm installation.</p>
       </div>
 
       <div class="comparison-table-wrapper">
@@ -1769,9 +1771,9 @@
           <tbody>
             <tr>
               <td>Command</td>
-              <td><code>agents-commander .</code></td>
-              <td class="highlight"><code>agents-commander --conference .</code></td>
-              <td><code>agents-commander --demo</code></td>
+              <td><code>npm start -- .</code></td>
+              <td class="highlight"><code>npm start -- --conference .</code></td>
+              <td><code>npm start -- --demo</code></td>
             </tr>
             <tr>
               <td>Workspace</td>
@@ -1828,8 +1830,8 @@
     <div class="container">
       <div class="section-header">
         <span class="section-label">Get Started</span>
-        <h2 class="section-title">Install, diagnose, launch</h2>
-        <p class="section-subtitle">Run the startup doctor once, then choose a live project or the deterministic offline demo.</p>
+        <h2 class="section-title">Choose a release, then launch</h2>
+        <p class="section-subtitle">Checked 2026-09-02: public npm is v0.1.4; this page describes source v0.1.5. Doctor, conference/demo modes, OpenCode, adaptive density, 100 panels and Codex Micro require the source build. This is a local terminal app, not a browser-hosted workspace.</p>
       </div>
 
       <div class="install-content">
@@ -1840,21 +1842,20 @@
               <span class="dot titlebar-dot yellow"></span>
               <span class="dot titlebar-dot green"></span>
             </div>
-            <span class="install-block-title">terminal</span>
+            <span class="install-block-title">published npm v0.1.4 (legacy)</span>
           </div>
           <div class="install-block-body">
-<pre><span class="comment-line"># Install globally</span>
-<span class="prompt-char">$ </span>npm install <span class="flag">-g</span> agents-commander
+<pre><span class="comment-line"># Install the verified public release</span>
+<span class="prompt-char">$ </span>npm install <span class="flag">-g</span> agents-commander@0.1.4
 
-<span class="comment-line"># Verify the runtime, PTY bridge, assets, and project</span>
-<span class="prompt-char">$ </span>agents-commander <span class="flag">--doctor</span> .
+<span class="comment-line"># Confirm the installed version</span>
+<span class="prompt-char">$ </span>agents-commander <span class="flag">--version</span>
 
-<span class="comment-line"># Launch in your project directory</span>
-<span class="prompt-char">$ </span><span class="flag">cd</span> your-project/
-<span class="prompt-char">$ </span>agents-commander
+<span class="comment-line"># Legacy layout: 2, 3 or 4 panels</span>
+<span class="prompt-char">$ </span>agents-commander <span class="flag">--panels 2</span> .
 
-<span class="comment-line"># Or run directly with npx</span>
-<span class="prompt-char">$ </span>npx agents-commander</pre>
+<span class="comment-line"># Also supports --theme and --show-hidden</span>
+<span class="comment-line"># No doctor, demo, density or Micro flags</span></pre>
           </div>
         </div>
 
@@ -1865,21 +1866,24 @@
               <span class="dot titlebar-dot yellow"></span>
               <span class="dot titlebar-dot green"></span>
             </div>
-            <span class="install-block-title">presentation modes</span>
+            <span class="install-block-title">source v0.1.5 checkout</span>
           </div>
           <div class="install-block-body">
-<pre><span class="comment-line"># Presentation-safe defaults with live agent CLIs</span>
-<span class="prompt-char">$ </span>agents-commander <span class="flag">--conference</span> .
+<pre><span class="comment-line"># In the current source checkout (Node.js 22+)</span>
+<span class="prompt-char">$ </span>npm install
+<span class="prompt-char">$ </span>npm run build
 
-<span class="comment-line"># Deterministic local demo; no network or credentials</span>
-<span class="prompt-char">$ </span>agents-commander <span class="flag">--demo</span>
+<span class="comment-line"># Diagnose the project, then run the offline demo</span>
+<span class="prompt-char">$ </span>npm start <span class="flag">-- --doctor</span> .
+<span class="prompt-char">$ </span>npm start <span class="flag">-- --demo</span>
 
-<span class="comment-line"># F12 opens Activity; Shift+F12 opens the guide</span>
-<span class="comment-line"># Ctrl+P sends protocol instructions to the active agent</span></pre>
+<span class="comment-line"># Live presentation; use . or your project path</span>
+<span class="prompt-char">$ </span>npm start <span class="flag">-- --conference</span> .</pre>
           </div>
         </div>
 
-        <p class="install-note">Requires Node.js 22+, Python 3, and macOS, Linux, or WSL2 &nbsp;&bull;&nbsp; <a href="https://github.com/lech-kalinowski/agents-commander">Full documentation on GitHub</a></p>
+        <p class="install-note">Source requires Node.js 22+, Python 3, and macOS, Linux, or WSL2; npm v0.1.4 advertises Node.js 18+. <a href="https://github.com/lech-kalinowski/agents-commander/tree/codex/review-and-release-0.1.5#current-source-version">Get the current source and build instructions</a>. A source push does not publish npm.</p>
+        <p class="install-note">F12 Activity is bounded in-memory SEND/REPLY/BROADCAST history; STATUS and QUERY are live-only. Ctrl+L opens a rotating diagnostic log, not a full transcript. Durable session capture, dataset export and replay are not implemented; see the <a href="https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/session-capture-plan.md">proposed capture and training-data plan</a>.</p>
       </div>
     </div>
   </section>
@@ -1889,7 +1893,7 @@
     <div class="container">
       <div class="footer-content">
         <div class="footer-left">
-          Built by <strong>Lech Kalinowski</strong> &nbsp;&bull;&nbsp; Source-available under CC BY-NC 4.0 &nbsp;&bull;&nbsp; v0.1.5
+          Built by <strong>Lech Kalinowski</strong> &nbsp;&bull;&nbsp; Source-available under CC BY-NC 4.0 &nbsp;&bull;&nbsp; source v0.1.5 / npm v0.1.4
         </div>
         <div class="footer-right">
           <a href="https://github.com/lech-kalinowski/agents-commander">GitHub</a>

@@ -53,14 +53,21 @@ Multi-panel AI Agent Manager & File Browser
   Every header and footer must include that same key:
 
   {cyan-fg}SEND:agent:panel:<session-key>{/cyan-fg}  Direct message
-  {cyan-fg}REPLY:<session-key>{/cyan-fg}             Reply to last sender
+  {cyan-fg}REPLY:<session-key>{/cyan-fg}             Latest open reply window
   {cyan-fg}BROADCAST:<session-key>{/cyan-fg}         Message all other agents
   {cyan-fg}STATUS:<session-key>{/cyan-fg}            Progress toast + local ACK
   {cyan-fg}QUERY:<session-key>{/cyan-fg}             Ask who's running
   Footer: {cyan-fg}===COMMANDER:END:<session-key>==={/cyan-fg}
 
-  Sender gets an ACK after delivery.
+  REPLY claims the newest open window for this session.
+  A failed delivery restores it if both sessions remain active.
+  SEND/REPLY status=delivered confirms PTY input submission.
+  It does not confirm task completion; status=failed reports an error.
+  BROADCAST reports queue admission; STATUS reports acceptance.
   F12 shows routed SEND/REPLY/BROADCAST history.
+  History is bounded and in-memory; STATUS/QUERY are live-only.
+  Ctrl+L opens a rotating diagnostic log, not a conversation archive.
+  Durable capture and dataset export are proposed, not implemented.
   Press {cyan-fg}Shift+F12{/cyan-fg} for the full guide.
 
 {bold}{yellow-fg}LAYOUT & SYSTEM{/yellow-fg}{/bold}

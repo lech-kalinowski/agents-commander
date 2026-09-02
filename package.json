@@ -20,6 +20,8 @@
     "dist/**/*.py",
     "dist/**/*.md",
     "docs/codex-micro.md",
+    "assets/logo.png",
+    "assets/logo-wordmark.png",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "README.md"

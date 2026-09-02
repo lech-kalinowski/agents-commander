@@ -2,9 +2,21 @@
 
 ## A practical coordination layer for enterprise AI teams
 
+Scope: current source `0.1.5` at commit `001e903`, reviewed 2026-09-02.
+This document discusses potential applications of that source implementation;
+it is not a statement of published npm features or enterprise readiness.
+
+### License scope
+
+The repository's [LICENSE](../LICENSE) identifies **CC-BY-NC-4.0** and states
+that commercial use requires explicit written permission from the author.
+The commercial scenarios below do not grant that permission. Refer to the
+license and the author's commercial-licensing contact rather than treating
+this document as a commercial license or a legal interpretation.
+
 ### Executive Summary
 
-The Commander Protocol is a lightweight coordination standard for AI agents operating in terminal-based workflows. It enables multiple command-line agents to communicate, delegate work, report progress, and continue threaded conversations inside a single managed environment. For commercial use, its value is straightforward: it reduces manual relaying between agents, improves observability, preserves operator control, and creates a more reliable foundation for multi-agent execution in software delivery, operations, support, and internal knowledge work.
+The Commander Protocol is a lightweight coordination protocol for AI agents operating in terminal-based workflows. It enables multiple command-line agents to communicate, delegate work, report progress, and continue threaded conversations inside a single managed environment. Potential commercial applications include reducing manual relaying between agents and exposing handoffs in software delivery, operations, support, and internal knowledge work, subject to the license scope above and deployment-specific evaluation.
 
 This document explains the Commander Protocol in business terms and describes why it is useful as a commercial capability, not just a technical experiment.
 
@@ -41,7 +53,7 @@ Specialized agents can hand work to each other directly. This shortens the dista
 
 ### 3.2 Better operator trust
 
-Each action is visible in the terminal UI, tied to a panel, and acknowledged by Commander. Operators can see what happened rather than guessing whether an agent received a task.
+Routed messages and delivery outcomes are visible in the terminal UI and bounded Activity history. A delivery ACK confirms PTY input submission, not task completion; some rejected or unarmed frames have no ACK. Operators must still assess whether an agent acted on a task successfully.
 
 ### 3.3 Lower coordination overhead
 
@@ -77,9 +89,9 @@ Teams can use one agent for discovery, one for counter-analysis, and one for syn
 
 An implementation agent can pass outcomes to a documentation agent, which can then reply with summaries or missing information requests without losing the context of the original task.
 
-## 5. Core Commercial Capabilities in `v11`
+## 5. Current Source `0.1.5` Capabilities
 
-The `v11` implementation of Agents Commander adds several capabilities that are commercially important.
+The source implementation includes the following mechanisms. Their presence does not establish enterprise readiness, a complete audit trail or permission for commercial use.
 
 ### 5.1 Stable session identity
 
@@ -87,11 +99,17 @@ Each running agent has a stable `sessionId` for the life of the process. This pr
 
 ### 5.2 Message and thread tracking
 
-Each communication event gets a `messageId`, and conversations are grouped by `threadId`. This improves traceability and makes reply routing dependable.
+Routed SEND/REPLY/BROADCAST records get process-local `messageId` and `threadId` values. STATUS/QUERY and controller responses are not ledger records. This supports live route inspection, not a complete persistent audit trail.
 
 ### 5.3 Structured acknowledgements
 
-Commander returns explicit ACK messages for delivery and status actions. This reduces ambiguity and helps operators distinguish between "message sent," "message delivered," and "message still pending."
+Commander uses structured ACKs such as:
+
+```text
+[Commander ACK] status=delivered msg=msg_000001 thread=thr_000001 target="Codex CLI" panel=2
+```
+
+For SEND/REPLY, `delivered` means PTY input submitted, not a completed task; failure uses `status=failed` and an error. BROADCAST returns a combined queue-admission ACK, not per-target delivery ACKs. STATUS returns `kind=status status=accepted`; QUERY returns environment information, not task-completion evidence.
 
 ### 5.4 Per-panel delivery queues
 
@@ -99,7 +117,7 @@ All work sent to a panel is serialized. This is important for commercial reliabi
 
 ### 5.5 Thread-aware replies
 
-`REPLY` no longer depends on a weak "last sender" model. In business workflows, this matters because reply chains stay attached to the correct task context.
+`REPLY` claims the newest open reply window for its current session and resolves a specific return session, thread and prior message. A claimed window is consumed; failed delivery restores it only while both sessions remain active. No open window means no route. This is runtime correlation, not a claim that Commander understands task context.
 
 ### 5.6 Visible operational feedback
 
@@ -146,7 +164,7 @@ This model is valuable because it preserves both automation and accountability.
 
 ## 8. Reliability Considerations
 
-Commercial adoption depends on operational reliability, not just feature completeness. In `v11`, the protocol is hardened around several practical failure modes:
+Commercial adoption depends on operational reliability, not just feature completeness. Source `0.1.5` addresses several practical failure modes:
 
 - deduplication for echoed or re-rendered protocol blocks
 - queueing to prevent concurrent input collisions
@@ -156,7 +174,9 @@ Commercial adoption depends on operational reliability, not just feature complet
 - safer message delivery for long routed content
 - improved UTF-8 PTY decoding for modern CLI output
 
-These details matter commercially because multi-agent systems fail most often at the boundaries: handoff, rendering, timing, and state continuity.
+These mechanisms address handoff, rendering, timing and state-continuity risks. They do not prove task correctness or provide a service-level guarantee.
+
+Current observability is bounded: the in-memory ledger retains up to 1,000 records / 8 MiB by default, with 256 KiB per-record content; F12 shows the latest 100 summaries. Ctrl+L opens a rotating diagnostic log, not a full conversation archive. STATUS/QUERY are live-only. Durable communication capture, dataset export and replay are not implemented; see the [proposed capture plan](session-capture-plan.md).
 
 ## 9. Governance and Risk Perspective
 
@@ -172,7 +192,7 @@ This is a better governance posture than scattered prompt engineering or hidden 
 
 ## 10. Implementation Roadmap for Commercial Maturity
 
-The current design is commercially viable for controlled internal use, especially in engineering and operations contexts. For broader enterprise deployment, the most valuable next steps would be:
+Potential deployments require separate licensing permission and an operational assessment. The following are proposed extensions, not implemented commercial capabilities:
 
 - persistent message and delivery logs
 - richer operational dashboards
@@ -180,10 +200,10 @@ The current design is commercially viable for controlled internal use, especiall
 - exportable audit trails
 - optional non-terminal transport backends for production environments
 
-These improvements would turn the protocol from a reliable coordination layer into a more complete enterprise orchestration substrate.
+The [session capture and training-data plan](session-capture-plan.md) proposes opt-in semantic recording and reviewed offline export. Policy engines, enterprise dashboards and alternate transports would require their own implementation and validation.
 
 ## Conclusion
 
 The Commander Protocol gives organizations a practical way to coordinate multiple AI agents in a shared operational environment. Its commercial value comes from clarity, control, and reliability. It makes agent communication explicit, keeps humans in the loop, reduces manual orchestration overhead, and provides the structural pieces needed for trustworthy multi-agent execution.
 
-For commercial teams, the key point is simple: the protocol is not just a messaging format. It is an operating model for AI collaboration. In `v11`, that model is already strong enough to support real multi-agent workflows in software delivery, technical operations, and structured knowledge work, while still remaining transparent enough to supervise and improve.
+Source `0.1.5` supports operator-supervised terminal collaboration. Its commercial applicability depends on the project's license, deployment requirements and measured results; this document does not grant commercial rights or claim enterprise certification.

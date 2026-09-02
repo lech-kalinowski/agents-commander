@@ -19,6 +19,11 @@ protocol, sequence, and state diagrams plus genuine application captures,
 while retaining the Callstack visual identity. Its revised slide order follows
 the session shape below. Render and inspect every slide before committing it.
 
+The title, npm-package and closing slides use the current retro Agents Commander
+mark from `assets/logo.png`. Keep it aligned with the README and landing page;
+the authentic Callstack logo and visual identity remain unchanged. Asset
+provenance and generation prompts are in [the brand guide](../assets/BRAND.md).
+
 ## Session shape
 
 | Slide | Segment | Time |

@@ -1,5 +1,10 @@
 # Commander Protocol: Uniqueness and Originality Note
 
+Implementation scope: current source `0.1.5` at commit `001e903`, reviewed
+2026-09-02, not a statement about the published npm package. The historical
+March 18 originality spot check described below has not been repeated as part
+of this documentation update and is not current proof of market uniqueness.
+
 ## Purpose
 
 This document explains what makes the Commander Protocol distinctive and records a practical originality check for this written piece and the protocol framing used in the Agents Commander project. It is intended for commercial, product, partner, and research conversations where it is useful to explain not only what the protocol does, but why it is different from the more common coordination patterns in the current AI tooling market.
@@ -22,7 +27,7 @@ This terminal-native position is a real differentiator. Commander is not an abst
 
 ### 1.2 Human-readable protocol with operational state behind it
 
-At first glance, the Commander Protocol looks simple: visible message markers such as `SEND`, `REPLY`, `BROADCAST`, `STATUS`, and `QUERY`. But in `v11`, that surface simplicity sits on top of real orchestration state:
+At first glance, the Commander Protocol looks simple: visible message markers such as `SEND`, `REPLY`, `BROADCAST`, `STATUS`, and `QUERY`. In source `0.1.5`, that surface syntax is supported by orchestration state:
 
 - stable session identities
 - message identities
@@ -53,7 +58,7 @@ Commander is distinct because it treats operator trust as a first-class requirem
 
 ### 1.4 Thread-aware agent collaboration
 
-Many lightweight multi-agent setups can send one message from agent A to agent B, but they break down when conversation continuity matters. Commander’s `REPLY` behavior in `v11` is thread-aware rather than heuristic-only. This makes ongoing exchanges significantly more robust.
+Commander’s `REPLY` behavior in source `0.1.5` claims the newest open reply window for the current session. It resolves a return session, thread and prior message; a claimed window is consumed and restored on failed delivery only while both sessions remain active. No open window means no reply route. This gives ongoing exchanges explicit runtime correlation, without claiming that Commander understands their semantic task context.
 
 That is especially important in commercial use cases such as:
 
@@ -72,6 +77,12 @@ Commander returns explicit acknowledgements and exposes routing behavior in the 
 - and "the task was delivered to this session on this thread"
 
 That level of visibility gives Commander a stronger operational posture than ad hoc prompt relaying and a more inspectable posture than hidden orchestration layers.
+
+The visibility is limited to Commander-observable behavior: a SEND/REPLY
+delivery ACK confirms PTY input submission, not task completion. BROADCAST
+acknowledges aggregate queue admission; STATUS acknowledges a progress update.
+F12 retains bounded in-memory SEND/REPLY/BROADCAST history, while STATUS/QUERY
+are live-only. The rotating diagnostic log is not a complete conversation archive.
 
 ## 2. Why This Combination Is Different
 
@@ -109,7 +120,7 @@ Enterprises often reject systems that make agent behavior hard to supervise. Com
 
 ### 3.4 A clear upgrade path
 
-The protocol can later support persistence, audit trails, dashboards, or alternate transports without discarding the current interaction model. That gives it a credible path from internal tool to enterprise capability.
+Persistence, audit trails, dashboards and alternate transports are possible extensions, not current capabilities. Durable capture, dataset export and replay are not implemented; the [proposed session capture plan](session-capture-plan.md) describes opt-in semantic recording and reviewed offline export. Potential commercial applications remain subject to the repository's [CC-BY-NC-4.0 license](../LICENSE), not a commercial grant from this positioning note.
 
 ## 4. Practical Originality Check
 

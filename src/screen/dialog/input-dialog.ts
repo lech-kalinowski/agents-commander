@@ -71,21 +71,36 @@ export function showInputDialog(
     const unbindResize = bindOverlayResize(screen, dialog, 50, 8);
 
     let resolved = false;
+    let ownerCancelled = false;
     let unregisterCancellation = () => {};
-    const finish = (value: string | null) => {
+    const finish = (value: string | null, defer = true) => {
       if (resolved) return;
       resolved = true;
-      try {
-        unregisterCancellation();
-        leaveDialog(screen);
-        unbindResize();
-        dialog.destroy();
-        screen.render();
-      } finally {
+      const cleanup = () => {
+        // Disposal may already have released this screen's modal entry. Never
+        // pop a newer dialog from a deferred cleanup in that case.
+        const steps = [
+          unregisterCancellation,
+          () => { if (!ownerCancelled) leaveDialog(screen); },
+          unbindResize,
+          () => dialog.destroy(),
+          () => screen.render(),
+        ];
+        for (const step of steps) {
+          try { step(); } catch { /* Keep teardown best-effort, including after screen disposal. */ }
+        }
         resolve(value);
-      }
+      };
+      // Blessed dispatches one CR as enter followed by return. Its textbox
+      // rewinds focus before emitting submit/cancel: keep the modal shield
+      // until the complete synchronous key dispatch finishes.
+      if (defer) queueMicrotask(cleanup);
+      else cleanup();
     };
-    unregisterCancellation = registerDialogCancellation(screen, () => finish(null));
+    unregisterCancellation = registerDialogCancellation(screen, () => {
+      ownerCancelled = true;
+      finish(null, false);
+    });
 
     input.on('submit', (value: string) => {
       finish(value || null);

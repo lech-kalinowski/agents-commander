@@ -119,6 +119,15 @@ function navigatorDialog(): FakeElement {
 }
 
 describe('panel navigator pure helpers', () => {
+  it('shows reordered workspace positions separately from stable P-addresses', () => {
+    const moved = panel(9, { workspacePosition: 1 });
+    const other = panel(3, { workspacePosition: 2 });
+    expect(sortPanelSummaries([other, moved])).toEqual([moved, other]);
+    expect(filterPanelSummaries([other, moved], '#1')).toEqual([moved]);
+    expect(filterPanelSummaries([other, moved], 'p9')).toEqual([moved]);
+    expect(filterPanelSummaries([other, moved], '3')).toEqual([other]);
+    expect(formatPanelSummary(moved)).toMatch(/^#1 P9 /);
+  });
   it('sorts deterministically without mutating the source', () => {
     const source = [
       panel(12, { panelId: 1201, title: 'Zulu' }),

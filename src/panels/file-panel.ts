@@ -41,6 +41,7 @@ export class FilePanel {
   private destroyed = false;
   private _visible = true;
   public panelIndex: number;
+  private workspacePosition: number | null = null;
   private _focused = false;
 
   /** Called when the user clicks anywhere on this panel (for focus switching). */
@@ -185,7 +186,14 @@ export class FilePanel {
 
   private panelLabel(dirPath: string): string {
     const panelNumber = isPanelId(this.panelIndex) ? String(this.panelIndex + 1) : '?';
-    return ` P${panelNumber} · ${this.escapeTaggedText(this.shortPath(dirPath))} `;
+    const position = this.workspacePosition === null ? '' : `#${this.workspacePosition} `;
+    return ` ${position}P${panelNumber} · ${this.escapeTaggedText(this.shortPath(dirPath))} `;
+  }
+
+  setWorkspacePosition(position: number): void {
+    if (!Number.isSafeInteger(position) || position < 1 || position === this.workspacePosition) return;
+    this.workspacePosition = position;
+    this.box.setLabel(this.panelLabel(this._currentPath));
   }
 
   private updateHeader(): void {

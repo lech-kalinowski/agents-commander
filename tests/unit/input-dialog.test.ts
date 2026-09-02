@@ -120,4 +120,27 @@ describe('Input dialog disposal', () => {
     expect(isDialogActive()).toBe(false);
     expect(screen.listenerCount('resize')).toBe(0);
   });
+
+  it('keeps the modal shield until submit key dispatch finishes', async () => {
+    const screen = createScreen();
+    const pending = showInputDialog(screen, theme, 'Rename', 'New name:');
+    const input = blessedMocks.textbox.mock.results.at(-1)!.value as FakeElement;
+    input.emit('submit', '1');
+    expect(isDialogActive()).toBe(true);
+    await expect(pending).resolves.toBe('1');
+    expect(isDialogActive()).toBe(false);
+  });
+
+  it('does not dismiss a newer dialog when an already-submitted dialog is disposed', async () => {
+    const screen = createScreen();
+    const first = showInputDialog(screen, theme, 'Rename', 'First:');
+    (blessedMocks.textbox.mock.results.at(-1)!.value as FakeElement).emit('submit', '1');
+    closeDialogsForScreen(screen);
+    const second = showInputDialog(screen, theme, 'Rename', 'Second:');
+    await expect(first).resolves.toBe('1');
+    expect(isDialogActive()).toBe(true);
+    (blessedMocks.textbox.mock.results.at(-1)!.value as FakeElement).emit('cancel');
+    await expect(second).resolves.toBeNull();
+    expect(isDialogActive()).toBe(false);
+  });
 });

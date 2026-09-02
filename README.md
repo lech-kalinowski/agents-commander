@@ -133,7 +133,7 @@ The compact sketch below omits the demo session's capability suffix from protoco
 |                           | ===COMMANDER:END===       |
 |                           |                           |
 +---------------------------+---------------------------+
- F1Help F2Agent F3+Panel F4View F5Edit F6Copy F7Move F8Mkdir F9Del F10Quit
+ F1Help F2Agent F3+Panel F4Full F5Edit F6Clone F7Order F8Mkdir F9Close F10Quit
 ```
 
 ## Features
@@ -148,6 +148,9 @@ The workspace size and the visible layout are separate:
 - `--density auto|2|3|4` chooses how many panels can be visible on one page. `auto` fits as many readable panels as the window allows; `2`, `3`, and `4` set a manual cap.
 - `Shift+F4` reliably cycles `auto` / `2` / `3` / `4` density without creating, removing, or restarting panels. `Ctrl+0`, `Ctrl+2`, `Ctrl+3`, and `Ctrl+4` remain direct aliases on terminals that emit those combinations distinctly.
 - `Tab` moves through every active panel and brings its page into view. Terminal sessions on hidden pages keep running.
+- `F4` expands the active panel to fullscreen; press `F4` again (`Back` in the function bar) to restore the grid. The configured density and running sessions are preserved.
+- `F6` opens a new panel at the active panel's working directory and launches a **fresh instance of the same agent profile** when it has one. It does not copy files. Conversations, terminal buffers, running process state, and protocol capability keys are not copied.
+- `F7` changes a panel's workspace position. `F9` closes the active panel, with confirmation before stopping a live session; it never deletes files.
 
 For example, this creates a 12-panel workspace while showing no more than four panels at once:
 
@@ -155,7 +158,9 @@ For example, this creates a 12-panel workspace while showing no more than four p
 node dist/bin/agents-commander.js --panels 12 --density 4 .
 ```
 
-Panel numbers are stable for the lifetime of the workspace. Removing Panel 2 does not renumber Panel 3, so gaps are normal and protocol routes keep pointing at the same panel. Newly added panels receive new numbers; `Ctrl+E` is the explicit reset to fresh Panels 1 and 2.
+Protocol panel IDs (`P1`, `P2`, and so on) are stable for the lifetime of the workspace, independently of workspace order. Moving Panel 3 to position 1 with `F7` does not change its `P3` route; removing Panel 2 does not renumber Panel 3. Gaps are normal. Newly added or cloned panels receive new IDs; `Ctrl+E` is the explicit reset to fresh Panels 1 and 2.
+
+Cloning a managed agent keeps its configured profile (including its configured model), but starts a separate session. Press `Ctrl+P` in that new agent to enable its own Commander Protocol session. An unmanaged command, such as Vim, is not replayed: its clone is an idle terminal at the same directory. The bundled scripted demo roles cannot be cloned; use `F3` and `F2` to launch an independent agent instead.
 
 Supported adapters:
 
@@ -169,7 +174,7 @@ The selector also catalogues five future presets that are not launchable yet: Ai
 
 ### Integrated File Manager
 
-A file manager built into every file panel. Browse, copy, move, rename, and delete files without leaving the tool. Toggle between file panels and agent terminals with `Ctrl+T`.
+A file manager built into every file panel. Browse, copy (`Shift+F6`), move or rename (`Shift+F7`), and delete (`Shift+F9`) files without leaving the tool. These file operations only apply to file panels; unmodified `F6`, `F7`, and `F9` control panels. Toggle between file panels and agent terminals with `Ctrl+T`.
 
 ### Inter-Agent Communication
 
@@ -177,7 +182,7 @@ The killer feature. Agents can **autonomously send tasks to each other** using a
 
 ### Built-in Editor
 
-Preview regular UTF-8 text files with line numbers using `F4`, edit them in the built-in text editor with `F5`, or open the selected file in Vim with `Ctrl+G`.
+Preview regular UTF-8 text files with line numbers using `Enter` from a file panel, edit them in the built-in text editor with `F5`, or open the selected file in Vim with `Ctrl+G`.
 
 ### Themes
 
@@ -406,12 +411,12 @@ tests yourself."
 | `F1` | Help |
 | `F2` | Launch Agent |
 | `F3` | Add Panel |
-| `F4` | View File |
+| `F4` | Fullscreen active panel / restore grid (`Full` / `Back`) |
 | `F5` | Edit File |
-| `F6` | Copy |
-| `F7` | Move / Rename |
+| `F6` | Clone panel at the same directory and start a fresh instance of the same agent profile |
+| `F7` | Change panel workspace position; keep its protocol ID |
 | `F8` | Create Directory |
-| `F9` | Delete |
+| `F9` | Close panel; confirm before stopping a live session |
 | `F10` | Quit |
 
 ### Navigation
@@ -438,7 +443,7 @@ These shortcuts work everywhere, including on terminal panels with running agent
 | `Ctrl+P` | Send protocol instructions to the active agent |
 | `Ctrl+T` | Toggle panel: file <-> terminal |
 | `Ctrl+K` | Kill running session on active panel |
-| `Ctrl+W` | Remove active panel |
+| `Ctrl+W` | Close active panel (same as `F9`) |
 | `Ctrl+C` | Send interrupt to agent |
 | `Ctrl+D` | Send EOF to agent |
 
@@ -453,7 +458,18 @@ These are global application shortcuts:
 | `F12` | Routed-message Activity |
 | `Shift+F12` | Inter-agent protocol guide |
 
-Layout density only changes what is visible. It does not add, remove, renumber, or restart panels. Use `F3` to add a panel, `Ctrl+W` to remove the active panel, and `Tab` to move across pages.
+Layout density only changes what is visible. It does not add, remove, renumber, or restart panels. Use `F3` to add, `F6` to clone, `F7` to reorder, and `F9` or `Ctrl+W` to close the active panel. `F4` toggles fullscreen and `Tab` moves across pages.
+
+These file operations are available only from file panels:
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Open directory / preview selected file |
+| `F5` | Edit selected file |
+| `Shift+F6` | Copy selected files |
+| `Shift+F7` | Move / rename selected files |
+| `F8` | Create directory |
+| `Shift+F9` | Delete selected files (with confirmation) |
 
 These are file-panel actions. On terminal panels they pass through to the running agent, so switch to a file panel with `Tab` first:
 

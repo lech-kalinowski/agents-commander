@@ -13,6 +13,12 @@ vi.mock('blessed', () => ({
 import { createStatusBar, updateStatusBar } from '../../src/screen/status-bar.js';
 
 describe('status bar output safety', () => {
+  it('distinguishes workspace position from protocol ID and exposes fullscreen exit', () => {
+    const bar = createStatusBar({} as any, { statusBar: { bg: 'black', fg: 'white' } } as any);
+    (bar as any).width = 120;
+    updateStatusBar(bar, { panelNumber: 9, workspacePosition: 1, fullscreen: true, panelCount: 4 });
+    expect((bar.setContent as any).mock.calls.at(-1)[0]).toContain('FULL · F4 Back | P9 | Position #1');
+  });
   it('prioritizes recording and failure indicators over panel details on narrow screens', () => {
     const bar = createStatusBar({} as any, { statusBar: { bg: 'black', fg: 'white' } } as any);
     (bar as any).width = 18;

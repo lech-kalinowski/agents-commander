@@ -9,7 +9,7 @@ import {
   type ResolvedLaunchOptions,
 } from './config/launch-options.js';
 import { LayoutManager } from './screen/layout-manager.js';
-import { createFunctionBar } from './screen/function-bar.js';
+import { createFunctionBar, updateDefaultFunctionBar } from './screen/function-bar.js';
 import { createStatusBar, updateStatusBar } from './screen/status-bar.js';
 import { showHelpDialog } from './screen/dialog/help-dialog.js';
 import {
@@ -940,8 +940,103 @@ export class App {
   }
 
   private async actionAddPanel(): Promise<void> {
-    const added = await this.layout.addPanel();
-    if (added) this.updateStatus();
+    await this.runDestructiveTransition(async () => {
+      const added = await this.layout.addPanel();
+      if (this.disposalStarted) return;
+      if (added) this.updateStatus();
+      else showErrorToast(this.screen, 'Cannot add another panel: workspace or panel ID limit reached');
+    });
+  }
+
+  private actionToggleFullscreen(): void {
+    this.layout.toggleFullscreen();
+    this.updateStatus();
+  }
+
+  /** Duplicate configuration and directory, never a live session or its capability. */
+  private async actionDuplicatePanel(): Promise<void> {
+    await this.runDestructiveTransition(async () => {
+      const source = this.layout.activePanel;
+      const terminalSource = source instanceof TerminalPanel;
+      const cwd = source instanceof FilePanel ? source.currentPath : source.workingDir;
+      const managed = terminalSource ? this.getManagedSession(source.panelIndex) : undefined;
+      if (managed?.profileId === 'internal') {
+        showErrorToast(this.screen, 'Scripted demo roles cannot be cloned. Use F2 to launch an agent in a new panel.');
+        return;
+      }
+      if (managed) {
+        const error = this.agentManager.getProfileLaunchError(managed.profileId, managed.type);
+        if (error) {
+          showErrorToast(this.screen, `Cannot clone agent: ${error}`);
+          return;
+        }
+      }
+
+      // Adding a panel awaits a directory read; focus can change through a mouse
+      // click meanwhile. Resolve the newly allocated stable ID, not activePanel.
+      const previousIds = new Set(this.layout.workspacePanelIds);
+      try {
+        const added = await this.layout.addPanel(cwd);
+        if (this.disposalStarted) return;
+        if (!added) {
+          showErrorToast(this.screen, 'Cannot clone panel: workspace or panel ID limit reached');
+          return;
+        }
+        const newIds = this.layout.workspacePanelIds.filter((id) => !previousIds.has(id));
+        if (newIds.length !== 1) throw new Error('Cannot resolve the newly created panel');
+        const newId = newIds[0];
+        if (terminalSource) {
+          const terminal = this.layout.convertToTerminal(newId);
+          if (managed) {
+            const launched = this.agentManager.launchProfile(managed.profileId, terminal);
+            if (!launched) {
+              showErrorToast(this.screen, `Agent launch failed in P${newId + 1}; the source session is unchanged`);
+              this.layout.setActivePanel(newId);
+              this.updateStatus();
+              return;
+            }
+            this.orchestrator.connectPanel(terminal);
+          }
+        }
+        this.layout.setActivePanel(newId);
+        this.updateStatus();
+        showToast(this.screen, managed
+          ? `P${newId + 1}: fresh ${sanitizeUserText(managed.profileLabel ?? managed.name, 60)} session. Ctrl+P to enable protocol.`
+          : terminalSource
+            ? `P${newId + 1}: idle terminal copied at the same directory; running commands were not replayed`
+            : `P${newId + 1}: file panel copied at the same directory`);
+      } catch (error) {
+        logger.error('Panel duplication failed', error);
+        if (!this.disposalStarted) {
+          this.updateStatus();
+          showErrorToast(this.screen, 'Panel duplication failed; the source session was not changed');
+        }
+      }
+    });
+  }
+
+  private async actionMovePanel(): Promise<void> {
+    await this.runDestructiveTransition(async () => {
+      const source = this.layout.activePanel;
+      const position = this.layout.getWorkspacePosition(source.panelIndex);
+      if (position === null) return;
+      const value = await showInputDialog(
+        this.screen, this.theme, `Move P${source.panelIndex + 1}`,
+        `New position (1–${this.layout.panelCount}). Protocol ID stays P${source.panelIndex + 1}.`,
+        String(position),
+      );
+      if (value === null || this.disposalStarted) return;
+      if (this.layout.getPanel(source.panelIndex) !== source) return;
+      const input = value.trim();
+      const target = Number(input);
+      if (!/^\d+$/.test(input) || !Number.isSafeInteger(target) || target < 1 || target > this.layout.panelCount) {
+        showErrorToast(this.screen, `Enter a position from 1 to ${this.layout.panelCount}`);
+        return;
+      }
+      this.layout.movePanel(source.panelIndex, target);
+      this.updateStatus();
+      showToast(this.screen, `P${source.panelIndex + 1} is now at position #${target}; routing identity unchanged`);
+    });
   }
 
   private getLiveTerminalSessions(): TerminalPanel[] {
@@ -977,7 +1072,7 @@ export class App {
   }
 
   private async actionChangeLayout(mode: PanelDensity): Promise<void> {
-    if (mode === this.layout.mode) return;
+    if (mode === this.layout.mode && !this.layout.isFullscreen) return;
 
     await this.runDestructiveTransition(async () => {
       try {
@@ -998,7 +1093,10 @@ export class App {
   }
 
   private async actionRemovePanel(): Promise<void> {
-    if (this.layout.panelCount <= 1) return;
+    if (this.layout.panelCount <= 1) {
+      showErrorToast(this.screen, 'Keep at least one panel. F10 exits Commander.');
+      return;
+    }
 
     await this.runDestructiveTransition(async () => {
       const panelId = this.layout.activePanel.panelIndex;
@@ -1584,12 +1682,13 @@ export class App {
       this.agentManager.getRunningAgents().map((agent) => [agent.panelIndex, agent]),
     );
 
-    return this.layout.allPanels.map((panel) => {
+    return this.layout.allPanels.map((panel, index) => {
       const running = runningByPanel.get(panel.panelIndex);
       if (panel instanceof FilePanel) {
         return {
           panelId: panel.panelIndex,
           panelNumber: panel.panelIndex + 1,
+          workspacePosition: index + 1,
           title: path.basename(panel.currentPath) || panel.currentPath,
           kind: 'files',
           status: panel.isVisible ? 'visible' : 'hidden',
@@ -1599,6 +1698,7 @@ export class App {
       return {
         panelId: panel.panelIndex,
         panelNumber: panel.panelIndex + 1,
+        workspacePosition: index + 1,
         title: running?.profileLabel ?? panel.sessionName ?? 'Terminal',
         kind: 'terminal',
         status: running?.status ?? panel.status,
@@ -1700,17 +1800,23 @@ export class App {
     }));
 
     // F-keys (work everywhere, but not during dialogs)
-    // Layout: F1=Help F2=Agent F3=+Panel F4=View F5=Edit F6=Copy F7=Move F8=Mkdir F9=Del F10=Quit
+    // Panel-first function keys. F4 toggles the viewport without blocking input.
     screen.key(['f1'], guard(() => this.actionHelp()));
     screen.key(['f2'], guard(() => this.actionLaunchAgent()));
     screen.key(['f3'], guard(() => this.actionAddPanel()));
-    screen.key(['f4'], guard(() => this.actionViewFile()));
+    screen.key(['f4'], guard(() => this.actionToggleFullscreen()));
     screen.key(['f5'], guard(() => this.actionEditFile()));
-    screen.key(['f6'], guard(() => this.actionCopy()));
-    screen.key(['f7'], guard(() => this.actionMove()));
+    screen.key(['f6'], guard(() => this.actionDuplicatePanel()));
+    screen.key(['f7'], guard(() => this.actionMovePanel()));
     screen.key(['f8'], guard(() => this.actionMkdir()));
-    screen.key(['f9'], guard(() => this.actionDelete()));
+    screen.key(['f9'], guard(() => this.actionRemovePanel()));
     screen.key(['f10'], guard(() => this.actionQuit()));
+
+    // Secondary file operations. Modified keys pass through to running agents.
+    // Enter already opens file preview, while F5 and F8 retain Edit and Mkdir.
+    screen.key(['S-f6'], termGuard(() => this.actionCopy()));
+    screen.key(['S-f7'], termGuard(() => this.actionMove()));
+    screen.key(['S-f9'], termGuard(() => this.actionDelete()));
 
     // Ctrl+W - Remove active panel
     screen.key(['C-w'], guard(() => this.actionRemovePanel()));
@@ -1919,11 +2025,17 @@ export class App {
   }
 
   private updateStatus(): void {
+    updateDefaultFunctionBar(this.functionBar, this.theme, this.layout.isFullscreen);
+    for (const [index, workspacePanel] of this.layout.allPanels.entries()) {
+      workspacePanel.setWorkspacePosition(index + 1);
+    }
     const panel = this.layout.activePanel;
     const launchStatus = this.conferenceStatus();
     const workspaceStatus = {
       ...this.captureStatus(),
       panelNumber: panel.panelIndex + 1,
+      workspacePosition: this.layout.getWorkspacePosition(panel.panelIndex) ?? undefined,
+      fullscreen: this.layout.isFullscreen,
       panelCount: this.layout.panelCount,
       pageNumber: this.layout.viewport.pageNumber,
       pageCount: this.layout.viewport.pageCount,

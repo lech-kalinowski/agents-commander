@@ -13,10 +13,18 @@ Multi-panel AI Agent Manager & File Browser
 {bold}{yellow-fg}FUNCTION KEYS{/yellow-fg}{/bold}
 
   F1   Help          F2   Launch Agent
-  F3   Add panel     F4   View file
-  F5   Edit file     F6   Copy
-  F7   Move/Rename   F8   Mkdir
-  F9   Delete        F10  Quit
+  F3   Add panel     F4   Fullscreen / Back
+  F5   Edit file     F6   Clone panel
+  F7   Panel order   F8   Mkdir
+  F9   Close panel   F10  Quit
+
+  F4 again restores the panel grid (Full changes to Back).
+  F6 opens a panel at the same directory, with a fresh agent
+  when managed; it does not clone conversations or running process state.
+  Unmanaged commands become idle terminals; demo roles cannot clone.
+  Press Ctrl+P in a new agent to enable its protocol session.
+  F7 chooses workspace position; protocol P IDs stay stable.
+  F9 closes a panel, never a file; live sessions need consent.
 
 {bold}{yellow-fg}NAVIGATION{/yellow-fg}{/bold}
 
@@ -27,6 +35,11 @@ Multi-panel AI Agent Manager & File Browser
   Home/End    Jump to first/last file
   PgUp/PgDn   Scroll page
   Insert      Select/deselect file
+
+  File operations (file panels only):
+  Shift+F6    Copy selected files
+  Shift+F7    Move / rename selected files
+  Shift+F9    Delete selected files (with confirmation)
 
 {bold}{yellow-fg}AGENTS{/yellow-fg}{/bold}
 
@@ -42,10 +55,9 @@ Multi-panel AI Agent Manager & File Browser
   Ctrl+C      Send interrupt to agent
   Ctrl+D      Send EOF to agent
 
-  On a terminal panel, F-keys and shortcuts
-  above work as app actions. Keys below
-  pass through to the agent instead
-  (use them from a file panel via Tab).
+  F1–F10 remain app controls on terminal panels.
+  File-only actions require a file panel (Tab to switch).
+  Ctrl+C / Ctrl+D are forwarded to the running agent.
 
 {bold}{yellow-fg}INTER-AGENT PROTOCOL{/yellow-fg}{/bold}
 
@@ -77,13 +89,15 @@ Multi-panel AI Agent Manager & File Browser
   Up to 100 active panels share a paged workspace.
   Tab follows focus across pages; terminal sessions on
   hidden pages keep running.
-  Panel numbers stay stable; gaps after removal are normal.
+  Panel numbers stay stable (protocol P IDs).
+  Gaps after removal are normal.
+  Workspace positions change when panels are reordered.
 
   F11         Search/jump to any panel by number or metadata
   Shift+F4    Cycle Auto / 2 / 3 / 4 visible density
   Ctrl+0      Auto-fit (terminal-dependent direct alias)
   Ctrl+2/3/4  Direct density aliases when terminal supports them
-  Ctrl+W      Remove active panel (confirms live session)
+  Ctrl+W      Close active panel (same as F9; confirms live session)
 
   CLI: --panels 1-100 sets the initial workspace size.
        --density auto|2|3|4 sets visible density.

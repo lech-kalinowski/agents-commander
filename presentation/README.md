@@ -23,13 +23,15 @@ The title, npm-package and closing slides use the current retro Agents Commander
 mark from `assets/logo.png`. Keep it aligned with the README and landing page;
 the authentic Callstack logo and visual identity remain unchanged. Asset
 provenance and generation prompts are in [the brand guide](../assets/BRAND.md).
+The closing sequence now includes the protocol-learning roadmap and an Agent
+Conf invitation, using the same inherited Callstack layouts and typography.
 
 ## Session shape
 
 | Slide | Segment | Time |
 | --- | --- | ---: |
 | 1 | Published title and terminal-native collaboration thesis | 1 minute |
-| 2 | Genuine Agents Commander UI capture | 2 minutes |
+| 2 | Genuine Agents Commander UI capture | 1.5 minutes |
 | 3 | Local process, PTY, CLI, and provider architecture | 3 minutes |
 | 4 | Terminal observation and delivery pipeline | 2 minutes |
 | 5 | Annotated session-bound protocol frame | 3 minutes |
@@ -38,15 +40,50 @@ provenance and generation prompts are in [the brand guide](../assets/BRAND.md).
 | 8 | `SEND` / delivery ACK / `REPLY` sequence | 3 minutes |
 | 9 | Session identity and pending reply windows | 2 minutes |
 | 10 | Bounded routing guards and limitations | 2 minutes |
-| 11 | Commercial landscape: BAND / Jam comparison | 2 minutes |
+| 11 | Commercial landscape: BAND / Jam comparison | 1.5 minutes |
 | 12 | Scripted offline transport proof | 4 minutes |
 | 13 | Real-agent challenge/refinement branch | 6 minutes |
 | 14 | Genuine `F12` Activity capture | 1.5 minutes |
 | 15 | Human and optional hardware control | 1.5 minutes |
-| 16 | Failure and recovery decision tree | 2 minutes |
+| 16 | Failure and recovery decision tree | 1.5 minutes |
 | 17 | Public npm package and conference-source distinction | 1 minute |
-| 18 | Questions | 5 minutes |
+| 18 | Future: teaching models the Commander Protocol | 1 minute |
+| 19 | Agent Conf invitation | 0.5 minutes |
+| 20 | Questions | 5 minutes |
 | | **Total** | **45 minutes** |
+
+## Protocol-learning roadmap
+
+Slide 18 connects real, permissioned agent communication to reviewed datasets,
+model-specific LoRA adapters and held-out protocol evaluation. Opt-in capture
+and reviewed JSONL export are implemented in the conference source. Model
+selection, tokenization, fine-tuning and model-quality evaluation remain future
+work; no trained adapter or generalization result is claimed.
+
+The ambition is broad model interoperability: portable training data, with a
+separate adapter for each compatible, trainable base model. Do not describe it
+as one adapter for every LLM, including closed models without weight access.
+Frame validity, routing behavior and useful collaboration must be measured
+against the prompted base model on unseen project groups. Runtime authorization
+and routing guards remain necessary after training.
+
+See the [dataset guide](../docs/datasets.md),
+[TRL SFTTrainer](https://huggingface.co/docs/trl/sft_trainer) and
+[PEFT checkpoint guidance](https://huggingface.co/docs/peft/developer_guides/checkpoint).
+
+## Agent Conf promotion
+
+Slide 19 invites the audience to [Agent Conf](https://www.agent.sh/),
+**17–18 September 2026 in Warsaw**, at **Crowne Plaza Warsaw [The HUB]**.
+The call to action is [agent.sh/tickets](https://www.agent.sh/tickets).
+The [Callstack event listing](https://www.callstack.com/events/agent-conf)
+confirms the organizer, dates and city. Details were checked on **2026-09-02**;
+recheck before presenting. No ticket price, discount or additional speaking
+commitment is promised on this slide.
+
+The invitation takes 30 seconds. The UI overview, commercial comparison and
+recovery segment each yield 30 seconds to keep the full session at 45 minutes,
+without shortening either demo or the five-minute Q&A.
 
 ## Commercial landscape
 
@@ -215,7 +252,7 @@ fallback, and rehearsal.
 Before replacing the committed PowerPoint:
 
 1. Render the exported `.pptx`, not only the editor preview.
-2. Inspect all 18 slides at presentation resolution.
+2. Inspect all 20 slides at presentation resolution.
 3. Check for slide-canvas overflow and unintended overlaps.
 4. Confirm the speaker notes still total 45 minutes and retain recovery cues.
 5. Run `npm run verify` so the commands and product claims in the deck remain

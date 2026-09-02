@@ -16,10 +16,12 @@ const PREFERRED_HEIGHT = 26;
 const MAX_QUERY_LENGTH = 200;
 
 export interface PanelSummary {
-  /** Stable identity; unlike panelNumber, this must not change when panels move. */
+  /** Stable protocol/session identity; never changes when panels move. */
   panelId: number;
-  /** User-facing panel number. */
+  /** Stable user-facing protocol address (P-number). */
   panelNumber: number;
+  /** Mutable one-based workspace order, independent of the P-number. */
+  workspacePosition?: number;
   title: string;
   kind: string;
   status: string;
@@ -45,6 +47,7 @@ function searchablePanelText(panel: PanelSummary): string {
     panel.panelNumber,
     `p${panel.panelNumber}`,
     `panel ${panel.panelNumber}`,
+    ...(panel.workspacePosition ? [`#${panel.workspacePosition}`, `position ${panel.workspacePosition}`] : []),
     panel.title,
     panel.kind,
     panel.status,
@@ -63,7 +66,11 @@ export function filterPanelSummaries(
   const normalizedQuery = normalizedText(query).toLocaleLowerCase();
   if (!normalizedQuery) return [...panels];
 
-  const directNumber = normalizedQuery.match(/^(?:p(?:anel)?\s*|#)?(\d+)$/u);
+  const position = normalizedQuery.match(/^#(\d+)$/u);
+  if (position) {
+    return panels.filter((panel) => (panel.workspacePosition ?? panel.panelNumber) === Number(position[1]));
+  }
+  const directNumber = normalizedQuery.match(/^(?:p(?:anel)?\s*)?(\d+)$/u);
   if (directNumber) {
     const panelNumber = Number.parseInt(directNumber[1], 10);
     return panels.filter((panel) => panel.panelNumber === panelNumber);
@@ -84,7 +91,8 @@ export function sortPanelSummaries(
     Number.isFinite(panel.panelNumber) ? panel.panelNumber : Number.MAX_SAFE_INTEGER
   );
   return [...panels].sort((left, right) => (
-    panelNumber(left) - panelNumber(right)
+    (left.workspacePosition ?? panelNumber(left)) - (right.workspacePosition ?? panelNumber(right))
+    || panelNumber(left) - panelNumber(right)
     || normalizedText(left.title).localeCompare(normalizedText(right.title))
     || left.panelId - right.panelId
   ));
@@ -110,7 +118,9 @@ export function formatPanelSummary(
   ].filter(Boolean).join(' · ');
   const cwd = normalizedText(panel.cwd);
   const unread = unreadCount > 0 ? ` unread:${unreadCount}` : '';
-  const row = `P${panelNumber}${unread}  ${title}${details ? `  [${details}]` : ''}`
+  const position = Number.isSafeInteger(panel.workspacePosition) && panel.workspacePosition! > 0
+    ? `#${panel.workspacePosition} ` : '';
+  const row = `${position}P${panelNumber}${unread}  ${title}${details ? `  [${details}]` : ''}`
     + `${cwd ? `  ${cwd}` : ''}`;
   const width = Number.isFinite(availableWidth)
     ? Math.max(1, Math.trunc(availableWidth))
@@ -213,8 +223,8 @@ export function showPanelNavigatorDialog(
     const renderFooter = (): void => {
       if (!footer) return;
       footer.setContent(currentGeometry.compact
-        ? ' Type Search  ↑↓ Select  PgUp/PgDn Page  Enter Go  Esc Cancel '
-        : ' Type to search number/name/agent/model/status/path  ↑↓ Select  PgUp/PgDn Page  Enter Go  Esc Cancel ');
+        ? ' Search P-ID / #position  ↑↓ Select  Enter Go  Esc Cancel '
+        : ' Search P-ID / #position / name / agent / path  ↑↓ Select  PgUp/PgDn Page  Enter Go  Esc Cancel ');
     };
 
     const renderList = (shouldRender = true): void => {

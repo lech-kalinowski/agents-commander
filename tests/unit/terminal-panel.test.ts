@@ -159,6 +159,16 @@ describe('TerminalPanel input isolation', () => {
     }
   });
 
+  it('keeps panel function keys out of the agent stream and preserves normal Escape', () => {
+    const { panel, outputBox, stdin } = createInputHarness();
+    for (const name of ['f4', 'f6', 'f7', 'f9']) outputBox.emit('keypress', undefined, { name, full: name });
+    expect(stdin.write).not.toHaveBeenCalled();
+    expect(panel.onUserInput).not.toHaveBeenCalled();
+    outputBox.emit('keypress', undefined, { name: 'escape', full: 'escape' });
+    expect(stdin.write).toHaveBeenCalledWith('\x1b');
+    expect(panel.onUserInput).toHaveBeenCalledOnce();
+  });
+
   it('reserves Codex Micro chords only in explicit keyboard fallback mode', () => {
     const cases = [
       [{ name: 'pageup', full: 'C-S-pageup', ctrl: true, shift: true }, '\x1b[5;6~'],
@@ -741,7 +751,7 @@ describe('TerminalPanel visibility', () => {
 
     expect(panel.isVisible).toBe(true);
     expect(panel.box.show).toHaveBeenCalledOnce();
-    expect(panel.box.setLabel).toHaveBeenCalledWith(' Terminal [4] ');
+    expect(panel.box.setLabel).toHaveBeenCalledWith(' Terminal [P4] ');
     expect(panel.headerBox.setContent).toHaveBeenCalledOnce();
     expect(outputBox.setContent).toHaveBeenCalledOnce();
     expect(outputBox.setContent.mock.calls[0][0]).toContain('latest hidden output');

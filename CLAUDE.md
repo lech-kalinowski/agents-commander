@@ -46,7 +46,11 @@ TypeScript + blessed + chokidar + marked + tsup
 ## Key Conventions
 
 - All imports use `.js` extension (ESM)
-- F-keys: F1=Help, F2=Agent, F3=+Panel, F4=View, F5=Edit, F6=Copy, F7=Move, F8=Mkdir, F9=Delete, F10=Quit
+- F-keys: F1=Help, F2=Agent, F3=+Panel, F4=Full/Back, F5=Edit, F6=Clone, F7=Order, F8=Mkdir, F9=Close panel, F10=Quit
+- F4 toggles active-panel fullscreen; F4 again restores the grid without restarting sessions
+- F6 opens a new panel at the same directory and starts a fresh instance of the same agent profile, not its conversation, process state, or protocol capability; it does not copy files
+- F7 changes workspace position only; stable P IDs and routing/session identity must not change
+- Enter previews files; Shift+F6/Shift+F7/Shift+F9 copy/move/delete files from file panels; Ctrl+W remains the close-panel alias
 - Ctrl+B opens the prompt template browser dialog
 - Ctrl+P sends session-bound Commander Protocol instructions to the active running agent
 - F11 opens the panel navigator

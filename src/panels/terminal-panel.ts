@@ -180,6 +180,7 @@ export class TerminalPanel {
   private config: AppConfig;
   private orchConfig: OrchestrationConfig;
   public panelIndex: number;
+  private workspacePosition: number | null = null;
   private _focused = false;
   private _visible = true;
   private destroyed = false;
@@ -295,7 +296,7 @@ export class TerminalPanel {
       border: { type: 'line' },
       style: { bg: 'black', fg: 'white', border: theme.panel.border },
       tags: true,
-      label: ` Terminal [${panelIndex + 1}] `,
+      label: ` Terminal [P${panelIndex + 1}] `,
     });
 
     this.headerBox = blessed.box({
@@ -1345,8 +1346,19 @@ export class TerminalPanel {
   /** Keep the scanner's source identity in sync after panel reindexing. */
   updatePanelIndex(panelIndex: number): void {
     this.panelIndex = panelIndex;
-    if (this._visible) this.box.setLabel(` Terminal [${panelIndex + 1}] `);
+    if (this._visible) this.box.setLabel(this.panelLabel());
     this.scanner?.updateSource(panelIndex, this.agentName);
+  }
+
+  private panelLabel(): string {
+    const position = this.workspacePosition == null ? '' : `#${this.workspacePosition} `;
+    return ` ${position}Terminal [P${this.panelIndex + 1}] `;
+  }
+
+  setWorkspacePosition(position: number): void {
+    if (!Number.isSafeInteger(position) || position < 1 || position === this.workspacePosition) return;
+    this.workspacePosition = position;
+    if (this._visible) this.box.setLabel(this.panelLabel());
   }
 
   /**
@@ -1825,7 +1837,7 @@ export class TerminalPanel {
     }
 
     this.box.show();
-    this.box.setLabel(` Terminal [${this.panelIndex + 1}] `);
+    this.box.setLabel(this.panelLabel());
     this.box.style.border = this._focused
       ? this.theme.panel.borderFocus
       : this.theme.panel.border;

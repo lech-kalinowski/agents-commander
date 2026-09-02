@@ -71,6 +71,7 @@ export class LayoutManager {
   private panels: Panel[] = [];
   private _activePanelId: number | null = null;
   private _mode: LayoutMode = 'auto';
+  private _isFullscreen = false;
   private workingDir: string = process.cwd();
   private nextPanelId = 0;
   private currentPageIndex = 0;
@@ -100,6 +101,11 @@ export class LayoutManager {
 
   get density(): LayoutMode {
     return this._mode;
+  }
+
+  /** Fullscreen is a temporary view; it never replaces the selected density. */
+  get isFullscreen(): boolean {
+    return this._isFullscreen;
   }
 
   get activePanelId(): number | null {
@@ -346,6 +352,46 @@ export class LayoutManager {
     return this.findPanel(panelId) ? panelId + 1 : null;
   }
 
+  /** Current one-based workspace position, independent of the stable panel number. */
+  getWorkspacePosition(panelId: number): number | null {
+    const index = this.panels.findIndex((panel) => panel.panelIndex === panelId);
+    return index < 0 ? null : index + 1;
+  }
+
+  /** Move a panel to a one-based workspace position without changing its identity. */
+  movePanel(panelId: number, position: number): boolean {
+    if (!Number.isSafeInteger(position) || position < 1 || position > this.panels.length) {
+      return false;
+    }
+    const currentIndex = this.panels.findIndex((panel) => panel.panelIndex === panelId);
+    const targetIndex = position - 1;
+    if (currentIndex < 0 || currentIndex === targetIndex) return false;
+
+    const [panel] = this.panels.splice(currentIndex, 1);
+    this.panels.splice(targetIndex, 0, panel);
+    this.reflow(false);
+    this.scheduleVisibleFilePanelLoads();
+    this.screen.render();
+    return true;
+  }
+
+  /** Toggle the active panel's fullscreen view, retaining density and all sessions. */
+  toggleFullscreen(): boolean {
+    if (this.panels.length === 0) return false;
+    this._isFullscreen = !this._isFullscreen;
+    this.reflow(false);
+    this.scheduleVisibleFilePanelLoads();
+    this.screen.render();
+    return this._isFullscreen;
+  }
+
+  /** Restore the selected density around the current active panel. */
+  exitFullscreen(): boolean {
+    if (!this._isFullscreen) return false;
+    this.toggleFullscreen();
+    return true;
+  }
+
   /**
    * Prepare one panel as a terminal while preserving its stable ID.
    *
@@ -423,13 +469,13 @@ export class LayoutManager {
   }
 
   /** Add and activate a file panel without changing the current density. */
-  async addPanel(): Promise<boolean> {
+  async addPanel(initialPath?: string): Promise<boolean> {
     if (this.panels.length >= MAX_ACTIVE_PANELS) return false;
 
     const panelId = this.allocatePanelId();
     if (panelId === null) return false;
 
-    const panel = this.createFilePanel(panelId, this.workingDir);
+    const panel = this.createFilePanel(panelId, initialPath ?? this.workingDir);
     const previous = this._activePanelId === null
       ? undefined
       : this.findPanel(this._activePanelId);
@@ -473,9 +519,10 @@ export class LayoutManager {
   /** Change visible density without recreating any panel or terminal session. */
   async setMode(mode: LayoutMode): Promise<void> {
     if (!isPanelDensity(mode)) return;
-    if (mode === this._mode) return;
+    if (mode === this._mode && !this._isFullscreen) return;
 
     this._mode = mode;
+    this._isFullscreen = false;
     this.reflow(false);
     await this.loadVisibleFilePanels();
     this.screen.render();
@@ -492,6 +539,7 @@ export class LayoutManager {
     this.currentPageIndex = 0;
     this._activePanelId = null;
     this._mode = 2;
+    this._isFullscreen = false;
 
     for (let index = 0; index < 2; index++) {
       const panelId = this.allocatePanelId();
@@ -606,7 +654,7 @@ export class LayoutManager {
       density: this._mode,
       minOuterWidth: MIN_PANEL_WIDTH,
       minOuterHeight: MIN_PANEL_HEIGHT,
-      maxVisible: MAX_ACTIVE_PANELS,
+      maxVisible: this._isFullscreen ? 1 : MAX_ACTIVE_PANELS,
     });
   }
 

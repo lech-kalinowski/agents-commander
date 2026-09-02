@@ -28,6 +28,9 @@ export interface StatusBarInfo {
   selectedCount?: number;
   /** Stable, one-based public panel number (for example, P101). */
   panelNumber?: number;
+  /** Mutable one-based workspace order, distinct from the protocol address. */
+  workspacePosition?: number;
+  fullscreen?: boolean;
   /** Number of live panels retained in the workspace. */
   panelCount?: number;
   /** One-based page containing the active panel. */
@@ -114,8 +117,12 @@ export function updateStatusBar(
     rightParts.push(info.captureLabel!);
     if (isDisplayCount(info.captureEvents)) rightParts.push(`${info.captureEvents} events`);
   }
+  if (info.fullscreen) rightParts.push('FULL · F4 Back');
   if (isPanelNumber(info.panelNumber)) {
     rightParts.push(`P${info.panelNumber}`);
+  }
+  if (isActivePanelCount(info.workspacePosition)) {
+    rightParts.push(`Position #${info.workspacePosition}`);
   }
   if (isActivePanelCount(info.panelCount)) {
     rightParts.push(`${info.panelCount} panel${info.panelCount === 1 ? '' : 's'}`);

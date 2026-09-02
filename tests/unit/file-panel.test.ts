@@ -135,6 +135,18 @@ describe('FilePanel navigation', () => {
     expect((panel.box as any)._label.content).toContain('P100 · /workspace/next');
   });
 
+  it('updates workspace position without changing its stable protocol number', async () => {
+    mocks.readDirectory.mockResolvedValue([]);
+    const panel = createPanel('/workspace/current', 8);
+    panel.setWorkspacePosition(1);
+    expect((panel.box as any)._label.content).toContain('#1 P9 · /workspace/current');
+    await panel.loadDirectory('/workspace/next');
+    expect((panel.box as any)._label.content).toContain('#1 P9 · /workspace/next');
+    panel.setWorkspacePosition(3);
+    expect((panel.box as any)._label.content).toContain('#3 P9');
+    expect(panel.panelIndex).toBe(8);
+  });
+
   it('does not commit a candidate directory until its read succeeds', async () => {
     const original = fileEntry('old.txt', '/workspace/current/old.txt');
     mocks.readDirectory.mockResolvedValueOnce([original]);

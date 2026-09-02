@@ -14,6 +14,9 @@ const MAX_STATUS_WIDTH = 10_000;
 const MAX_STATUS_COUNT = 1_000_000;
 
 export interface StatusBarInfo {
+  /** Recording status takes precedence over other metadata on narrow terminals. */
+  captureLabel?: 'REC:METADATA' | 'REC:PROTOCOL' | 'REC:INCOMPLETE';
+  captureEvents?: number;
   modeLabel?: string;
   warning?: string;
   fileName?: string;
@@ -107,6 +110,10 @@ export function updateStatusBar(
   const left = parts.join('  ');
 
   const rightParts: string[] = [];
+  if (['REC:METADATA', 'REC:PROTOCOL', 'REC:INCOMPLETE'].includes(info.captureLabel ?? '')) {
+    rightParts.push(info.captureLabel!);
+    if (isDisplayCount(info.captureEvents)) rightParts.push(`${info.captureEvents} events`);
+  }
   if (isPanelNumber(info.panelNumber)) {
     rightParts.push(`P${info.panelNumber}`);
   }

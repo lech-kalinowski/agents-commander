@@ -99,6 +99,7 @@ try {
     'dist/hardware/codex-micro-bridge.py',
     'dist/demo/demo-agent.js',
     'docs/codex-micro.md',
+    'docs/datasets.md',
     'THIRD_PARTY_NOTICES.md',
   ]) {
     assert.ok(packedPaths.has(requiredPath), `Packed package is missing ${requiredPath}`);
@@ -113,6 +114,19 @@ try {
     false,
     'Source maps must not be published',
   );
+  const privateArtifactPath = /(?:^|\/)(?:capture-[^/]+|commander-reviews|commander-datasets)\/|\.jsonl$/u;
+  assert.doesNotMatch('dist/capture-EXAMPLE.js', privateArtifactPath);
+  for (const privatePath of [
+    'capture-example/manifest.json', 'dist/capture-example/segment.jsonl',
+    'commander-reviews/review.json', 'dist/commander-datasets/manifest.json',
+    'dist/nested/train.jsonl',
+  ]) {
+    assert.match(privatePath, privateArtifactPath);
+  }
+  for (const packedPath of packedPaths) {
+    assert.doesNotMatch(packedPath, privateArtifactPath,
+      'Private captures and dataset rows must not be published');
+  }
 
   const tarballPath = path.join(packDirectory, packReport[0].filename);
   run(npmCommand, [

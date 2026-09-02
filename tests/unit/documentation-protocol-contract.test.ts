@@ -71,12 +71,13 @@ describe('current-source protocol documentation', () => {
   it('does not advertise bounded diagnostics as durable capture', () => {
     for (const copy of [help, guide]) {
       expect(copy).toContain('rotating diagnostic log');
-      expect(copy).toContain('Durable capture and dataset export are proposed, not implemented');
+      expect(copy).toContain('Opt-in capture: --capture protocol --capture-project <opaque-id>');
+      expect(copy).toContain('Dataset export requires human review; see docs/datasets.md');
     }
     expect(guide).toContain('latest 100 routed-message summaries');
     expect(guide).toContain('1,000 records / 8 MiB');
     expect(guide).toContain('256 KiB per-record content');
-    expect(guide).toContain('STATUS and QUERY are live-only');
+    expect(guide).toContain('STATUS and QUERY are not in Activity; opt-in capture records them');
     expect(guide).toContain('docs/session-capture-plan.md');
   });
 

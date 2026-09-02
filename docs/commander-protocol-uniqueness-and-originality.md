@@ -1,9 +1,11 @@
 # Commander Protocol: Uniqueness and Originality Note
 
-Implementation scope: current source `0.1.5` at commit `001e903`, reviewed
+Implementation baseline: source `0.1.5` at commit `001e903`, reviewed
 2026-09-02, not a statement about the published npm package. The historical
 March 18 originality spot check described below has not been repeated as part
 of this documentation update and is not current proof of market uniqueness.
+The current source additionally includes [opt-in capture and reviewed dataset
+export](datasets.md); this does not establish market uniqueness.
 
 ## Purpose
 
@@ -120,7 +122,7 @@ Enterprises often reject systems that make agent behavior hard to supervise. Com
 
 ### 3.4 A clear upgrade path
 
-Persistence, audit trails, dashboards and alternate transports are possible extensions, not current capabilities. Durable capture, dataset export and replay are not implemented; the [proposed session capture plan](session-capture-plan.md) describes opt-in semantic recording and reviewed offline export. Potential commercial applications remain subject to the repository's [CC-BY-NC-4.0 license](../LICENSE), not a commercial grant from this positioning note.
+Opt-in semantic capture and reviewed dataset export are now available in source. Full transcripts, replay and model training are not implemented; the [session capture plan](session-capture-plan.md) retains broader proposed work. Enterprise audit systems, dashboards and alternate transports remain possible extensions. Potential commercial applications remain subject to the repository's [CC-BY-NC-4.0 license](../LICENSE), not a commercial grant from this positioning note.
 
 ## 4. Practical Originality Check
 

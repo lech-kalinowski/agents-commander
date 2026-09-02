@@ -2,9 +2,10 @@
 
 ## A lightweight coordination layer for terminal-native multi-agent systems
 
-Scope: current source `0.1.5` at commit `001e903`, reviewed 2026-09-02.
+Baseline: source `0.1.5` at commit `001e903`, reviewed 2026-09-02.
 This is a source implementation description, not a claim about the published
-npm package. Research extensions below are proposals, not shipped features.
+npm package. The current source now adds [opt-in capture and reviewed dataset
+export](datasets.md); broader research extensions below remain proposals.
 
 ### Abstract
 
@@ -215,7 +216,7 @@ Commander does not decide what the agents should believe, prioritize, or conclud
 
 ### 7.4 Persistence is still limited
 
-The current ledger is in-memory and stores SEND/REPLY/BROADCAST only. Defaults are 1,000 records, 8 MiB total retained content and 256 KiB per record; F12 displays the latest 100 summaries. STATUS/QUERY and control responses are not part of that history. Ctrl+L exposes a rotating diagnostic log, not a conversation archive. Durable session capture, dataset export and replay are not implemented. The [session capture and training-data plan](session-capture-plan.md) proposes opt-in semantic recording, privacy review and offline export.
+The current ledger is in-memory and stores SEND/REPLY/BROADCAST only. Defaults are 1,000 records, 8 MiB total retained content and 256 KiB per record; F12 displays the latest 100 summaries. STATUS/QUERY and control responses are not part of that history. Ctrl+L exposes a rotating diagnostic log, not a conversation archive. A separate [opt-in semantic recorder and reviewed dataset exporter](datasets.md) is now available in source. Full transcripts, replay and model training are not implemented. The [session capture and training-data plan](session-capture-plan.md) retains the broader design.
 
 ## 8. Research Directions
 
@@ -223,7 +224,7 @@ Several natural research extensions follow from the current design.
 
 ### 8.1 Durable message logs
 
-Persisting messages and delivery events could support offline analysis and benchmark creation. The [proposed capture plan](session-capture-plan.md) separates recording from reviewed dataset export; automatic execution or replay of captured text is not part of that plan.
+Opt-in messages and delivery events can support offline analysis and benchmark creation. The [capture plan](session-capture-plan.md) separates recording from reviewed dataset export; automatic execution or replay of captured text is not implemented. Schema validation is not evidence of semantic quality or model-level improvement.
 
 ### 8.2 Alternative transports
 
@@ -239,6 +240,6 @@ The same task can be run with different combinations of terminal-native agents, 
 
 ## Conclusion
 
-The Commander Protocol combines human-readable commands with runtime state such as sessions, message identities, threads, acknowledgements, and delivery queues. Source `0.1.5` provides an inspectable coordination mechanism; reproducible longitudinal studies still require the proposed capture and evaluation work.
+The Commander Protocol combines human-readable commands with runtime state such as sessions, message identities, threads, acknowledgements, and delivery queues. Source `0.1.5` provides an inspectable coordination mechanism and opt-in data preparation; reproducible longitudinal studies still require permissioned collection, independent review and held-out evaluation.
 
 For AI research, its value is not that it solves all coordination problems. Its value is that it exposes them clearly enough to study. That makes it useful both as an engineering mechanism and as a research instrument for understanding how agents coordinate, fail, recover, and collaborate in real tool-using environments.

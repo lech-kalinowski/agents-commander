@@ -85,6 +85,9 @@ import {
   showCodexMicroTestDialog,
   type CodexMicroTestDialogHandle,
 } from './screen/dialog/codex-micro-test-dialog.js';
+import { NOOP_CAPTURE } from './capture/index.js';
+import type { CaptureSink } from './capture/types.js';
+import type { StatusBarInfo } from './screen/status-bar.js';
 
 const RECOMMENDED_CONFERENCE_COLUMNS = 100;
 const RECOMMENDED_CONFERENCE_ROWS = 24;
@@ -100,6 +103,8 @@ interface PendingCodexMicroDecision {
 }
 
 export interface AppLaunchOptions extends ExplicitLaunchOptions {
+  /** Explicit launch-scoped recorder; never persisted in application config. */
+  capture?: CaptureSink;
   onShutdown?: () => void | Promise<void>;
   onSignalOwnership?: () => void;
 }
@@ -142,6 +147,9 @@ export class App {
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private fileChangedHandler: (() => void) | null = null;
   private processHandlersInstalled = false;
+  private capture: CaptureSink = NOOP_CAPTURE;
+  private unsubscribeCaptureLifecycle: (() => void) | null = null;
+  private captureStatusTimer: ReturnType<typeof setTimeout> | null = null;
 
   private readonly handleUncaughtException = (err: Error): void => {
     if (err instanceof TypeError && err.stack?.includes('blessed')) {
@@ -149,11 +157,13 @@ export class App {
       return;
     }
     logger.error('Uncaught exception', err);
+    this.markCaptureIncomplete('uncaught_exception');
     void this.shutdown(1);
   };
 
   private readonly handleUnhandledRejection = (reason: unknown): void => {
     logger.error('Unhandled promise rejection (suppressed)', reason);
+    this.markCaptureIncomplete('unhandled_rejection');
   };
 
   private readonly handleSigint = (): void => { void this.shutdown(130); };
@@ -168,12 +178,28 @@ export class App {
     this.onShutdown = options.onShutdown;
     this.onSignalOwnership = options.onSignalOwnership;
     this.agentManager = new AgentManager(this.config.agents, this.config.agentProfiles);
+    this.capture = options.capture ?? NOOP_CAPTURE;
+    if (this.capture.mode !== 'off') {
+      // Independent of the UI subscriber, which is removed before shutdown exits.
+      this.unsubscribeCaptureLifecycle = this.agentManager.onLifecycle((event) => {
+        try {
+          this.capture.record({
+            type: event.type === 'exited' ? 'session.end' : 'session.start',
+            actor: { sessionId: event.sessionId, panel: event.panelIndex + 1, agentType: event.agentType },
+            reason: event.type === 'restarted' ? 'restarted' : event.type === 'exited' ? 'session_exit' : 'launched',
+          });
+        } catch {
+          this.markCaptureIncomplete('lifecycle_capture_failed');
+        }
+      });
+    }
   }
 
   async run(): Promise<void> {
     try {
       await this.runApplication();
     } catch (error) {
+      this.markCaptureIncomplete('startup_failure');
       try {
         await this.dispose();
       } catch (rollbackError) {
@@ -239,7 +265,7 @@ export class App {
         showErrorToast(this.screen, formatUserError('Preview', err));
       });
     };
-    this.orchestrator = new Orchestrator(this.layout, this.agentManager, this.screen, this.config);
+    this.orchestrator = new Orchestrator(this.layout, this.agentManager, this.screen, this.config, this.capture);
     this.unsubscribeAgentLifecycle = this.agentManager.onLifecycle((event) => {
       this.handleAgentLifecycle(event);
       this.updateStatus();
@@ -292,6 +318,36 @@ export class App {
   }
 
   // ── Menu actions ──────────────────────────────────────────────
+
+  private markCaptureIncomplete(reason: string): void {
+    try { this.capture?.markIncomplete(reason); } catch { /* Recording cannot break the UI. */ }
+  }
+
+  /** Recorder status callbacks are isolated from startup, shutdown and UI failures. */
+  refreshCaptureStatus(): void {
+    if (this.disposalStarted || !this.layout || !this.statusBar || !this.screen) return;
+    if (this.captureStatusTimer) return;
+    this.captureStatusTimer = setTimeout(() => {
+      this.captureStatusTimer = null;
+      if (this.disposalStarted) return;
+      try { this.updateStatus(); } catch { /* Recorder callbacks must not break routing. */ }
+    }, 50);
+  }
+
+  private captureStatus(): Pick<StatusBarInfo, 'captureLabel' | 'captureEvents'> {
+    if (!this.capture || this.capture.mode === 'off') return {};
+    try {
+      const status = this.capture.snapshot();
+      return {
+        captureLabel: status.state === 'incomplete' || status.state === 'complete'
+          ? 'REC:INCOMPLETE'
+          : status.mode === 'protocol' ? 'REC:PROTOCOL' : 'REC:METADATA',
+        captureEvents: status.events,
+      };
+    } catch {
+      return { captureLabel: 'REC:INCOMPLETE' };
+    }
+  }
 
   private actionHelp(): void {
     showHelpDialog(this.screen, this.theme);
@@ -1866,6 +1922,7 @@ export class App {
     const panel = this.layout.activePanel;
     const launchStatus = this.conferenceStatus();
     const workspaceStatus = {
+      ...this.captureStatus(),
       panelNumber: panel.panelIndex + 1,
       panelCount: this.layout.panelCount,
       pageNumber: this.layout.viewport.pageNumber,
@@ -1937,6 +1994,8 @@ export class App {
   dispose(): Promise<void> {
     if (this.disposePromise) return this.disposePromise;
     this.disposalStarted = true;
+    if (this.captureStatusTimer) clearTimeout(this.captureStatusTimer);
+    this.captureStatusTimer = null;
 
     let resolveDispose!: () => void;
     let rejectDispose!: (reason: unknown) => void;
@@ -1947,6 +2006,17 @@ export class App {
 
     const performDispose = async (): Promise<void> => {
       const failures: unknown[] = [];
+      // Seal admission immediately. Keep capture subscribed until lanes settle
+      // and AgentManager emits the final session exits.
+      let routeDrain: Promise<boolean> = Promise.resolve(true);
+      try {
+        routeDrain = (this.orchestrator?.sealAndDrain?.(1500) ?? routeDrain).catch(() => {
+          this.markCaptureIncomplete('route_drain_failed');
+          return false;
+        });
+      } catch {
+        this.markCaptureIncomplete('route_drain_failed');
+      }
       const pendingDecision = this.pendingCodexMicroDecision;
       this.pendingCodexMicroDecision = null;
       if (pendingDecision?.timeout) clearTimeout(pendingDecision.timeout);
@@ -1998,6 +2068,11 @@ export class App {
 
       let managedPanels: TerminalPanel[] = [];
       try {
+        if (!await routeDrain) this.markCaptureIncomplete('route_drain_timeout');
+      } catch {
+        this.markCaptureIncomplete('route_drain_failed');
+      }
+      try {
         managedPanels = this.agentManager.prepareForShutdown();
       } catch (error) {
         failures.push(error);
@@ -2027,6 +2102,16 @@ export class App {
         logger.error('Failed to stop every terminal session during disposal');
       }
       await TerminalPanel.waitForPendingTerminations();
+
+      try { this.unsubscribeCaptureLifecycle?.(); } catch { this.markCaptureIncomplete('lifecycle_unsubscribe_failed'); }
+      this.unsubscribeCaptureLifecycle = null;
+      try {
+        await this.capture?.close(failures.length === 0);
+      } catch {
+        // Capture failures must not prevent the terminal from being restored.
+        this.markCaptureIncomplete('capture_close_failed');
+        logger.warn('Session recording could not be sealed; treat it as incomplete');
+      }
 
       if (this.refreshTimer) {
         clearTimeout(this.refreshTimer);

@@ -13,6 +13,17 @@ vi.mock('blessed', () => ({
 import { createStatusBar, updateStatusBar } from '../../src/screen/status-bar.js';
 
 describe('status bar output safety', () => {
+  it('prioritizes recording and failure indicators over panel details on narrow screens', () => {
+    const bar = createStatusBar({} as any, { statusBar: { bg: 'black', fg: 'white' } } as any);
+    (bar as any).width = 18;
+    for (const captureLabel of ['REC:METADATA', 'REC:PROTOCOL', 'REC:INCOMPLETE'] as const) {
+      updateStatusBar(bar, { captureLabel, captureEvents: 123, panelNumber: 100, panelCount: 100 });
+      const rendered = (bar.setContent as any).mock.calls.at(-1)?.[0] as string;
+      expect(rendered).toHaveLength(18);
+      expect(rendered).toMatch(new RegExp(`^${captureLabel}`));
+    }
+  });
+
   it('disables tag parsing and strips control characters from dynamic text', () => {
     const bar = createStatusBar({} as any, {
       statusBar: { bg: 'black', fg: 'white' },

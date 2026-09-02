@@ -14,6 +14,8 @@ Multi-panel terminal UI for managing AI agent CLIs and routing text-based messag
 - `src/demo/` — Deterministic offline conference-demo runtime
 - `src/doctor/` — Startup diagnostics
 - `src/hardware/` — Experimental Codex Micro input bridge and guarded controls
+- `src/capture/` — Opt-in private semantic recorder, redaction, manifests and strict reader
+- `src/dataset/` — Offline candidate review, split-safe conversational JSONL export and validation
 - `docs/` — Protocol references, setup guides, and explicitly labelled proposals
 - `tests/` — Unit, integration, and built-package checks
 - `presentation/` — Canonical conference PowerPoint + speaker runbook
@@ -53,5 +55,6 @@ claims. A source push is not an npm release.
 - Up to 100 active panels use stable numbers in a paged workspace; hidden sessions keep running
 - Shift+F4 cycles auto/2/3/4 visible density independently of active panel count; Ctrl+0/2/3/4 are terminal-dependent aliases
 - REPLY claims the latest open reply window, not a permanent last-sender address
-- Activity is bounded and in-memory; diagnostic logs are not session recordings. Capture/export are proposed in `docs/session-capture-plan.md`, not implemented
+- Activity is bounded and in-memory; diagnostic logs are not session recordings. Capture/export require explicit launch consent and human review; see `docs/datasets.md` and the broader proposed roadmap in `docs/session-capture-plan.md`
+- Dataset commands must remain UI-independent; never enable recording from saved config, export unapproved data, retain live capability keys, or include private research artifacts in git/npm
 - marked-terminal renderer methods must be extracted and bound to avoid marked v15 compat issues

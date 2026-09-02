@@ -98,7 +98,7 @@ describe('current source documentation', () => {
     }
   });
 
-  it('distinguishes bounded diagnostics from proposed capture and describes open reply windows', () => {
+  it('distinguishes bounded diagnostics from opt-in capture and describes open reply windows', () => {
     expect(readme).toContain('latest open reply thread');
     expect(readme).toContain('newest open reply window');
     expect(readme).toContain('not a persistent archive');
@@ -108,6 +108,7 @@ describe('current source documentation', () => {
     expect(landing).toContain('not implemented');
     for (const document of [readme, landing, agentGuide, claudeGuide]) {
       expect(document).toContain('session-capture-plan.md');
+      expect(document).toContain('datasets.md');
       expect(document).toMatch(/propos(?:al|ed)/i);
       expect(document).toContain('in-memory');
     }

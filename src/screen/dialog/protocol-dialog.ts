@@ -125,11 +125,13 @@ with another agent running in a different panel.
   F12 shows the latest 100 routed-message summaries.
   The in-memory ledger defaults to 1,000 records / 8 MiB,
   with 256 KiB per-record content; older history is evicted.
-  STATUS and QUERY are live-only, not ledger history.
+  STATUS and QUERY are not in Activity; opt-in capture records them.
   Ctrl+L (from a file panel) opens a rotating diagnostic log,
   not a complete conversation archive.
-  Durable capture and dataset export are proposed, not implemented.
-  See docs/session-capture-plan.md in the source repository.
+  Opt-in capture: --capture protocol --capture-project <opaque-id>.
+  Capture is off by default; no raw keyboard recording or uploads.
+  Dataset export requires human review; see docs/datasets.md.
+  The broader roadmap remains in docs/session-capture-plan.md.
 
 
 {bold}{yellow-fg}SUPPORTED SEND TARGETS{/yellow-fg}{/bold}

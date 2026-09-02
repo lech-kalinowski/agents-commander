@@ -161,22 +161,28 @@ describe('PTY helper resize control', () => {
       ].join('\n');
       const launcherCode = [
         'import os',
+        'import select',
         'import subprocess',
         'import sys',
-        'import time',
         `helper = subprocess.Popen([sys.executable, ${JSON.stringify(helperPath)}, "--", sys.executable, "-c", ${JSON.stringify(agent)}], stdin=subprocess.PIPE, stdout=sys.stdout, stderr=sys.stderr, env={**os.environ, "PYTHONUNBUFFERED": "1"})`,
         'print(f"HELPER {helper.pid}", flush=True)',
-        'time.sleep(0.6)',
-        'os._exit(0)',
+        // Parent loss must happen after both signal-resistant processes and
+        // the heartbeat are ready, not after a machine-speed-dependent sleep.
+        'ready, _, _ = select.select([sys.stdin], [], [], 5.0)',
+        'if not ready: os._exit(2)',
+        'command = os.read(sys.stdin.fileno(), 5)',
+        'os._exit(0 if command == b"EXIT\\n" else 3)',
       ].join('\n');
       const launcher = spawn('python3', ['-c', launcherCode], {
         env: { ...process.env, PYTHONUNBUFFERED: '1' },
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
+      launcher.stdin.on('error', () => {});
       const closePromise = once(launcher, 'close');
       let output = '';
       let helperPid = 0;
       let agentPid = 0;
+      let readinessReceived = false;
       let cleanupCompleted = false;
 
       try {
@@ -194,9 +200,11 @@ describe('PTY helper resize control', () => {
             const helperMatch = output.match(/HELPER (\d+)/u);
             if (helperMatch) helperPid = Number(helperMatch[1]);
             const match = output.match(/READY (\d+) \d+/u);
-            if (!match) return;
+            if (!match || readinessReceived) return;
+            readinessReceived = true;
             clearTimeout(timer);
             agentPid = Number(match[1]);
+            launcher.stdin.end('EXIT\n');
             resolve();
           });
         });

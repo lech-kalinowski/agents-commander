@@ -13,25 +13,58 @@ central orchestration server or heavyweight agent framework.
 
 The previous Keynote export and Python generators were removed because they had
 drifted from the product. They described an older release and could recreate
-claims that are no longer accurate. Update the canonical PowerPoint directly,
-preserving its existing theme and slide order, then render and inspect every
-slide before committing it.
+claims that are no longer accurate. Update the canonical PowerPoint directly.
+The current technical rewrite replaces feature-card content with architecture,
+protocol, sequence, and state diagrams plus genuine application captures,
+while retaining the Callstack visual identity. Its revised slide order follows
+the session shape below. Render and inspect every slide before committing it.
 
 ## Session shape
 
-| Segment | Time |
-| --- | ---: |
-| Opening: isolated CLI handoffs | 4 minutes |
-| Local terminal transport and protocol | 9 minutes |
-| Scripted offline transport proof | 6 minutes |
-| Real-agent challenge/refinement branch | 9 minutes |
-| One-terminal visibility | 3 minutes |
-| Human control | 2 minutes |
-| Failure modes and guardrails | 3 minutes |
-| Agent CLI edges | 2 minutes |
-| Close | 2 minutes |
-| Questions | 5 minutes |
-| **Total** | **45 minutes** |
+| Slide | Segment | Time |
+| --- | --- | ---: |
+| 1 | Published title and terminal-native collaboration thesis | 1 minute |
+| 2 | Genuine Agents Commander UI capture | 2 minutes |
+| 3 | Local process, PTY, CLI, and provider architecture | 3 minutes |
+| 4 | Terminal observation and delivery pipeline | 2 minutes |
+| 5 | Annotated session-bound protocol frame | 3 minutes |
+| 6 | Streaming parser states | 2 minutes |
+| 7 | Five protocol verbs as a routing graph | 2 minutes |
+| 8 | `SEND` / delivery ACK / `REPLY` sequence | 3 minutes |
+| 9 | Session identity and pending reply windows | 2 minutes |
+| 10 | Bounded routing guards and limitations | 2 minutes |
+| 11 | Scripted offline transport proof | 5 minutes |
+| 12 | Real-agent challenge/refinement branch | 7 minutes |
+| 13 | Genuine `F12` Activity capture | 1.5 minutes |
+| 14 | Human and optional hardware control | 1.5 minutes |
+| 15 | Failure and recovery decision tree | 2 minutes |
+| 16 | Public npm package and conference-source distinction | 1 minute |
+| 17 | Questions | 5 minutes |
+| | **Total** | **45 minutes** |
+
+## Public package versus conference source
+
+The public [npm package](https://www.npmjs.com/package/agents-commander) has
+`latest` version **0.1.4**, verified on **2026-09-02**. To try that published
+release:
+
+Use Node.js 22 or newer. The 0.1.4 package's `engines` field says `>=18`, but
+its dependencies require a newer runtime.
+
+```bash
+npx agents-commander@0.1.4 .
+```
+
+The conference deck and rehearsal commands below describe **0.1.5 from this
+source checkout**, on the
+[`codex/review-and-release-0.1.5` branch](https://github.com/lech-kalinowski/agents-commander/tree/codex/review-and-release-0.1.5),
+using Node.js 22 or newer and Python 3. Do not attach
+`--doctor`, `--demo`, or `--conference` to the 0.1.4 public-package command;
+those presentation flows are demonstrated from the built conference source.
+
+The [source is available on GitHub](https://github.com/lech-kalinowski/agents-commander)
+under **CC-BY-NC-4.0**. Public availability does not imply an OSI-approved
+open-source license or unrestricted commercial use.
 
 ## Demo preflight
 
@@ -104,7 +137,7 @@ reaches `REFINED_READY`, and `F12` shows delivered `SEND` and `REPLY` records on
 the same thread with the expected source and target. Allow 45 seconds per agent
 response. On timeout, authentication failure, provider failure, or routing
 error, open `F12` once, name the visible failure, stop waiting, and narrate the
-prepared challenge/refinement from slide 7. Do not debug credentials on stage.
+prepared challenge/refinement from slide 12. Do not debug credentials on stage.
 Never present the scripted offline roles as reasoning agents.
 
 For the optional experimental Codex Micro segment, allow the presentation
@@ -160,7 +193,7 @@ fallback, and rehearsal.
 Before replacing the committed PowerPoint:
 
 1. Render the exported `.pptx`, not only the editor preview.
-2. Inspect all 13 slides at presentation resolution.
+2. Inspect all 17 slides at presentation resolution.
 3. Check for slide-canvas overflow and unintended overlaps.
 4. Confirm the speaker notes still total 45 minutes and retain recovery cues.
 5. Run `npm run verify` so the commands and product claims in the deck remain

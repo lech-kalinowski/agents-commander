@@ -107,7 +107,8 @@ export function showOrchestrateDialog(
       top: 3,
       left: 2,
       width: '100%-6',
-      height: agents.length + 1,
+      // Keep long named-profile lists inside the dialog and above its footer.
+      height: Math.max(1, Math.min(agents.length, geometry.height - 6)),
       tags: true,
       keys: false,
       mouse: true,
@@ -197,6 +198,7 @@ export function showOrchestrateDialog(
     let unregisterCancellation = () => {};
     const unbindResize = bindOverlayResize(screen, dialog, 70, 22, (nextGeometry) => {
       pickerWidth = Math.max(12, nextGeometry.width - 10);
+      agentList.height = Math.max(1, Math.min(agents.length, nextGeometry.height - 6));
       if (currentStep === 2) renderPanelContent();
     });
     const cleanup = () => {

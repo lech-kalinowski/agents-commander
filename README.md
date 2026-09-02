@@ -172,6 +172,17 @@ Supported adapters:
 
 The selector also catalogues five future presets that are not launchable yet: Aider, Cline, Goose, Kiro, and Amp.
 
+### Sixteen-panel APEX collaboration example
+
+The [APEX review council](Example/apex-sixteen-panel/README.md) prepares sixteen
+named OpenCode profiles: one coordinator and fifteen specialists reviewing a
+fictional booking API in seven human-gated waves. It includes an offline setup
+generator, role prompts, a runbook, and a 15-SEND/15-REPLY evidence checklist.
+Supply the exact APEX `provider/model` and your existing provider configuration;
+no provider identity or live-model compatibility is assumed. Preparation does
+not launch agents or change your saved configuration. This is a source-checkout
+example, not the two-agent scripted `--demo` or a verified APEX benchmark.
+
 ### Integrated File Manager
 
 A file manager built into every file panel. Browse, copy (`Shift+F6`), move or rename (`Shift+F7`), and delete (`Shift+F9`) files without leaving the tool. These file operations only apply to file panels; unmodified `F6`, `F7`, and `F9` control panels. Toggle between file panels and agent terminals with `Ctrl+T`.

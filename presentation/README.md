@@ -1,8 +1,9 @@
 # Code Europe conference session
 
-`Agents_Commander_Protocol.pptx` is the canonical 45-minute Code Europe deck.
-It includes presenter notes, recovery cues, and source references for technical
-claims.
+`Agents_Commander_Protocol.pptx` is the canonical Code Europe deck for a
+40–50-minute session, including Q&A. The default run is 35 minutes of content
+plus 10 minutes of questions, for 45 minutes total. It includes presenter
+notes, recovery cues, and source references for technical claims.
 
 Published session topic:
 [No Framework, No Server: Making AI Agents Collaborate in One Terminal](https://codeeurope.pl/speakers).
@@ -33,30 +34,94 @@ inherited Callstack layouts and typography.
 
 ## Session shape
 
-| Slide | Segment | Time |
+All timings include slide/demo transitions and brief audience clarifications.
+Park longer discussions for Q&A. Confirm the total slot with the moderator
+before starting; do not assume that 50 minutes is available.
+
+| Total slot | Content | Q&A | Content hard stop |
+| --- | ---: | ---: | ---: |
+| 40 minutes | 35 minutes | 5 minutes | 35:00 |
+| 45 minutes (default) | 35 minutes | 10 minutes | 35:00 |
+| 50 minutes (only when confirmed) | 40 minutes | 10 minutes | 40:00 |
+
+The following is the 35-minute core run. Keep its slide order and technical
+story in all three variants; only the confirmed 50-minute slot uses the
+optional extensions below.
+
+| Slide | Segment | Core time |
 | --- | --- | ---: |
-| 1 | Published title and terminal-native collaboration thesis | 1 minute |
-| 2 | Genuine Agents Commander UI capture | 1.5 minutes |
+| 1 | Published title and terminal-native collaboration thesis | 0.5 minutes |
+| 2 | Genuine Agents Commander UI capture | 1 minute |
 | 3 | Local process, PTY, CLI, and provider architecture | 2.5 minutes |
 | 4 | Terminal observation and delivery pipeline | 1.5 minutes |
-| 5 | Annotated session-bound protocol frame | 3 minutes |
-| 6 | Streaming parser states | 2 minutes |
-| 7 | Five protocol verbs as a routing graph | 1.5 minutes |
-| 8 | `SEND` / delivery ACK / `REPLY` sequence | 3 minutes |
-| 9 | Session identity and pending reply windows | 2 minutes |
-| 10 | Bounded routing guards and limitations | 2 minutes |
-| 11 | Commercial landscape: BAND / Jam comparison | 1.5 minutes |
-| 12 | Scripted offline transport proof | 4 minutes |
-| 13 | Real-agent challenge/refinement branch | 6 minutes |
+| 5 | Annotated session-bound protocol frame | 2.5 minutes |
+| 6 | Streaming parser states | 1.5 minutes |
+| 7 | Five protocol verbs as a routing graph | 1 minute |
+| 8 | `SEND` / delivery ACK / `REPLY` sequence | 2.5 minutes |
+| 9 | Session identity and pending reply windows | 1.5 minutes |
+| 10 | Bounded routing guards and limitations | 1.5 minutes |
+| 11 | Commercial landscape: BAND / Jam comparison | 1 minute |
+| 12 | Scripted offline transport proof | 3 minutes |
+| 13 | Real-agent challenge/refinement branch | 5 minutes |
 | 14 | Genuine `F12` Activity capture | 1.5 minutes |
-| 15 | Human and optional hardware control | 1.5 minutes |
+| 15 | Human and optional hardware control | 2 minutes |
 | 16 | Failure and recovery decision tree | 1.5 minutes |
 | 17 | Public npm package and conference-source distinction | 1 minute |
-| 18 | Implemented capture and reviewed dataset architecture | 1.5 minutes |
-| 19 | Future: teaching models the Commander Protocol | 1 minute |
+| 18 | Implemented capture and reviewed dataset architecture | 2 minutes |
+| 19 | Future: teaching models the Commander Protocol | 1.5 minutes |
 | 20 | Agent Conf invitation | 0.5 minutes |
-| 21 | Questions | 5 minutes |
-| | **Total** | **45 minutes** |
+| | **Core content subtotal** | **35 minutes** |
+| 21 | Questions (default) | 10 minutes |
+| | **Default total, including Q&A** | **45 minutes** |
+
+### Optional five-minute extension
+
+Use these only in a confirmed 50-minute slot and while on schedule. If an
+earlier segment overruns, drop the remaining optional depth before taking any
+time from Q&A. Extensions deepen the existing examples; they do not add new
+setup, authentication, or demo retries.
+
+| Slide | Optional depth | Extra time |
+| --- | --- | ---: |
+| 3 | Trace one local process/PTY boundary and its provider connection | 1 minute |
+| 6 | Walk through one incomplete-frame parser transition | 0.5 minutes |
+| 8 | Separate delivery acknowledgement from the agent's semantic reply | 0.5 minutes |
+| 12 | Inspect the completed offline handoff and its provenance | 1 minute |
+| 13 | Discuss the observed challenge/refinement evidence after the demo | 1 minute |
+| 18 | Trace a candidate through review, split assignment, and export | 1 minute |
+| | **Extra content** | **5 minutes** |
+
+### Checkpoints and hard stops
+
+Elapsed times are measured from the session start, not from the previous
+segment. The expanded column assumes all five optional minutes are used.
+
+| Checkpoint | 40/45-minute slot | Confirmed 50-minute slot |
+| --- | ---: | ---: |
+| Finish architecture, protocol, and comparison (slide 11) | 17:00 | 19:00 |
+| Finish offline transport proof (slide 12) | 20:00 | 23:00 |
+| Finish real-agent challenge/refinement (slide 13) | 25:00 | 29:00 |
+| Finish controls and recovery (slide 16) | 30:00 | 34:00 |
+| Open Q&A (slide 21) | 35:00 | 40:00 |
+
+- Keep both demo paths prestarted and the prepared slide 13 outcome ready.
+  The five-minute real-agent segment allows at most 45 seconds per agent
+  response; its deadline still wins over any unused response allowance.
+  On a failure or timeout, open `F12` once, name the visible issue, and narrate
+  the prepared outcome. Do not retry the demo or debug authentication on stage.
+- Keep the physical-control demonstration brief. If the device is unavailable,
+  use the keyboard immediately; the session does not depend on hardware.
+- If behind schedule and those slides have not yet passed, reduce slide 11
+  to 30 seconds (saving 30 seconds), slide 14 to 30 seconds (saving 1 minute),
+  and slide 15 to 30 seconds (saving 1.5 minutes). Together these recover up to
+  3 minutes without removing the technical protocol story or either demo.
+- If those opportunities have passed, use the existing demo recovery path
+  rather than waiting, and close the remaining points concisely. Preserve the
+  distinction between implemented datasets and future model training.
+- Stop content at 35:00 unless a 50-minute slot was explicitly confirmed;
+  that variant stops content at 40:00. Park unfinished topics for audience
+  questions; do not continue prepared content into reserved Q&A time. Finish
+  at the moderator's agreed session end.
 
 ## Implemented dataset architecture
 
@@ -123,12 +188,10 @@ confirms the organizer, dates and city. Details were checked on **2026-09-02**;
 recheck before presenting. No ticket price, discount or additional speaking
 commitment is promised on this slide.
 
-The roadmap and invitation take 90 seconds together, funded by 30-second
-reductions to the UI overview, commercial comparison and recovery segment.
-The new 90-second dataset architecture segment is funded by 30-second
-reductions to the process architecture, terminal pipeline and protocol-verb
-segments. The full session remains 45 minutes, without shortening either demo
-or the five-minute Q&A.
+The closing dataset architecture, roadmap, and invitation take 4 minutes in
+the core run, ending at 35:00. The confirmed 50-minute variant adds one minute
+of dataset detail and ends content at 40:00. Q&A is included in every total:
+5 minutes for a 40-minute slot, or 10 minutes for a 45- or 50-minute slot.
 
 ## Commercial landscape
 
@@ -271,24 +334,39 @@ arrangement and the keycaps are swappable. See [the Codex Micro rehearsal
 guide](../docs/codex-micro.md) for the fixed switch-position mapping, keyboard
 fallback, and rehearsal.
 
-## On-stage recovery
+### Rehearsal-only reset and reconnection
 
-- `F12` opens routed activity; `Shift+F12` opens the protocol guide.
+Complete these procedures before the audience enters, or after the session.
+They are not the on-stage recovery path and must not consume demo or Q&A time.
+
 - When no demo role remains live, `Ctrl+O` can offer a fresh seeded demo. While
   either role is live it opens normal Orchestrate; relaunch `--demo` for a clean
   reset.
 - Press `Tab` to focus a file panel, then `Ctrl+E` returns to a two-panel
   baseline after confirming any live sessions. A running terminal receives the
   key instead of resetting the layout.
+- If any external agent or conference network is unreliable during preflight,
+  keep the prestarted `--demo` session and prepared slide 13 evidence ready.
+- To recover from `MICRO:BUSY` during rehearsal, stop pressing controls, quit
+  the competing HID client, and wait for `MICRO:USB/GUARD` to return. Restart
+  Commander only if guarded status does not recover. Recheck the physical
+  controls before opening the audience-facing run; otherwise leave the device
+  unused and use a conventional keyboard.
+
+## On-stage recovery
+
+- `F12` opens routed activity; `Shift+F12` opens the protocol guide.
+- On a demo failure, inspect `F12` once, name only the visible issue, and stop
+  waiting. Use the prepared slide 13 outcome for challenge/refinement and the
+  completed offline proof for transport. Do not launch, reset, or retry a demo
+  on stage, or extend a response wait beyond the segment's hard stop.
+- If `MICRO:BUSY` appears or hardware is unavailable, stop pressing device
+  controls and immediately continue with a conventional keyboard. Do not
+  reconnect, change permissions, or restart Commander on stage. No agent
+  session depends on the device.
 - `Ctrl+K` stops the active session. `F10` escalates tracked process groups from
   `SIGINT` to `SIGTERM` to `SIGKILL`, waits for their termination, and then
   restores the terminal.
-- If any external agent or conference network is unreliable, switch to
-  `--demo` and continue with the same protocol story.
-- If `MICRO:BUSY` appears, do not keep pressing controls. Quit the competing
-  HID client and wait for `MICRO:USB/GUARD` to return. Restart Commander only
-  if guarded status does not recover; otherwise continue with a conventional
-  keyboard. No agent session depends on the device.
 - If the legacy keyboard fallback is used, keep ChatGPT fully quit for the
   entire session; that mode has no reader guard and disables decisions.
 
@@ -299,6 +377,10 @@ Before replacing the committed PowerPoint:
 1. Render the exported `.pptx`, not only the editor preview.
 2. Inspect all 21 slides at presentation resolution.
 3. Check for slide-canvas overflow and unintended overlaps.
-4. Confirm the speaker notes still total 45 minutes and retain recovery cues.
+4. Confirm the speaker notes total 35 minutes of core content plus 10 minutes
+   of Q&A for the default 45-minute run, retain recovery cues, and include the
+   40-minute (35 + 5) and confirmed 50-minute (40 + 10) variants. Check that
+   the six optional extensions total 5 minutes and that all checkpoints and
+   content hard stops match the runbook.
 5. Run `npm run verify` so the commands and product claims in the deck remain
    aligned with the release.

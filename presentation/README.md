@@ -19,10 +19,14 @@ protocol, sequence, and state diagrams plus genuine application captures,
 while retaining the Callstack visual identity. Its revised slide order follows
 the session shape below. Render and inspect every slide before committing it.
 
-The title, npm-package and closing slides use the current retro Agents Commander
-mark from `assets/logo.png`. Keep it aligned with the README and landing page;
-the authentic Callstack logo and visual identity remain unchanged. Asset
-provenance and generation prompts are in [the brand guide](../assets/BRAND.md).
+The title, npm-package, Agent Conf invitation and closing slides use the
+classic-blue Agents Commander pixel `>/<` mark from `assets/logo.png`: cyan
+chevrons and a yellow slash on an opaque blue background. Keep it aligned with
+the README and landing page; preserve its square aspect ratio and clear space.
+The matching promotional
+wordmark is `assets/logo-wordmark.png`. The authentic Callstack logo and visual
+identity remain unchanged. Asset provenance and generation prompts are in
+[the brand guide](../assets/BRAND.md).
 The closing sequence now includes the protocol-learning roadmap and an Agent
 Conf invitation, using the same inherited Callstack layouts and typography.
 

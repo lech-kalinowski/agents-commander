@@ -1,6 +1,6 @@
 <p align="center">
   <br>
-  <img width="160" src="assets/logo.png" alt="Agents Commander — retro terminal mark">
+  <img width="160" src="assets/logo.png" alt="Agents Commander — pixel &gt;/&lt; mark in cyan and yellow on classic blue">
   <br>
   <br>
 </p>

@@ -100,6 +100,8 @@ try {
     'dist/demo/demo-agent.js',
     'docs/codex-micro.md',
     'docs/datasets.md',
+    'assets/logo.png',
+    'assets/logo-wordmark.png',
     'THIRD_PARTY_NOTICES.md',
   ]) {
     assert.ok(packedPaths.has(requiredPath), `Packed package is missing ${requiredPath}`);

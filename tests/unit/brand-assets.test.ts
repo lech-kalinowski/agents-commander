@@ -19,4 +19,17 @@ describe('brand assets', () => {
     expect(pkg.files).toContain('assets/logo.png');
     expect(pkg.files).toContain('assets/logo-wordmark.png');
   });
+
+  it('uses the standalone local mark for the favicon, navigation and hero', () => {
+    const landing = readFileSync(new URL('../../landing-page/index.html', import.meta.url), 'utf8');
+    expect(landing).toMatch(/<link\s+rel="icon"\s+type="image\/png"\s+href="logo\.png"\s*>/u);
+    const marks = landing.match(/<img\b[^>]*\bsrc="logo\.png"[^>]*>/gu) ?? [];
+    expect(marks).toHaveLength(2);
+    for (const mark of marks) {
+      expect(mark).toContain('class="commander-mark"');
+      expect(mark).toMatch(/\balt="Agents Commander[^"]*"/u);
+    }
+    expect(landing).toMatch(/\.commander-mark\s*\{\s*image-rendering:\s*pixelated;/u);
+    expect(landing).not.toContain('../assets/logo.png');
+  });
 });

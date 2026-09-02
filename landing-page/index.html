@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agents Commander - Terminal-Native Multi-Agent AI Collaboration</title>
   <meta name="description" content="A terminal-native interface and text protocol for multi-agent AI collaboration. Run Claude, Codex, and Gemini side by side.">
-  <link rel="icon" href="logo.png">
+  <link rel="icon" type="image/png" href="logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
@@ -116,6 +116,10 @@
 
     .nav-logo span {
       color: var(--accent-cyan);
+    }
+
+    .commander-mark {
+      image-rendering: pixelated;
     }
 
     .nav-links {
@@ -1398,7 +1402,7 @@
   <!-- ==================== NAVIGATION ==================== -->
   <nav>
     <div class="container">
-      <div class="nav-logo"><img src="logo.png" alt="Agents Commander" style="height:28px;vertical-align:middle;margin-right:8px;border-radius:2px"> agents-commander</div>
+      <div class="nav-logo"><img class="commander-mark" src="logo.png" width="28" height="28" alt="Agents Commander pixel logo" style="vertical-align:middle;margin-right:8px"> agents-commander</div>
       <ul class="nav-links">
         <li><a href="#problem">Problem</a></li>
         <li><a href="#features">Features</a></li>
@@ -1415,7 +1419,7 @@
     <div class="container">
       <div class="hero-content">
         <div class="hero-badge">Source v0.1.5 &mdash; npm v0.1.4</div>
-        <img src="logo.png" alt="Agents Commander — two pixel prompts exchanging a command" style="display:block;margin:0 auto 32px;width:160px;border-radius:4px;animation:fadeInUp 0.7s ease-out 0.05s both">
+        <img class="commander-mark" src="logo.png" width="160" height="160" alt="Agents Commander — pixel &gt;/&lt; mark in cyan and yellow on classic blue" style="display:block;margin:0 auto 32px;animation:fadeInUp 0.7s ease-out 0.05s both">
         <h1>AGENTS<br>COMMANDER</h1>
         <p class="hero-tagline">A terminal-native interface for multi-agent AI collaboration</p>
         <p class="hero-subtext">Run Claude, Codex, and Gemini side by side. Make them talk to each other.</p>

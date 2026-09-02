@@ -33,14 +33,31 @@ the session shape below. Render and inspect every slide before committing it.
 | 8 | `SEND` / delivery ACK / `REPLY` sequence | 3 minutes |
 | 9 | Session identity and pending reply windows | 2 minutes |
 | 10 | Bounded routing guards and limitations | 2 minutes |
-| 11 | Scripted offline transport proof | 5 minutes |
-| 12 | Real-agent challenge/refinement branch | 7 minutes |
-| 13 | Genuine `F12` Activity capture | 1.5 minutes |
-| 14 | Human and optional hardware control | 1.5 minutes |
-| 15 | Failure and recovery decision tree | 2 minutes |
-| 16 | Public npm package and conference-source distinction | 1 minute |
-| 17 | Questions | 5 minutes |
+| 11 | Commercial landscape: BAND / Jam comparison | 2 minutes |
+| 12 | Scripted offline transport proof | 4 minutes |
+| 13 | Real-agent challenge/refinement branch | 6 minutes |
+| 14 | Genuine `F12` Activity capture | 1.5 minutes |
+| 15 | Human and optional hardware control | 1.5 minutes |
+| 16 | Failure and recovery decision tree | 2 minutes |
+| 17 | Public npm package and conference-source distinction | 1 minute |
+| 18 | Questions | 5 minutes |
 | | **Total** | **45 minutes** |
+
+## Commercial landscape
+
+Slide 11 compares Commander with [BAND / Jam](https://www.band.ai/use-cases/jam)
+using vendor documentation, not a hands-on benchmark. Jam is the closer coding
+workspace comparison; BAND is the broader commercial collaboration platform.
+[Jam's documented architecture](https://docs.band.ai/jam) combines Desktop,
+a bundled CLI, the `jamd` daemon, and a Claude Code plugin. Coding sessions
+remain local while coordination messages travel through BAND rooms.
+Commander instead routes observed terminal output into local target PTYs.
+
+[BAND platform pricing](https://www.band.ai/pricing), checked on **2026-09-02**,
+lists Free, Pro at **$17.99/month**, and Enterprise by quotation. Separate
+Jam-specific billing was not verified. Recheck pricing before presenting;
+do not portray BAND as paid-only, claim every BAND adapter works directly in
+Jam, or treat vendor security/reliability claims as independently tested.
 
 ## Public package versus conference source
 
@@ -137,7 +154,7 @@ reaches `REFINED_READY`, and `F12` shows delivered `SEND` and `REPLY` records on
 the same thread with the expected source and target. Allow 45 seconds per agent
 response. On timeout, authentication failure, provider failure, or routing
 error, open `F12` once, name the visible failure, stop waiting, and narrate the
-prepared challenge/refinement from slide 12. Do not debug credentials on stage.
+prepared challenge/refinement from slide 13. Do not debug credentials on stage.
 Never present the scripted offline roles as reasoning agents.
 
 For the optional experimental Codex Micro segment, allow the presentation
@@ -193,7 +210,7 @@ fallback, and rehearsal.
 Before replacing the committed PowerPoint:
 
 1. Render the exported `.pptx`, not only the editor preview.
-2. Inspect all 17 slides at presentation resolution.
+2. Inspect all 18 slides at presentation resolution.
 3. Check for slide-canvas overflow and unintended overlaps.
 4. Confirm the speaker notes still total 45 minutes and retain recovery cues.
 5. Run `npm run verify` so the commands and product claims in the deck remain

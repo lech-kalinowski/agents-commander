@@ -3,6 +3,8 @@ import type { AgentType } from '../agents/types.js';
 import type { LayoutManager } from '../screen/layout-manager.js';
 import type { AgentLifecycleEvent, AgentManager, RunningAgentInfo } from '../agents/agent-manager.js';
 import type { TerminalPanel } from '../panels/terminal-panel.js';
+import type { CaptureActor, CaptureInput, CaptureSink } from '../capture/types.js';
+import { NOOP_CAPTURE } from '../capture/recorder.js';
 import {
   bindTemplateProtocolCapability,
   buildProtocolInstructions,
@@ -53,6 +55,8 @@ interface QueuedTask {
   replyToMessageId?: string | null;
   claimedReplyRoute?: PendingReplyRoute | null;
   skipAck?: boolean;
+  /** Detached semantic correlation; never contains a live capability. */
+  capture?: CaptureContext;
   onComplete?: (result: { success: boolean; error?: string }) => void;
   started: boolean;
   cancelled: boolean;
@@ -61,6 +65,11 @@ interface QueuedTask {
   retainedBytes: number;
   queuePanelIndex: number;
 }
+
+type CaptureContext = Pick<CaptureInput,
+  'actor' | 'target' | 'verb' | 'emissionId' | 'messageId' | 'threadId'
+  | 'replyToMessageId' | 'inputKind' | 'capabilityRef' | 'targetAgent' | 'targetPanel'
+>;
 
 type EnqueueResult =
   | { accepted: true; task: QueuedTask }
@@ -187,12 +196,17 @@ export class Orchestrator {
   private protocolSessionState = new Map<string, ProtocolSessionState>();
   private ledger = new MessageLedger();
   private orchConfig: OrchestrationConfig;
+  private sealed = false;
+  private nextEmissionId = 1;
+  private drainWork = new Set<Promise<void>>();
+  private unknownInputReasons = new Map<string, Set<string>>();
 
   constructor(
     private layout: LayoutManager,
     private agentManager: AgentManager,
     private screen?: blessed.Widgets.Screen,
     config?: AppConfig,
+    private capture: CaptureSink = NOOP_CAPTURE,
   ) {
     this.orchConfig = {
       gridScanDelay: 200,
@@ -228,6 +242,8 @@ export class Orchestrator {
       this.handlePanelAgentMessage(tp, msg);
     };
     tp.onUserInput = () => {
+      const source = this.resolveSessionRefForPanel(tp.panelIndex);
+      if (source) this.captureUnknownInput(this.captureActor(source), 'manual_input', 'missing-manual-input');
       this.markPanelUserEngaged(tp.panelIndex);
     };
 
@@ -300,12 +316,14 @@ export class Orchestrator {
 
   private handleAgentLifecycle(event: AgentLifecycleEvent): void {
     if (event.previousSessionId) {
+      this.unknownInputReasons.delete(event.previousSessionId);
       this.ledger.closeSession(event.previousSessionId);
       this.protocolSessionState.delete(event.previousSessionId);
       this.protocolCapabilities.delete(event.previousSessionId);
     }
 
     if (event.type === 'exited') {
+      this.unknownInputReasons.delete(event.sessionId);
       this.ledger.closeSession(event.sessionId);
       this.protocolSessionState.delete(event.sessionId);
       this.protocolCapabilities.delete(event.sessionId);
@@ -512,6 +530,81 @@ export class Orchestrator {
 
   // ── Inter-agent message handling ──────────────────────────────
 
+  private captureActor(source: SessionRef | ManagedTaskTarget): CaptureActor {
+    return { sessionId: source.sessionId, panel: source.panelIndex + 1, agentType: source.agentType };
+  }
+
+  /** Recorder failures are deliberately isolated from every routing decision. */
+  private recordCapture(input: CaptureInput): void {
+    try {
+      if (this.capture.mode !== 'off') this.capture.record(input);
+    } catch {
+      this.markCaptureIncomplete('capture_hook_failed');
+    }
+  }
+
+  private markCaptureIncomplete(reason: string): void {
+    try { this.capture.markIncomplete(reason); } catch { /* Routing must continue. */ }
+  }
+
+  private capturedCapability(sessionId: string): string | undefined {
+    try { return this.capture.capabilityRef(sessionId); } catch {
+      this.markCaptureIncomplete('capture_hook_failed');
+      return undefined;
+    }
+  }
+
+  private captureUnknownInput(
+    actor: CaptureActor,
+    reason: string,
+    coverage: 'missing-manual-input' | 'truncated',
+  ): void {
+    if (this.capture.mode === 'off') return;
+    const reasons = this.unknownInputReasons.get(actor.sessionId) ?? new Set<string>();
+    if (reasons.has(reason)) return;
+    reasons.add(reason);
+    this.unknownInputReasons.set(actor.sessionId, reasons);
+    this.recordCapture({ type: 'input.unknown', actor, reason, coverage });
+  }
+
+  private captureFrame(
+    msg: CommanderMessage,
+    source: SessionRef,
+    emissionId?: string,
+    resolved: CaptureContext = {},
+  ): CaptureContext | undefined {
+    if (!emissionId) return undefined;
+    const context: CaptureContext = {
+      actor: this.captureActor(source), verb: msg.type, emissionId,
+      capabilityRef: this.capturedCapability(source.sessionId),
+      ...(msg.type === 'send' ? { targetAgent: msg.targetAgent, targetPanel: msg.targetPanel + 1 } : {}),
+      ...resolved,
+    };
+    this.recordCapture({ ...context, type: 'frame.accepted', content: msg.content, coverage: 'commander-visible' });
+    return context;
+  }
+
+  private captureRejectedFrame(msg: CommanderMessage, reason: string, emissionId?: string): void {
+    const source = this.resolveSessionRefForPanel(msg.sourcePanel);
+    this.recordCapture({
+      type: 'frame.rejected', ...(source ? { actor: this.captureActor(source) } : {}),
+      verb: msg.type, emissionId, reason,
+    });
+  }
+
+  private captureRoute(context: CaptureContext | undefined, type: 'route.queued' | 'route.delivered' | 'route.failed', reason?: string): void {
+    if (!context) return;
+    this.recordCapture({ ...context, type, outcome: type.slice('route.'.length), ...(reason ? { reason } : {}) });
+  }
+
+  private captureSubmittedInput(target: ManagedTaskTarget, content: string, context?: CaptureContext): void {
+    const recipient = this.captureActor(target);
+    this.recordCapture({ ...context, type: 'input.submitted',
+      actor: context?.actor ?? recipient, target: recipient, content,
+      inputKind: context?.inputKind ?? 'task', capabilityRef: this.capturedCapability(target.sessionId),
+      outcome: 'submitted', coverage: 'commander-visible' });
+  }
+
   /**
    * Production entry point for parsed terminal output. A parser may recognize
    * legacy markers for display compatibility, but routing remains inert until
@@ -519,6 +612,10 @@ export class Orchestrator {
    */
   private handlePanelAgentMessage(tp: TerminalPanel, msg: CommanderMessage): void {
     if (msg.sourcePanel !== tp.panelIndex || !this.isCurrentTarget(tp.panelIndex, tp)) return;
+    if (this.sealed) {
+      this.captureRejectedFrame(msg, 'shutdown');
+      return;
+    }
     const sessionId = this.agentManager.getAgentSessionId(tp.panelIndex);
     const expectedCapability = sessionId
       ? this.protocolCapabilities.get(sessionId)
@@ -532,27 +629,28 @@ export class Orchestrator {
       logger.warn(
         `Orchestrator: ignored unarmed or unauthorized protocol output from panel ${tp.panelIndex + 1}`,
       );
+      this.captureRejectedFrame(msg, 'unauthorized');
       return;
     }
-    this.handleAgentMessage(msg);
+    this.handleAgentMessage(msg, `emit_${this.nextEmissionId++}`);
   }
 
-  private handleAgentMessage(msg: CommanderMessage): void {
+  private handleAgentMessage(msg: CommanderMessage, emissionId?: string): void {
     switch (msg.type) {
       case 'send':
-        this.handleSend(msg);
+        this.handleSend(msg, emissionId);
         break;
       case 'reply':
-        this.handleReply(msg);
+        this.handleReply(msg, emissionId);
         break;
       case 'broadcast':
-        this.handleBroadcast(msg);
+        this.handleBroadcast(msg, emissionId);
         break;
       case 'status':
-        this.handleStatus(msg);
+        this.handleStatus(msg, emissionId);
         break;
       case 'query':
-        this.handleQuery(msg);
+        this.handleQuery(msg, emissionId);
         break;
       default:
         logger.warn(`Orchestrator: unknown message type: ${(msg as any).type}`);
@@ -561,14 +659,18 @@ export class Orchestrator {
 
   // ── SEND — direct message to a specific agent ──────────────────
 
-  private handleSend(msg: CommanderMessage): void {
+  private handleSend(msg: CommanderMessage, emissionId?: string): void {
     const source = this.resolveMessageSource(msg);
     if (!source) {
       logger.warn(`Orchestrator: SEND from panel ${msg.sourcePanel} but source session is unavailable`);
       return;
     }
-    if (this.shouldSuppressStartupMessage(source, msg)) return;
+    if (this.shouldSuppressStartupMessage(source, msg)) {
+      if (emissionId) this.captureRejectedFrame(msg, 'startup_suppressed', emissionId);
+      return;
+    }
     this.markSessionEngaged(source.sessionId);
+    const capture = this.captureFrame(msg, source, emissionId);
 
     const targetAgentInfo = this.findRunningAgent(msg.targetPanel);
     const targetExpectation = this.captureTaskTarget(msg.targetPanel);
@@ -608,12 +710,15 @@ export class Orchestrator {
       kind: 'send',
       messageId: record.messageId,
       threadId: record.threadId,
-      });
+      capture: capture ? { ...capture, messageId: record.messageId, threadId: record.threadId,
+        ...(targetAgentInfo ? { target: { sessionId: targetAgentInfo.sessionId, panel: msg.targetPanel + 1, agentType: targetAgentInfo.type } } : {}),
+        inputKind: 'routed' } : undefined,
+    });
   }
 
   // ── REPLY — continue the latest open thread for this session ──
 
-  private handleReply(msg: CommanderMessage): void {
+  private handleReply(msg: CommanderMessage, emissionId?: string): void {
     const source = this.resolveMessageSource(msg);
     if (!source) {
       logger.warn(`Orchestrator: REPLY from panel ${msg.sourcePanel} but source session is unavailable`);
@@ -623,12 +728,18 @@ export class Orchestrator {
 
     const replyRoute = this.ledger.claimReplyWindow(source.sessionId);
     if (!replyRoute) {
+      const capture = this.captureFrame(msg, source, emissionId);
+      this.captureRoute(capture, 'route.failed', 'no_reply_window');
       logger.warn(`Orchestrator: REPLY from panel ${msg.sourcePanel} but no open reply thread — dropped`);
       return;
     }
 
     const returnPanel = this.agentManager.findPanelBySessionId(replyRoute.returnToSessionId);
     if (returnPanel === null) {
+      const capture = this.captureFrame(msg, source, emissionId, {
+        threadId: replyRoute.threadId, replyToMessageId: replyRoute.replyToMessageId,
+      });
+      this.captureRoute(capture, 'route.failed', 'reply_target_gone');
       logger.warn(
         `Orchestrator: REPLY from panel ${msg.sourcePanel} but return session ${replyRoute.returnToSessionId} is gone`,
       );
@@ -639,6 +750,10 @@ export class Orchestrator {
     const targetExpectation = this.captureTaskTarget(returnPanel);
     const targetAgentType = targetInfo?.type ?? replyRoute.returnToAgentType;
     const targetAgentName = targetInfo?.name ?? replyRoute.returnToAgentName;
+    const capture = this.captureFrame(msg, source, emissionId, {
+      target: { sessionId: replyRoute.returnToSessionId, panel: returnPanel + 1, agentType: targetAgentType },
+      threadId: replyRoute.threadId, replyToMessageId: replyRoute.replyToMessageId,
+    });
 
     const record = this.ledger.createMessage({
       kind: 'reply',
@@ -679,19 +794,24 @@ export class Orchestrator {
       threadId: record.threadId,
       replyToMessageId: record.replyToMessageId,
       claimedReplyRoute: replyRoute,
+      capture: capture ? { ...capture, messageId: record.messageId, inputKind: 'routed' } : undefined,
     });
   }
 
   // ── BROADCAST — send to all other connected agents ─────────────
 
-  private handleBroadcast(msg: CommanderMessage): void {
+  private handleBroadcast(msg: CommanderMessage, emissionId?: string): void {
     const source = this.resolveMessageSource(msg);
     if (!source) {
       logger.warn(`Orchestrator: BROADCAST from panel ${msg.sourcePanel} but source session is unavailable`);
       return;
     }
-    if (this.shouldSuppressStartupMessage(source, msg)) return;
+    if (this.shouldSuppressStartupMessage(source, msg)) {
+      if (emissionId) this.captureRejectedFrame(msg, 'startup_suppressed', emissionId);
+      return;
+    }
     this.markSessionEngaged(source.sessionId);
+    const capture = this.captureFrame(msg, source, emissionId);
 
     const targets = [...this.connectedPanels].filter((p) => p !== msg.sourcePanel);
     logger.info(
@@ -700,6 +820,7 @@ export class Orchestrator {
     );
 
     if (targets.length === 0) {
+      this.captureRoute(capture, 'route.failed', 'no_broadcast_targets');
       logger.warn(`Orchestrator: BROADCAST from panel ${msg.sourcePanel} but no other agents — dropped`);
       return;
     }
@@ -743,6 +864,9 @@ export class Orchestrator {
         messageId: record.messageId,
         threadId: record.threadId,
         skipAck: true,
+        capture: capture ? { ...capture, messageId: record.messageId, threadId: record.threadId,
+          ...(targetInfo ? { target: { sessionId: targetInfo.sessionId, panel: panelIndex + 1, agentType } } : {}),
+          targetAgent: agentType, targetPanel: panelIndex + 1, inputKind: 'routed' } : undefined,
       });
 
       const targetLabel = `${targetInfo?.name ?? agentType} in Panel ${panelIndex + 1}`;
@@ -761,20 +885,26 @@ export class Orchestrator {
           + `queued=${queuedFor.length} rejected=${rejectedFor.length} `
           + `targets=${queuedFor.join(', ') || 'none'} rejectedTargets=${rejectedFor.join(', ')} `
           + `error="${firstRejection ?? 'Routing queue capacity exceeded'}"`;
-      this.sendInfoToPanel(msg.sourcePanel, ack);
+      this.sendInfoToPanel(msg.sourcePanel, ack, capture);
+    } else {
+      this.captureRoute(capture, 'route.failed', 'no_broadcast_targets');
     }
   }
 
   // ── STATUS — show progress in Commander UI ─────────────────────
 
-  private handleStatus(msg: CommanderMessage): void {
+  private handleStatus(msg: CommanderMessage, emissionId?: string): void {
     const source = this.resolveMessageSource(msg);
     if (!source) {
       logger.warn(`Orchestrator: STATUS from panel ${msg.sourcePanel} but source session is unavailable`);
       return;
     }
-    if (this.shouldSuppressStartupMessage(source, msg)) return;
+    if (this.shouldSuppressStartupMessage(source, msg)) {
+      if (emissionId) this.captureRejectedFrame(msg, 'startup_suppressed', emissionId);
+      return;
+    }
     this.markSessionEngaged(source.sessionId);
+    const capture = this.captureFrame(msg, source, emissionId);
 
     const statusText = `${msg.sourceAgent} [P${msg.sourcePanel + 1}]: ${msg.content}`;
     logger.info(
@@ -790,18 +920,23 @@ export class Orchestrator {
     this.sendInfoToPanel(
       msg.sourcePanel,
       `[Commander ACK] kind=status status=accepted text="${ackSummary}"`,
+      capture,
     );
   }
 
   // ── QUERY — respond with environment info ──────────────────────
 
-  private handleQuery(msg: CommanderMessage): void {
+  private handleQuery(msg: CommanderMessage, emissionId?: string): void {
     const source = this.resolveMessageSource(msg);
     if (!source) {
       logger.warn(`Orchestrator: QUERY from panel ${msg.sourcePanel} but source session is unavailable`);
       return;
     }
-    if (this.shouldSuppressStartupMessage(source, msg)) return;
+    if (this.shouldSuppressStartupMessage(source, msg)) {
+      if (emissionId) this.captureRejectedFrame(msg, 'startup_suppressed', emissionId);
+      return;
+    }
+    const capture = this.captureFrame(msg, source, emissionId);
 
     const query = msg.content.toLowerCase().trim();
     logger.info(
@@ -854,7 +989,7 @@ export class Orchestrator {
       response = `[Commander] Unknown query "${query}". Available queries: agents, panels, status, help, ping`;
     }
 
-    this.sendInfoToPanel(msg.sourcePanel, response);
+    this.sendInfoToPanel(msg.sourcePanel, response, capture);
     this.markSessionEngaged(source.sessionId);
   }
 
@@ -865,33 +1000,74 @@ export class Orchestrator {
     target: ManagedTaskTarget,
     operation: () => Promise<T> | T,
   ): Promise<T> {
-    const previous = this.inputLaneTails.get(target.sessionId);
-    if (!previous) {
-      let releaseLane!: () => void;
-      const tail = new Promise<void>((resolve) => {
-        releaseLane = resolve;
-      });
+    const releaseDrainWork = this.trackDrainWork();
+    try {
+      const previous = this.inputLaneTails.get(target.sessionId);
+      if (!previous) {
+        let releaseLane!: () => void;
+        const tail = new Promise<void>((resolve) => {
+          releaseLane = resolve;
+        });
+        this.inputLaneTails.set(target.sessionId, tail);
+        try {
+          return await operation();
+        } finally {
+          releaseLane();
+          if (this.inputLaneTails.get(target.sessionId) === tail) {
+            this.inputLaneTails.delete(target.sessionId);
+          }
+        }
+      }
+
+      const run = previous.then(operation, operation);
+      const tail = run.then(() => undefined, () => undefined);
       this.inputLaneTails.set(target.sessionId, tail);
       try {
-        return await operation();
+        return await run;
       } finally {
-        releaseLane();
         if (this.inputLaneTails.get(target.sessionId) === tail) {
           this.inputLaneTails.delete(target.sessionId);
         }
       }
-    }
-
-    const run = previous.then(operation, operation);
-    const tail = run.then(() => undefined, () => undefined);
-    this.inputLaneTails.set(target.sessionId, tail);
-    try {
-      return await run;
     } finally {
-      if (this.inputLaneTails.get(target.sessionId) === tail) {
-        this.inputLaneTails.delete(target.sessionId);
+      releaseDrainWork();
+    }
+  }
+
+  private trackDrainWork(): () => void {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    this.drainWork.add(pending);
+    return () => { this.drainWork.delete(pending); finish(); };
+  }
+
+  /** Seal admission, cancel queued work, and settle active input lanes before capture closes. */
+  async sealAndDrain(timeoutMs = 2000): Promise<boolean> {
+    this.sealed = true;
+    for (const queue of this.panelQueues.values()) {
+      this.failPendingTasks(queue, 'Orchestration is shutting down');
+      queue.detachedReason = 'Orchestration is shutting down';
+    }
+    const timeout = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : 2000;
+    const deadline = Date.now() + timeout;
+    while (this.drainWork.size || this.inputLaneTails.size) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        this.markCaptureIncomplete('route_drain_timeout');
+        return false;
+      }
+      let timer!: ReturnType<typeof setTimeout>;
+      const drained = await Promise.race([
+        Promise.all([...this.drainWork, ...this.inputLaneTails.values()]).then(() => true),
+        new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), remaining); }),
+      ]);
+      clearTimeout(timer);
+      if (!drained) {
+        this.markCaptureIncomplete('route_drain_timeout');
+        return false;
       }
     }
+    return true;
   }
 
   /** Input-lane hook for trusted Commander controls and future approvals. */
@@ -900,16 +1076,25 @@ export class Orchestrator {
     text: string,
     submit = false,
   ): Promise<boolean> {
+    if (this.sealed) return false;
     const normalized = this.normalizeProgrammaticPayload(text);
     if (!normalized.success) return false;
     const agentType = this.agentManager.getAgentType(tp.panelIndex);
     if (!agentType) return false;
     const target = this.captureManagedTaskTarget(tp.panelIndex, tp, agentType);
     if (!target) return false;
-    return this.withSessionInputLane(target, () => (
-      this.isManagedTaskTargetCurrent(target)
-      && tp.sendInput(`${normalized.text}${submit ? '\r' : ''}`)
-    ));
+    return this.withSessionInputLane(target, () => {
+      if (!this.isManagedTaskTargetCurrent(target)) return false;
+      const sent = tp.sendInput(`${normalized.text}${submit ? '\r' : ''}`);
+      if (sent && submit) {
+        this.recordCapture({ type: 'input.submitted', actor: this.captureActor(target),
+          content: normalized.text, inputKind: target.profileId === 'internal' ? 'demo' : 'controller',
+          capabilityRef: this.capturedCapability(target.sessionId), outcome: 'submitted', coverage: 'commander-visible' });
+      } else if (sent) {
+        this.captureUnknownInput(this.captureActor(target), 'unsubmitted_controller_input', 'missing-manual-input');
+      }
+      return sent;
+    });
   }
 
   /**
@@ -922,7 +1107,8 @@ export class Orchestrator {
     expected: GuardedCodexDecision,
   ): Promise<boolean> {
     if (
-      !tp.isRunning
+      this.sealed
+      || !tp.isRunning
       || tp.sessionGeneration !== expected.sessionGeneration
       || !tp.inputSynchronized
       || tp.inputGeneration !== expected.inputGeneration
@@ -941,7 +1127,9 @@ export class Orchestrator {
       ) return false;
 
       const detected = detectCodexDecision(tp.getVisibleGridLines(), expected.action);
-      return detected?.fingerprint === expected.fingerprint && tp.sendInput('\r');
+      const sent = detected?.fingerprint === expected.fingerprint && tp.sendInput('\r');
+      if (sent) this.captureUnknownInput(this.captureActor(target), 'guarded_decision_input', 'missing-manual-input');
+      return sent;
     });
   }
 
@@ -957,11 +1145,12 @@ export class Orchestrator {
     messageId?: string,
     threadId?: string,
     error?: string,
+    capture?: CaptureContext,
   ): void {
     const ack = success
       ? `[Commander ACK] status=delivered msg=${messageId ?? 'n/a'} thread=${threadId ?? 'n/a'} target="${targetAgent}" panel=${targetPanel + 1}`
       : `[Commander ACK] status=failed msg=${messageId ?? 'n/a'} thread=${threadId ?? 'n/a'} target="${targetAgent}" panel=${targetPanel + 1} error="${error ?? 'unknown error'}"`;
-    this.sendInfoToPanel(sourcePanelIndex, ack);
+    this.sendInfoToPanel(sourcePanelIndex, ack, capture);
   }
 
   /**
@@ -971,24 +1160,35 @@ export class Orchestrator {
    * "bypass permissions" prompt.  Multi-line text is flattened.
    * Other agents: bracketed paste for atomic multi-line delivery.
    */
-  private sendInfoToPanel(panelIndex: number, text: string): void {
+  private sendInfoToPanel(panelIndex: number, text: string, capture?: CaptureContext): void {
+    if (this.sealed) return;
+    const failed = (reason: string, actor = capture?.actor) => {
+      this.recordCapture({ ...capture, type: 'controller.feedback', actor, target: undefined,
+        inputKind: 'controller', outcome: 'failed', reason });
+    };
     const normalized = this.normalizeProgrammaticPayload(text);
     if (!normalized.success) {
+      failed('unsafe_feedback');
       logger.warn(`Orchestrator: refused unsafe info payload for panel ${panelIndex + 1}`);
       return;
     }
     text = normalized.text;
     const tp = this.layout.getTerminalPanel(panelIndex);
-    if (!tp?.isRunning) return;
+    if (!tp?.isRunning) { failed('feedback_target_unavailable'); return; }
 
     const agentType = this.agentManager.getAgentType(panelIndex);
-    if (!agentType) return;
+    if (!agentType) { failed('feedback_target_unavailable'); return; }
     const target = this.captureManagedTaskTarget(panelIndex, tp, agentType);
-    if (!target) return;
+    if (!target) { failed('feedback_target_unavailable'); return; }
 
     void this.withSessionInputLane(target, () => {
-      if (!this.isManagedTaskTargetCurrent(target)) return false;
+      if (!this.isManagedTaskTargetCurrent(target)) {
+        failed('feedback_session_changed', this.captureActor(target));
+        return false;
+      }
       let sent: boolean;
+      let submittedText = text;
+      let truncated = false;
       if (agentType === 'claude') {
         // Type directly — no bracketed paste = no bypass permissions prompt.
         // Flatten newlines so \n doesn't get misinterpreted by Ink.
@@ -998,17 +1198,26 @@ export class Orchestrator {
         const flat = text.replace(/\n/g, ' ');
         const maxCols = tp.cols ?? 120;
         const trimmed = flat.length > maxCols - 2 ? flat.slice(0, maxCols - 5) + '...' : flat;
+        submittedText = trimmed;
+        truncated = trimmed !== flat;
         sent = tp.sendInput(trimmed + '\r');
       } else {
         sent = tp.sendInput(`\x1b[200~${text}\x1b[201~\r`);
       }
       if (sent) {
+        this.recordCapture({ ...capture, type: 'controller.feedback', actor: this.captureActor(target),
+          target: undefined, content: submittedText, inputKind: 'controller', outcome: 'submitted',
+          coverage: truncated ? 'truncated' : 'commander-visible' });
+        if (truncated) this.captureUnknownInput(this.captureActor(target), 'feedback_truncated', 'truncated');
         logger.info(
           `Orchestrator: info → panel ${panelIndex} (${Buffer.byteLength(text, 'utf8')} payload bytes)`,
         );
+      } else {
+        failed('feedback_input_rejected', this.captureActor(target));
       }
       return sent;
     }).catch((error) => {
+      failed('feedback_delivery_failed', this.captureActor(target));
       logger.error(`Orchestrator: failed to send info to panel ${panelIndex}`, error);
     });
   }
@@ -1025,6 +1234,7 @@ export class Orchestrator {
    * armed exclusively by injectProtocol, which is invoked from Ctrl+P.
    */
   armInternalProtocol(tp: TerminalPanel, capability: string): boolean {
+    if (this.sealed) return false;
     if (!isProtocolCapability(capability)) return false;
     const agentType = this.agentManager.getAgentType(tp.panelIndex);
     if (!agentType) return false;
@@ -1047,10 +1257,20 @@ export class Orchestrator {
       lastUserInputAt: 0,
     });
     this.injectionGrace.delete(target.panelIndex);
+    let capabilityRef: string | undefined;
+    try {
+      if (this.capture.mode !== 'off') capabilityRef = this.capture.bindCapability(target.sessionId, capability);
+    } catch {
+      this.markCaptureIncomplete('capture_hook_failed');
+    }
+    this.recordCapture({ type: 'protocol.armed', actor: this.captureActor(target), capabilityRef,
+      inputKind: target.profileId === 'internal' ? 'demo' : 'protocol', outcome: 'armed' });
   }
 
   private disarmProtocolTarget(target: ManagedTaskTarget, capability: string): void {
     if (this.protocolCapabilities.get(target.sessionId) !== capability) return;
+    this.recordCapture({ type: 'protocol.armed', actor: this.captureActor(target),
+      capabilityRef: this.capturedCapability(target.sessionId), outcome: 'disarmed', reason: 'injection_failed' });
     this.protocolCapabilities.delete(target.sessionId);
     this.protocolSessionState.delete(target.sessionId);
     const currentSessionId = this.agentManager.getAgentSessionId(target.panelIndex);
@@ -1068,7 +1288,7 @@ export class Orchestrator {
    * Call this after an agent has initialised.
    */
   async injectProtocol(tp: TerminalPanel): Promise<boolean> {
-    if (!tp.isRunning) return false;
+    if (this.sealed || !tp.isRunning) return false;
 
     const panelIndex = tp.panelIndex;
     const myAgent = this.agentManager.getAgentType(panelIndex);
@@ -1107,9 +1327,14 @@ export class Orchestrator {
         ) {
           throw new Error('Terminal stopped accepting protocol input');
         }
-        if (await this.submitInput(tp, targetIsCurrent) === false || !targetIsCurrent()) {
+        const submitted = await this.submitInput(tp, targetIsCurrent);
+        if (submitted === false) {
           throw new Error('Terminal stopped accepting protocol input');
         }
+        this.recordCapture({ type: 'input.submitted', actor: this.captureActor(targetGeneration),
+          content: instructions, inputKind: 'protocol', capabilityRef: this.capturedCapability(targetGeneration.sessionId),
+          outcome: 'submitted', coverage: 'commander-visible' });
+        if (!targetIsCurrent()) throw new Error('Managed session changed during protocol injection');
         await this.delay(this.orchConfig.gridScanDelay);
         if (!targetIsCurrent()) throw new Error('Managed session changed during protocol injection');
         tp.snapshotVisibleProtocolAsProcessed();
@@ -1117,6 +1342,7 @@ export class Orchestrator {
       logger.info(`Orchestrator: injected protocol instructions to panel ${panelIndex}`);
       return true;
     } catch (err) {
+      this.captureUnknownInput(this.captureActor(targetGeneration), 'protocol_injection_failed', 'truncated');
       this.disarmProtocolTarget(targetGeneration, capability);
       logger.error(`Orchestrator: protocol injection failed for panel ${panelIndex}`, err);
       return false;
@@ -1153,6 +1379,7 @@ export class Orchestrator {
 
     const queueState = this.getOrCreateQueue(panelIndex);
     queueState.tasks.push(queuedTask);
+    this.captureRoute(task.capture, 'route.queued');
     logger.info(`Orchestrator: queued task for panel ${panelIndex} (queue depth: ${queueState.tasks.length})`);
 
     if (!queueState.processing) {
@@ -1163,6 +1390,7 @@ export class Orchestrator {
   }
 
   private getQueueAdmissionError(panelIndex: number, taskBytes: number): string | null {
+    if (this.sealed) return 'Orchestration is shutting down';
     const panelTaskCount = this.retainedTaskCountByPanel.get(panelIndex) ?? 0;
     if (panelTaskCount >= ROUTED_QUEUE_MAX_TASKS_PER_PANEL) {
       return `Panel ${panelIndex + 1} routing queue is full (${ROUTED_QUEUE_MAX_TASKS_PER_PANEL} retained tasks)`;
@@ -1191,6 +1419,7 @@ export class Orchestrator {
   ): void {
     if (task.messageId) this.ledger.markFailed(task.messageId, error);
     if (task.claimedReplyRoute) this.restoreReplyWindowIfActive(task.claimedReplyRoute);
+    this.captureRoute(task.capture, 'route.failed', this.sealed ? 'shutdown' : 'queue_rejected');
 
     try {
       task.onComplete?.({ success: false, error });
@@ -1208,6 +1437,7 @@ export class Orchestrator {
         task.messageId,
         task.threadId,
         error,
+        task.capture,
       );
     }
     logger.warn(`Orchestrator: rejected task for panel ${panelIndex}: ${error}`);
@@ -1248,6 +1478,7 @@ export class Orchestrator {
 
   private async processQueue(queueState: PanelQueueState): Promise<void> {
     if (queueState.processing) return;
+    const releaseDrainWork = this.trackDrainWork();
     queueState.processing = true;
     this.syncPanelProcessing();
 
@@ -1282,6 +1513,7 @@ export class Orchestrator {
             task.allowTargetMutation,
             task.bindTemplateCapability,
             task.targetExpectation,
+            task.capture,
           );
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
@@ -1341,6 +1573,10 @@ export class Orchestrator {
         } else if (!result.success && task.claimedReplyRoute) {
           this.restoreReplyWindowIfActive(task.claimedReplyRoute);
         }
+        this.captureRoute(task.capture ? {
+          ...task.capture, ...(deliveredTarget ? { target: this.captureActor(deliveredTarget) } : {}),
+        } : undefined, result.success ? 'route.delivered' : 'route.failed',
+        result.success ? undefined : this.sealed ? 'shutdown' : 'delivery_failed');
 
         if (task.source && this.isSourceSessionStillActive(task.source) && !task.skipAck) {
           const targetInfo = this.findRunningAgent(effectivePanelIndex);
@@ -1354,6 +1590,7 @@ export class Orchestrator {
             task.messageId,
             task.threadId,
             result.error,
+            task.capture,
           );
 
           if (!result.success) {
@@ -1373,6 +1610,7 @@ export class Orchestrator {
         this.panelQueues.delete(panelIndex);
       }
       this.syncPanelProcessing();
+      releaseDrainWork();
     }
   }
 
@@ -1454,6 +1692,7 @@ export class Orchestrator {
       profileId,
       false,
       targetExpectation,
+      'task',
     );
   }
 
@@ -1472,6 +1711,7 @@ export class Orchestrator {
       profileId,
       prepared.bindProtocolCapability,
       targetExpectation,
+      'template',
     );
   }
 
@@ -1482,6 +1722,7 @@ export class Orchestrator {
     profileId: string | undefined,
     bindTemplateCapability: boolean,
     targetExpectation: TaskTargetExpectation | undefined,
+    inputKind: 'task' | 'template',
   ): Promise<{ success: boolean; error?: string }> {
     return new Promise((resolve) => {
       let settled = false;
@@ -1503,6 +1744,7 @@ export class Orchestrator {
           ? { bindTemplateCapability: true, allowTargetMutation: false }
           : {}),
         ...(targetExpectation ? { targetExpectation } : {}),
+        capture: { inputKind, targetAgent: agentType, targetPanel: panelIndex + 1 },
         onComplete: (result) => {
           if (settled) return;
           settled = true;
@@ -1525,7 +1767,9 @@ export class Orchestrator {
     allowTargetMutation = true,
     bindTemplateCapability = false,
     targetExpectation?: TaskTargetExpectation,
+    capture?: CaptureContext,
   ): Promise<{ success: boolean; error?: string }> {
+    if (this.sealed) return { success: false, error: 'Orchestration is shutting down' };
     const normalizedTask = this.normalizeProgrammaticPayload(task);
     if (!normalizedTask.success) {
       return { success: false, error: normalizedTask.error };
@@ -1663,57 +1907,73 @@ export class Orchestrator {
     //    Other agents / manual sends: bracketed paste preserves formatting.
     const currentAgentType = targetGeneration.agentType;
     const targetIsCurrent = () => this.isManagedTaskTargetCurrent(targetGeneration);
-    const deliveryFailure = await this.withSessionInputLane<{
-      success: false;
-      error: string;
-    } | null>(targetGeneration, async () => {
-      if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
-      if (bindTemplateCapability) {
-        const capability = this.protocolCapabilities.get(targetGeneration.sessionId);
-        if (
-          !capability
-          || !this.protocolInjected.has(panelIndex)
-          || !targetIsCurrent()
-        ) {
-          return {
-            success: false,
-            error: `Collaboration template requires the current agent in Panel ${panelIndex + 1} to be armed with Ctrl+P`,
-          };
-        }
-        task = bindTemplateProtocolCapability(task, capability);
-      }
-      tp.reserveProtocolTextForEcho(task);
-      if (currentAgentType === 'claude' && this.shouldDirectTypeToClaude(task, directType)) {
-        const flat = task.replace(/\n/g, ' ');
-        const sent = await this.sendTextChunked(tp, flat, targetIsCurrent);
-        if (sent === false || !targetIsCurrent()) {
-          return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
-        }
-        await this.delay(CLAUDE_DIRECT_SUBMIT_DELAY_MS);
-        if (!targetIsCurrent() || tp.sendInput('\r') === false) {
-          return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
-        }
+    let inputAttempted = false;
+    let inputSubmitted = false;
+    let deliveryFailure: { success: false; error: string } | null;
+    try {
+      deliveryFailure = await this.withSessionInputLane<{
+        success: false;
+        error: string;
+      } | null>(targetGeneration, async () => {
         if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
-        tp.showCommanderActivity('Commander task received');
-        logger.info(`Orchestrator: typed short task directly to Claude on panel ${panelIndex} (${task.length} chars)`);
-      } else {
-        const sent = await this.sendTextToAgent(tp, task, targetIsCurrent);
-        if (sent === false || !targetIsCurrent()) {
-          return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+        if (bindTemplateCapability) {
+          const capability = this.protocolCapabilities.get(targetGeneration.sessionId);
+          if (
+            !capability
+            || !this.protocolInjected.has(panelIndex)
+            || !targetIsCurrent()
+          ) {
+            return {
+              success: false,
+              error: `Collaboration template requires the current agent in Panel ${panelIndex + 1} to be armed with Ctrl+P`,
+            };
+          }
+          task = bindTemplateProtocolCapability(task, capability);
         }
-        const submitted = await this.submitInput(tp, targetIsCurrent);
-        if (submitted === false || !targetIsCurrent()) {
-          return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+        tp.reserveProtocolTextForEcho(task);
+        inputAttempted = true;
+        if (currentAgentType === 'claude' && this.shouldDirectTypeToClaude(task, directType)) {
+          const flat = task.replace(/\n/g, ' ');
+          const sent = await this.sendTextChunked(tp, flat, targetIsCurrent);
+          if (sent === false || !targetIsCurrent()) {
+            return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+          }
+          await this.delay(CLAUDE_DIRECT_SUBMIT_DELAY_MS);
+          if (!targetIsCurrent() || tp.sendInput('\r') === false) {
+            return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+          }
+          inputSubmitted = true;
+          this.captureSubmittedInput(targetGeneration, flat, capture);
+          if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
+          tp.showCommanderActivity('Commander task received');
+          logger.info(`Orchestrator: typed short task directly to Claude on panel ${panelIndex} (${task.length} chars)`);
+        } else {
+          const sent = await this.sendTextToAgent(tp, task, targetIsCurrent);
+          if (sent === false || !targetIsCurrent()) {
+            return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+          }
+          const submitted = await this.submitInput(tp, targetIsCurrent);
+          if (submitted !== false) {
+            inputSubmitted = true;
+            this.captureSubmittedInput(targetGeneration, task, capture);
+          }
+          if (submitted === false || !targetIsCurrent()) {
+            return this.targetDeliveryFailure(panelIndex, tp, targetGeneration);
+          }
+          if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
+          tp.showCommanderActivity('Commander task received');
+          logger.info(
+            `Orchestrator: sent task to ${agentType} on panel ${panelIndex} (${task.length} chars)` +
+            `${currentAgentType === 'claude' && directType ? ' using paste fallback' : ''}`,
+          );
         }
-        if (!targetIsCurrent()) return this.managedTargetUnavailable(panelIndex);
-        tp.showCommanderActivity('Commander task received');
-        logger.info(
-          `Orchestrator: sent task to ${agentType} on panel ${panelIndex} (${task.length} chars)` +
-          `${currentAgentType === 'claude' && directType ? ' using paste fallback' : ''}`,
-        );
+        return null;
+      });
+    } finally {
+      if (inputAttempted && !inputSubmitted) {
+        this.captureUnknownInput(this.captureActor(targetGeneration), 'partial_programmatic_input', 'truncated');
       }
-      return null;
-    });
+    }
     if (deliveryFailure) return deliveryFailure;
 
     // 6. Focus the target panel
@@ -1855,6 +2115,7 @@ export class Orchestrator {
   }
 
   private isManagedTaskTargetCurrent(target: ManagedTaskTarget): boolean {
+    if (this.sealed) return false;
     if (!this.isCurrentTarget(target.panelIndex, target.terminal)) return false;
     const profileId = typeof this.agentManager.getAgentProfileId === 'function'
       ? this.agentManager.getAgentProfileId(target.panelIndex)
@@ -1946,6 +2207,7 @@ export class Orchestrator {
         this.ledger.markFailed(task.messageId, 'Task was cancelled before delivery', 'timed_out');
       }
       if (task.claimedReplyRoute) this.restoreReplyWindowIfActive(task.claimedReplyRoute);
+      this.captureRoute(task.capture, 'route.failed', 'queue_timeout');
       return true;
     }
     return false;
@@ -1961,6 +2223,7 @@ export class Orchestrator {
         this.ledger.markFailed(task.messageId, error, 'dropped');
       }
       if (task.claimedReplyRoute) this.restoreReplyWindowIfActive(task.claimedReplyRoute);
+      this.captureRoute(task.capture, 'route.failed', this.sealed ? 'shutdown' : 'queue_cancelled');
       try {
         task.onComplete?.({ success: false, error });
       } catch (err) {
@@ -1978,6 +2241,7 @@ export class Orchestrator {
         if (task.messageId) {
           this.ledger.markFailed(task.messageId, `Source panel ${panelIndex + 1} is no longer available`, 'dropped');
         }
+        this.captureRoute(task.capture, 'route.failed', 'source_disconnected');
         try {
           task.onComplete?.({ success: false, error: `Source panel ${panelIndex + 1} is no longer available` });
         } catch (err) {

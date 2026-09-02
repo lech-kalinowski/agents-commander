@@ -1883,7 +1883,7 @@
         </div>
 
         <p class="install-note">Source requires Node.js 22+, Python 3, and macOS, Linux, or WSL2; npm v0.1.4 advertises Node.js 18+. <a href="https://github.com/lech-kalinowski/agents-commander/tree/codex/review-and-release-0.1.5#current-source-version">Get the current source and build instructions</a>. A source push does not publish npm.</p>
-        <p class="install-note">F12 Activity is bounded in-memory SEND/REPLY/BROADCAST history; STATUS and QUERY are live-only. Ctrl+L opens a rotating diagnostic log, not a full transcript. Durable session capture, dataset export and replay are not implemented; see the <a href="https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/session-capture-plan.md">proposed capture and training-data plan</a>.</p>
+        <p class="install-note">F12 Activity is bounded in-memory SEND/REPLY/BROADCAST history; STATUS and QUERY are not in Activity. Ctrl+L opens a rotating diagnostic log, not a full transcript. Source builds support opt-in semantic recording with <code>--capture protocol --capture-project project-01</code> and reviewed LoRA/SFT dataset export. Recording is off by default; full transcripts, replay and model training are not implemented. Read the <a href="https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/datasets.md">dataset guide</a> and <a href="https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/session-capture-plan.md">broader proposed roadmap</a>.</p>
       </div>
     </div>
   </section>

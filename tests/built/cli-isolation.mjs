@@ -99,6 +99,30 @@ try {
   assert.match(help.stdout, /--codex-micro(?:\s|$)/mu);
   assert.match(help.stdout, /--no-codex-micro\b/u);
   assert.match(help.stdout, /--codex-micro-test\b/u);
+  assert.match(help.stdout, /--capture <mode>/u);
+
+  for (const args of [
+    ['dataset', '--help'], ['dataset', 'inspect', '--help'],
+    ['dataset', 'prepare', '--help'], ['dataset', 'export', '--help'],
+    ['dataset', 'validate', '--help'],
+  ]) {
+    const result = runLightweightCli(args);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /dataset/u);
+  }
+  const missingCapture = runLightweightCli(['dataset', 'inspect', path.join(fixtureRoot, 'missing-capture')]);
+  assert.equal(missingCapture.status, 1);
+  assert.match(missingCapture.stderr, /Dataset command failed/u);
+  const invalidCapture = runLightweightCli(['--capture', 'transcript']);
+  assert.equal(invalidCapture.status, 1);
+  assert.match(invalidCapture.stderr, /Invalid capture mode/u);
+  const missingConsent = runLightweightCli(['--capture', 'protocol']);
+  assert.equal(missingConsent.status, 1);
+  assert.match(missingConsent.stderr, /opaque project-family ID/u);
+  const doctorCapture = runLightweightCli(['--doctor', '--capture', 'protocol', '--capture-project', 'p1']);
+  assert.equal(doctorCapture.status, 1);
+  assert.match(doctorCapture.stderr, /does not record sessions/u);
+  await assert.rejects(fs.access(path.join(fixtureRoot, 'home', '.agents-commander', 'captures')));
 
   const version = runLightweightCli(['--version']);
   assert.equal(version.status, 0, version.stderr);
@@ -128,6 +152,10 @@ try {
   assert.equal(uiLaunch.error, undefined, `UI isolation control failed: ${uiLaunch.error?.message}`);
   assert.equal(uiLaunch.status, 1, 'The poisoned UI dependency should stop an interactive launch');
   assert.match(`${uiLaunch.stdout}\n${uiLaunch.stderr}`, new RegExp(poisonMarker));
+  await fs.mkdir(path.join(fixtureRoot, 'workspace', 'dataset'));
+  const namedWorkspace = spawnCli(['./dataset']);
+  assert.equal(namedWorkspace.status, 1);
+  assert.match(`${namedWorkspace.stdout}\n${namedWorkspace.stderr}`, new RegExp(poisonMarker));
 
   process.stdout.write('Built CLI isolation checks passed.\n');
 } finally {

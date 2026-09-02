@@ -2,9 +2,10 @@
 
 ## A practical coordination layer for enterprise AI teams
 
-Scope: current source `0.1.5` at commit `001e903`, reviewed 2026-09-02.
+Baseline: source `0.1.5` at commit `001e903`, reviewed 2026-09-02.
 This document discusses potential applications of that source implementation;
-it is not a statement of published npm features or enterprise readiness.
+it is not a statement of published npm features or enterprise readiness. The
+current source adds [opt-in capture and reviewed dataset export](datasets.md).
 
 ### License scope
 
@@ -176,7 +177,7 @@ Commercial adoption depends on operational reliability, not just feature complet
 
 These mechanisms address handoff, rendering, timing and state-continuity risks. They do not prove task correctness or provide a service-level guarantee.
 
-Current observability is bounded: the in-memory ledger retains up to 1,000 records / 8 MiB by default, with 256 KiB per-record content; F12 shows the latest 100 summaries. Ctrl+L opens a rotating diagnostic log, not a full conversation archive. STATUS/QUERY are live-only. Durable communication capture, dataset export and replay are not implemented; see the [proposed capture plan](session-capture-plan.md).
+Current observability is bounded: the in-memory ledger retains up to 1,000 records / 8 MiB by default, with 256 KiB per-record content; F12 shows the latest 100 summaries. Ctrl+L opens a rotating diagnostic log, not a full conversation archive. STATUS/QUERY are absent from Activity but included in opt-in semantic capture. [Reviewed dataset export](datasets.md) is available in source; full transcripts, replay and model training are not implemented. See the broader [capture plan](session-capture-plan.md).
 
 ## 9. Governance and Risk Perspective
 
@@ -194,13 +195,13 @@ This is a better governance posture than scattered prompt engineering or hidden 
 
 Potential deployments require separate licensing permission and an operational assessment. The following are proposed extensions, not implemented commercial capabilities:
 
-- persistent message and delivery logs
+- centrally managed audit retention and enterprise access controls
 - richer operational dashboards
 - policy hooks for allowed message types and destinations
-- exportable audit trails
+- compliance-specific audit reports
 - optional non-terminal transport backends for production environments
 
-The [session capture and training-data plan](session-capture-plan.md) proposes opt-in semantic recording and reviewed offline export. Policy engines, enterprise dashboards and alternate transports would require their own implementation and validation.
+The [session capture and training-data plan](session-capture-plan.md) now has an initial local recorder and reviewed offline exporter. This is not an enterprise compliance system. Policy engines, enterprise dashboards and alternate transports would require their own implementation and validation.
 
 ## Conclusion
 

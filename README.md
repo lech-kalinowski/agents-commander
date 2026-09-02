@@ -268,17 +268,42 @@ Routing is bidirectional between connected supported sessions.
   ledger, not a persistent archive. Default retention is up to 1,000 records /
   8 MiB of content, with a 256 KiB per-record content cap; the dialog shows the
   latest 100 summaries. Evicted records and history are not restored on restart.
-- STATUS and QUERY are live-only and are not retained in Activity.
+- STATUS and QUERY are not retained in Activity; opt-in capture records them.
 - `Ctrl+L` from a file panel opens the diagnostic log at
   `~/.agents-commander/debug.log`. It rotates at 1 MiB with one backup. Routed
   payloads are represented by metadata and byte counts, not complete message
   bodies. Diagnostics can still contain names and error details; review them
   before sharing.
-- Durable communication capture, terminal transcripts, dataset export, session
-  restore, and replay are **not implemented**. The
-  [session capture and training-data plan](https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/session-capture-plan.md) is a
-  proposal for opt-in local recording and reviewed datasets, not an available
-  feature or an active collection process.
+- Opt-in semantic recording and reviewed dataset export are available in this
+  source checkout. Nothing is recorded by default. Full terminal transcripts,
+  session restore, replay and model training are **not implemented**. The
+  [original design plan](https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/session-capture-plan.md)
+  retains the broader proposed scope and implementation boundaries.
+
+### Create a Commander Protocol training dataset
+
+```bash
+# Source build, Node.js 22+. Reuse an opaque ID across related project runs.
+npm start -- --capture protocol --capture-project project-01 /path/to/project
+
+# Arm each agent with Ctrl+P; submit tasks via Ctrl+O; exit with F10.
+# The launch prints the private capture directory.
+npm start -- dataset inspect /path/to/capture-uuid
+npm start -- dataset prepare /path/to/capture-uuid --out ~/commander-review-01
+
+# Review candidates and explicitly approve quality, context, privacy and rights.
+# Edit review.json; decisions start unapproved.
+npm start -- dataset export ~/commander-review-01 --out ~/commander-dataset-01 --seed experiment-01
+npm start -- dataset validate ~/commander-dataset-01
+```
+
+Exports use conversational `prompt` / `completion` JSONL for LoRA/SFT. Audit
+metadata is separate; real and synthetic examples stay separate; whole project
+families and detected duplicates stay in one split. Missing/manual-input context
+and incomplete captures are not silently promoted to training examples.
+Redaction is best-effort and human review is mandatory. No automatic training or
+uploads occur. See the [dataset guide](https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/datasets.md)
+for schemas, review steps, limitations and the model-specific training gate.
 
 ### Manual Orchestration
 
@@ -629,7 +654,7 @@ Agents Commander combines several local workflows in one TUI:
 - [ ] Agent memory -- persistent context across sessions
 - [ ] Plugin system for custom agents
 - [ ] Session save/restore
-- [ ] [Opt-in session capture and reviewed dataset export](https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/session-capture-plan.md) (proposed)
+- [x] [Opt-in semantic capture and reviewed LoRA/SFT dataset export](https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/datasets.md)
 - [ ] Conversation replay
 
 ## License

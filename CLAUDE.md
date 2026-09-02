@@ -54,7 +54,8 @@ TypeScript + blessed + chokidar + marked + tsup
 - Up to 100 active panels use stable numbers in a paged workspace; hidden sessions keep running
 - Shift+F4 cycles auto/2/3/4 visible density independently of active panel count; Ctrl+0/2/3/4 are terminal-dependent aliases
 - REPLY claims the latest open reply window, not a permanent last-sender address
-- Activity is bounded and in-memory; diagnostic logs are not session recordings. Capture/export are proposed in `docs/session-capture-plan.md`, not implemented
+- Activity is bounded and in-memory; diagnostic logs are not session recordings. Capture/export require explicit launch consent and human review; see `docs/datasets.md` and the broader proposed roadmap in `docs/session-capture-plan.md`
+- Dataset commands stay UI-independent. Do not enable recording from config, export unapproved data, keep live capability keys, or commit/package private research artifacts
 - marked-terminal renderer methods must be extracted and bound to avoid marked v15 compat issues
 
 ## Testing

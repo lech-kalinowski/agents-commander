@@ -65,9 +65,11 @@ Multi-panel AI Agent Manager & File Browser
   It does not confirm task completion; status=failed reports an error.
   BROADCAST reports queue admission; STATUS reports acceptance.
   F12 shows routed SEND/REPLY/BROADCAST history.
-  History is bounded and in-memory; STATUS/QUERY are live-only.
+  History is bounded and in-memory; STATUS/QUERY are not in Activity.
   Ctrl+L opens a rotating diagnostic log, not a conversation archive.
-  Durable capture and dataset export are proposed, not implemented.
+  Opt-in capture: --capture protocol --capture-project <opaque-id>.
+  Dataset export requires human review; see docs/datasets.md.
+  No raw keyboard recording, automatic training or uploads.
   Press {cyan-fg}Shift+F12{/cyan-fg} for the full guide.
 
 {bold}{yellow-fg}LAYOUT & SYSTEM{/yellow-fg}{/bold}

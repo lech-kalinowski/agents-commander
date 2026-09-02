@@ -438,11 +438,18 @@ describe('App conference and offline demo integration', () => {
 
   it('awaits processes from retired panels before launch cleanup', async () => {
     let releaseRetiredPanel!: () => void;
+    let notifyRetiredDrainEntered!: () => void;
     const retiredPanelStopped = new Promise<void>((resolve) => {
       releaseRetiredPanel = resolve;
     });
+    const retiredDrainEntered = new Promise<void>((resolve) => {
+      notifyRetiredDrainEntered = resolve;
+    });
     vi.spyOn(TerminalPanel, 'waitForPendingTerminations')
-      .mockReturnValue(retiredPanelStopped);
+      .mockImplementation(() => {
+        notifyRetiredDrainEntered();
+        return retiredPanelStopped;
+      });
     const cleanup = vi.fn(async () => undefined);
     const app: any = Object.create(App.prototype);
     Object.assign(app, {
@@ -459,8 +466,7 @@ describe('App conference and offline demo integration', () => {
     });
 
     const disposal = app.dispose();
-    await Promise.resolve();
-    await Promise.resolve();
+    await retiredDrainEntered;
     expect(TerminalPanel.waitForPendingTerminations).toHaveBeenCalledOnce();
     expect(cleanup).not.toHaveBeenCalled();
 

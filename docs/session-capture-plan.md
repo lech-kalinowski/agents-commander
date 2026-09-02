@@ -1,7 +1,17 @@
 # Session capture and Commander Protocol training data
 
-Status: **proposed implementation plan; capture/export/training are not implemented**.
+Status: **initial capture and reviewed dataset export implemented in source;
+model-specific training and broader roadmap items remain proposed**.
 Prepared 2026-09-02 against source `0.1.5`, commit `001e903`.
+
+Implementation update: see [the dataset guide](datasets.md) for current CLI usage.
+The initial release implements launch-only metadata/protocol capture, semantic
+events, redaction, bounded private storage, sealed manifests, review candidates,
+project-grouped conversational JSONL and offline validation. It does not implement
+raw transcripts, damaged-capture recovery, prune/replay, comprehensive scanner
+counters, automatic review, tokenization for an unselected model or training.
+The sections below retain the design targets; where broader than this release,
+they remain proposed. Capture is still off by default.
 
 ## Outcome
 
@@ -25,7 +35,7 @@ flowchart LR
 No collection starts as a result of this plan. No uploads, provider transcript
 imports, model downloads, training jobs, or npm release are authorized by it.
 
-## What exists today
+## Baseline before implementation
 
 | Surface | Current behavior | Why it is not the dataset |
 | --- | --- | --- |
@@ -258,6 +268,10 @@ closed/API-only models cannot simply load an arbitrary local adapter.
 [LoRA](https://arxiv.org/abs/2106.09685), [QLoRA](https://arxiv.org/abs/2305.14314)
 
 ## Implementation sequence and acceptance gates
+
+The initial source implementation covers the core of phases 0–3. The current
+guide documents conservative exclusions and deferred items; a real-data pilot
+and model-specific experiment (phases 4–5) have not been run or auto-approved.
 
 Each major implementation phase gets pre-change CR, focused tests, full
 `npm run verify`, post-change CR and a scoped commit/push. Pushing source is not

@@ -175,13 +175,15 @@ The selector also catalogues five future presets that are not launchable yet: Ai
 ### Sixteen-panel APEX collaboration example
 
 The [APEX review council](Example/apex-sixteen-panel/README.md) prepares sixteen
-named OpenCode profiles: one coordinator and fifteen specialists reviewing a
+named Pi or OpenCode profiles: one coordinator and fifteen specialists reviewing a
 fictional booking API in seven human-gated waves. It includes an offline setup
 generator, role prompts, a runbook, and a 15-SEND/15-REPLY evidence checklist.
-Supply the exact APEX `provider/model` and your existing provider configuration;
+Supply the exact APEX model and the provider setup for your chosen harness;
 no provider identity or live-model compatibility is assumed. Preparation does
 not launch agents or change your saved configuration. This is a source-checkout
 example, not the two-agent scripted `--demo` or a verified APEX benchmark.
+The [Pi setup guide](Example/apex-sixteen-panel/PI.md) includes private credential
+loading, profile registration and a live model smoke command.
 
 ### Integrated File Manager
 

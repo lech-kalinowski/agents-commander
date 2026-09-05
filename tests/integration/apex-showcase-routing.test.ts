@@ -28,7 +28,7 @@ afterEach(async () => {
  * Wave gates and role permissions are prompt instructions, not router policy:
  * this fixture deliberately emits the example's intended conversation graph.
  */
-async function createShowcaseFixture() {
+async function createShowcaseFixture(adapter: 'opencode' | 'generic') {
   const panels = SCENARIO.roles.map((role) => ({
     panelIndex: role.panel - 1,
     isRunning: true,
@@ -56,13 +56,13 @@ async function createShowcaseFixture() {
   };
   let onLifecycle: ((event: AgentLifecycleEvent) => void) | undefined;
   const agents = {
-    getAgentType: (index: number) => panels[index] ? 'opencode' : null,
+    getAgentType: (index: number) => panels[index] ? adapter : null,
     getAgentProfileId: (index: number) => panels[index]?.profileId ?? null,
     getAgentSessionId: (index: number) => panels[index]?.sessionId ?? null,
     getRunningAgents: () => panels.map((panel) => ({
       panelIndex: panel.panelIndex,
       sessionId: panel.sessionId,
-      type: 'opencode',
+      type: adapter,
       name: panel.name,
       profileId: panel.profileId,
       status: 'running',
@@ -83,7 +83,7 @@ async function createShowcaseFixture() {
   };
   for (const panel of panels) {
     orchestrator.connectPanel(panel as never);
-    // External OpenCode profiles cannot use the internal demo authorization path.
+    // External harness profiles cannot use the internal demo authorization path.
     expect(orchestrator.armInternalProtocol(panel as never, 'x'.repeat(43))).toBe(false);
     expect(await orchestrator.injectProtocol(panel as never)).toBe(true);
     expect(keyFor(panel.panelIndex + 1)).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -103,7 +103,7 @@ async function createShowcaseFixture() {
   };
   const emit = (verb: 'send' | 'reply', source: number, content: string, target?: number, capability = keyFor(source)) => {
     if (verb === 'send' && target === undefined) throw new Error('SEND needs an explicit stable panel ID');
-    const route = verb === 'send' ? `:opencode:${target}` : '';
+    const route = verb === 'send' ? `:${adapter}:${target}` : '';
     const wire = `===COMMANDER:${verb.toUpperCase()}${route}:${capability}===\n${content}\n===COMMANDER:END:${capability}===\n`;
     // Observe a genuinely streamed frame, including splits inside both markers.
     const endSplit = wire.lastIndexOf('===COMMANDER:END:') + 13;
@@ -119,7 +119,7 @@ async function createShowcaseFixture() {
     onLifecycle({
       type: 'restarted', panelIndex: panel.panelIndex,
       sessionId: panel.sessionId, previousSessionId,
-      agentType: 'opencode', agentName: panel.name,
+      agentType: adapter, agentName: panel.name,
       profileId: panel.profileId, profileLabel: panel.name,
     });
   };
@@ -129,11 +129,14 @@ async function createShowcaseFixture() {
   return { orchestrator, panels, keyFor, emit, settle, restart };
 }
 
-describe('sixteen-panel APEX example conversation graph (synthetic endpoints)', () => {
+describe.each([
+  { harness: 'OpenCode', adapter: 'opencode' as const },
+  { harness: 'Pi', adapter: 'generic' as const },
+])('sixteen-panel APEX example via $harness/$adapter (synthetic endpoints)', ({ adapter }) => {
   it('routes all seven waves with fifteen SEND/REPLY pairs, even when workers finish in reverse order', async () => {
     expect(SCENARIO.roles.map((role) => role.panel)).toEqual(Array.from({ length: 16 }, (_, index) => index + 1));
     expect(SCENARIO.waves).toEqual([[2, 3, 4], [5, 6, 7], [8, 9, 10], [11, 12, 13], [14], [15], [16]]);
-    const fixture = await createShowcaseFixture();
+    const fixture = await createShowcaseFixture(adapter);
     const { orchestrator, panels, emit, settle } = fixture;
     const expectedTaskBodies = new Map<number, string>();
     const expectedReplyBodies = new Map<number, string>();
@@ -184,13 +187,13 @@ describe('sixteen-panel APEX example conversation graph (synthetic endpoints)', 
       const task = sends.find((record) => record.target.panelIndex === workerIndex)!;
       const reply = replies.find((record) => record.source.panelIndex === workerIndex)!;
       expect(task).toMatchObject({
-        source: { sessionId: panels[0].sessionId, agentType: 'opencode' },
-        target: { sessionId: panels[workerIndex].sessionId, agentType: 'opencode' },
+        source: { sessionId: panels[0].sessionId, agentType: adapter },
+        target: { sessionId: panels[workerIndex].sessionId, agentType: adapter },
         content: expectedTaskBodies.get(role.panel), replyToMessageId: null,
       });
       expect(reply).toMatchObject({
-        source: { sessionId: panels[workerIndex].sessionId, agentType: 'opencode' },
-        target: { sessionId: panels[0].sessionId, agentType: 'opencode' },
+        source: { sessionId: panels[workerIndex].sessionId, agentType: adapter },
+        target: { sessionId: panels[0].sessionId, agentType: adapter },
         content: expectedReplyBodies.get(role.panel),
         threadId: task.threadId, replyToMessageId: task.messageId,
       });
@@ -202,7 +205,7 @@ describe('sixteen-panel APEX example conversation graph (synthetic endpoints)', 
   });
 
   it('rejects another panel’s capability without consuming the legitimate worker reply window', async () => {
-    const { orchestrator, panels, keyFor, emit, settle } = await createShowcaseFixture();
+    const { orchestrator, panels, keyFor, emit, settle } = await createShowcaseFixture(adapter);
     emit('send', 1, 'Invalid coordinator capability', 2, keyFor(3));
     await settle();
     expect(orchestrator.getRecentActivity(100)).toEqual([]);
@@ -229,7 +232,7 @@ describe('sixteen-panel APEX example conversation graph (synthetic endpoints)', 
   });
 
   it('invalidates a restarted worker’s old capability and reply window before accepting a fresh exchange', async () => {
-    const { orchestrator, panels, keyFor, emit, settle, restart } = await createShowcaseFixture();
+    const { orchestrator, panels, keyFor, emit, settle, restart } = await createShowcaseFixture(adapter);
     emit('send', 1, 'Task issued before the P16 restart', 16);
     await settle();
     const oldTask = orchestrator.getRecentActivity(100)[0];

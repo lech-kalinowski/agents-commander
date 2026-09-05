@@ -52,10 +52,11 @@ const DENY_TOOLS = Object.freeze({
   skill: 'deny', question: 'deny', todowrite: 'deny', external_directory: 'deny',
 });
 
-export function rolePrompt(role) {
+export function rolePrompt(role, adapter = 'opencode') {
+  if (!['opencode', 'generic'].includes(adapter)) throw new Error('Unsupported showcase protocol adapter.');
   const topology = role.panel === 1
     ? `You are the coordinator in P1. Only start after the human sends START APEX SHOWCASE.
-Use SEND to adapter opencode and the stable P numbers, never REPLY or BROADCAST.
+Use SEND to adapter ${adapter} and the stable P numbers, never REPLY or BROADCAST.
 Dispatch one task each in these ordered waves: ${SCENARIO.waves.map((wave) => `[${wave.map((panel) => `P${panel}`).join(',')}]`).join(', then ')}.
 Wait for one substantive result from EVERY member of a wave before advancing.
 START APEX SHOWCASE authorizes only wave 1. After its results, wait for the human

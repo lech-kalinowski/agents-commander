@@ -55,14 +55,16 @@ describe('bounded diagnostic subprocesses', () => {
         '-e',
         [
           "process.on('SIGUSR1', () => process.exit(0));",
+          "process.stdout.write('READY');",
           'setInterval(() => {}, 1000);',
         ].join(' '),
       ],
-      { timeoutMs: 50, timeoutSignal: 'SIGUSR1' },
+      { timeoutMs: 1000, timeoutSignal: 'SIGUSR1' },
     );
 
     expect(result.ok).toBe(false);
     expect(result.timedOut).toBe(true);
+    expect(result.stdout).toBe('READY');
     expect(result.exitCode).toBe(0);
   });
 

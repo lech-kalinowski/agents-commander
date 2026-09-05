@@ -1,5 +1,10 @@
 # APEX: sixteen panels, one review council
 
+**Pi harness:** use the [Pi setup and launch guide](PI.md) for the configured
+Callstack APEX model. It shares this scenario and seven-wave handoff pattern.
+The OpenCode setup remains available below. Its status and configuration steps
+describe the OpenCode path; use the Pi guide for Pi-specific validation status.
+
 A source-checkout example with **one APEX coordinator and fifteen APEX
 specialists**, each running in its own managed OpenCode terminal. They review
 a fictional workshop-booking API, challenge earlier findings, and produce a

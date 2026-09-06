@@ -22,6 +22,7 @@ import {
 } from './message-ledger.js';
 import { showToast } from '../screen/toast.js';
 import { logger } from '../utils/logger.js';
+import { isDialogActive } from '../utils/dialog-state.js';
 import blessed from 'blessed';
 import {
   detectCodexDecision,
@@ -1980,7 +1981,9 @@ export class Orchestrator {
     if (!targetIsCurrent()) {
       return this.managedTargetUnavailable(panelIndex);
     }
-    this.layout.setActivePanel(panelIndex);
+    // Another dialog may have opened during asynchronous startup/delivery.
+    // Stealing its focus would leave the modal shield active with no way to answer.
+    if (!isDialogActive()) this.layout.setActivePanel(panelIndex);
 
     return { success: true };
   }

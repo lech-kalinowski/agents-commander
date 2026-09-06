@@ -113,8 +113,16 @@ export function showAgentDialog(
     });
 
     // Manual navigation (keys:true swallows escape/enter)
-    list.key(['up'], () => { list.up(1); screen.render(); });
-    list.key(['down'], () => { list.down(1); screen.render(); });
+    list.key(['up'], () => {
+      if (resolved || pending) return;
+      list.up(1);
+      screen.render();
+    });
+    list.key(['down'], () => {
+      if (resolved || pending) return;
+      list.down(1);
+      screen.render();
+    });
 
     // Panel picker
     const panelLine = listHeight + 4;
@@ -153,6 +161,7 @@ export function showAgentDialog(
     });
 
     let resolved = false;
+    let pending = false;
     let unregisterCancellation = () => {};
     let notice: blessed.Widgets.BoxElement | null = null;
     let noticeTimer: NodeJS.Timeout | null = null;
@@ -192,11 +201,21 @@ export function showAgentDialog(
       }
     });
 
-    const finishNotice = () => {
-      if (resolved) return;
-      cleanup();
-      resolve(null);
+    const finish = (choice: AgentLaunchChoice | null) => {
+      if (resolved || pending) return;
+      pending = true;
+      // Keep the modal shield until Blessed dispatches both enter and return.
+      // Screen teardown may still cancel this queued choice before it commits.
+      queueMicrotask(() => {
+        if (resolved) return;
+        try {
+          cleanup();
+        } finally {
+          resolve(choice);
+        }
+      });
     };
+    const finishNotice = () => finish(null);
 
     const showNotice = (
       content: string,
@@ -204,7 +223,7 @@ export function showAgentDialog(
       preferredHeight: number,
       timeoutMs: number,
     ) => {
-      if (notice || resolved) return;
+      if (notice || resolved || pending) return;
       const noticeGeometry = screenGeometry(
         screen,
         preferredWidth,
@@ -234,6 +253,7 @@ export function showAgentDialog(
     };
 
     const moveSelection = (direction: -1 | 1) => {
+      if (resolved || pending) return;
       numberInput.reset();
       selectedPanel = adjacentPanelId(panelIds, selectedPanel, direction) ?? selectedPanel;
       updatePanelDisplay();
@@ -244,6 +264,7 @@ export function showAgentDialog(
 
     for (let n = 0; n <= 9; n++) {
       list.key([String(n)], () => {
+        if (resolved || pending) return;
         const panelId = numberInput.acceptDigit(String(n));
         if (panelId !== null) selectedPanel = panelId;
         updatePanelDisplay();
@@ -252,6 +273,7 @@ export function showAgentDialog(
     }
 
     const handleSelect = (index: number) => {
+      if (resolved || pending) return;
       if (!numberInput.canConfirm) {
         updatePanelDisplay();
         screen.render();
@@ -259,8 +281,7 @@ export function showAgentDialog(
       }
       const agent = agents[index];
       if (agent && agent.installed && agent.supported && !agent.configurationError) {
-        cleanup();
-        resolve({
+        finish({
           agentType: agent.type,
           profileId: agent.profileId,
           panelIndex: selectedPanel,
@@ -281,8 +302,7 @@ export function showAgentDialog(
           5000,
         );
       } else {
-        cleanup();
-        resolve(null);
+        finish(null);
       }
     };
 

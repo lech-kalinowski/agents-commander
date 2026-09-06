@@ -83,6 +83,14 @@ cannot establish live behavior.
 ## Operate the panels
 
 Start with stable P1–P16 and launch the matching APEX Pi profile in each panel.
+In F2, Up/Down chooses the profile and Left/Right (or a typed P-number) chooses
+its target panel: selecting **APEX Pi P02** does not automatically target **P2**.
+Choose an empty target to keep the first agent running alongside the second.
+If **Replace Session** appears, the selected target is already occupied. Escape
+or N keeps that session; Left/Up then Enter (or a click on Yes) replaces it.
+For Ctrl+O, choosing the same running profile and panel reuses its session
+without a replacement prompt.
+
 Press Ctrl+P in every running session and wait for its plain-text acknowledgment.
 Use Ctrl+O to send `start.txt` to the existing **APEX Pi P01 Coordinator** at P1.
 Check each wave in F12, then send its next `CONTINUE APEX WAVE N` to that same

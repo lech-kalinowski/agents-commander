@@ -55,6 +55,7 @@ export function showConfirmDialog(
       label: ` ${title} `,
       shadow: true,
       keys: true,
+      mouse: true,
     });
 
     const messageBox = blessed.text({
@@ -81,6 +82,8 @@ export function showConfirmDialog(
       width: btnWidth,
       height: 1,
       tags: true,
+      mouse: true,
+      autoFocus: false,
       content: '',
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
@@ -92,7 +95,23 @@ export function showConfirmDialog(
       width: btnWidth,
       height: 1,
       tags: true,
+      mouse: true,
+      autoFocus: false,
       content: '',
+      style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
+    });
+
+    blessed.text({
+      parent: dialog,
+      bottom: 0,
+      left: 1,
+      width: '100%-4',
+      height: 1,
+      align: 'center',
+      tags: false,
+      content: externalConfirmOnly
+        ? 'Device: confirm   Esc/N: cancel'
+        : 'Tab/Arrows: select  Enter: OK  Esc: No',
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
@@ -158,14 +177,28 @@ export function showConfirmDialog(
     };
     options.onReady?.(controller);
 
-    dialog.key(['left', 'right', 'tab'], () => {
-      if (externalConfirmOnly) return;
+    dialog.key(['left', 'up'], () => {
+      if (externalConfirmOnly || resolved) return;
+      selected = true;
+      renderButtons();
+    });
+    dialog.key(['right', 'down'], () => {
+      if (externalConfirmOnly || resolved) return;
+      selected = false;
+      renderButtons();
+    });
+    dialog.key(['tab', 'S-tab'], () => {
+      if (externalConfirmOnly || resolved) return;
       selected = !selected;
       renderButtons();
     });
 
-    // Consume arrow keys so they don't propagate to screen-level handlers
-    dialog.key(['up', 'down'], () => { /* swallow */ });
+    yesBtn.on('click', (event) => {
+      if ((event as { button?: string }).button === 'left' && !externalConfirmOnly) finish(true);
+    });
+    noBtn.on('click', (event) => {
+      if ((event as { button?: string }).button === 'left') finish(false);
+    });
 
     dialog.key(['y', 'Y'], () => {
       if (!externalConfirmOnly) finish(true);

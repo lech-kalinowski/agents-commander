@@ -2,9 +2,14 @@
 
 ## A lightweight coordination layer for terminal-native multi-agent systems
 
+Baseline: source `0.1.5` at commit `001e903`, reviewed 2026-09-02.
+This is a source implementation description, not a claim about the published
+npm package. The current source now adds [opt-in capture and reviewed dataset
+export](datasets.md); broader research extensions below remain proposals.
+
 ### Abstract
 
-The Commander Protocol is a human-readable coordination protocol for AI agents that operate inside terminal sessions. It was designed for a practical problem: enabling multiple command-line agents to communicate, delegate work, report progress, and maintain conversational threads without requiring a heavyweight orchestration backend. The protocol uses explicit message markers, structured acknowledgements, per-session identity, and thread tracking to support multi-agent collaboration in a terminal user interface. This document describes the protocol as implemented in the `v11` generation of Agents Commander and explains why it is useful as a research artifact for studying agent coordination, interaction design, and reliability in mixed human-agent workflows.
+The Commander Protocol is a human-readable coordination protocol for AI agents that operate inside terminal sessions. It was designed for a practical problem: enabling multiple command-line agents to communicate, delegate work, report progress, and maintain conversational threads without requiring a heavyweight orchestration backend. The protocol uses explicit message markers, structured acknowledgements, per-session identity, and thread tracking to support multi-agent collaboration in a terminal user interface. This document describes the source implementation identified above and its potential use as a research artifact for studying agent coordination, interaction design, and reliability in mixed human-agent workflows.
 
 ## 1. Motivation
 
@@ -29,10 +34,10 @@ The protocol assumes a Commander process manages multiple terminal panels. Each 
 4. acknowledge delivery outcomes
 5. maintain thread state so `REPLY` has a concrete target
 
-In `v11`, the protocol is not only marker-based. It is backed by orchestration state that includes:
+In source `0.1.5`, the protocol is not only marker-based. It is backed by orchestration state that includes:
 
 - stable `sessionId` values for running agent sessions
-- unique `messageId` values for individual protocol messages
+- process-local `messageId` values for individual routed messages
 - `threadId` values for reply chains
 - a message ledger that records creation, delivery, failure, and open reply windows
 
@@ -49,33 +54,33 @@ The Commander Protocol exposes five primary commands.
 Example:
 
 ```text
-===COMMANDER:SEND:codex:2===
+===COMMANDER:SEND:codex:2:<session-key>===
 Please review the API design and propose a simpler interface.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
-Semantically, `SEND` opens a thread from one session to another. The Commander creates a message record, delivers the content to the destination panel, and returns a structured acknowledgement to the sender.
+Semantically, `SEND` creates a thread and queues a message for the addressed running session. Commander records the delivery outcome and attempts to return a structured acknowledgement to the still-active sender. A successful delivery opens a reply window; rejected or failed delivery does not establish that the target acted on the task.
 
 ### 3.2 REPLY
 
 `REPLY` continues the latest open thread for the current session.
 
 ```text
-===COMMANDER:REPLY===
+===COMMANDER:REPLY:<session-key>===
 I agree with the refactor direction, but the caching layer still leaks concerns.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
-In `v11`, `REPLY` is thread-aware. It does not rely on a fragile "last sender" heuristic. Instead, the protocol claims an open reply window from the message ledger and routes the reply back to the correct return session.
+In source `0.1.5`, `REPLY` claims the newest open reply window for the current session and resolves its return session, thread and prior message. Claiming consumes that window; failed delivery restores it only if both sessions remain active. With no open window, the reply is dropped. The route is explicit runtime state, not a model-selected thread ID or a reconstruction from the last visible sender.
 
 ### 3.3 BROADCAST
 
-`BROADCAST` sends one message to all connected sessions except the sender.
+`BROADCAST` queues one message for each other connected running agent. Targets are checked independently; it does not launch missing agents or send to file panels.
 
 ```text
-===COMMANDER:BROADCAST===
+===COMMANDER:BROADCAST:<session-key>===
 Standup: I am starting test hardening. Report blockers in one short reply.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 Broadcast is useful for coordination experiments, synchronization prompts, and shared-state announcements.
@@ -85,9 +90,9 @@ Broadcast is useful for coordination experiments, synchronization prompts, and s
 `STATUS` reports progress to Commander rather than to another agent.
 
 ```text
-===COMMANDER:STATUS===
+===COMMANDER:STATUS:<session-key>===
 Profiling complete. I am now investigating the slow query path.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 Commander displays the status in the UI and returns a local acknowledgement so the sender knows the update was accepted.
@@ -97,16 +102,16 @@ Commander displays the status in the UI and returns a local acknowledgement so t
 `QUERY` asks Commander for environment information such as active agents, panel layout, or protocol help.
 
 ```text
-===COMMANDER:QUERY===
+===COMMANDER:QUERY:<session-key>===
 agents
-===COMMANDER:END===
+===COMMANDER:END:<session-key>===
 ```
 
 This gives agents a controlled way to inspect coordination state without inventing their own discovery logic.
 
 ## 4. Protocol Envelope and State
 
-The visible protocol syntax is intentionally simple, but the runtime model in `v11` is richer.
+The visible protocol syntax is intentionally simple, but the runtime model is richer. `Ctrl+P` arms one managed session with a fresh capability; `<session-key>` above represents that injected value. Headers and footers without the current session capability are parsed for display compatibility but never routed.
 
 ### 4.1 Session Identity
 
@@ -135,11 +140,17 @@ After successful delivery, Commander emits a structured acknowledgement in the s
 - target name
 - target panel
 
-This is a useful design feature for research because it creates explicit transition points in the coordination lifecycle: proposed, delivered, replied, failed, or completed.
+For example:
 
-## 5. Execution Model in `v11`
+```text
+[Commander ACK] status=delivered msg=msg_000001 thread=thr_000001 target="Codex CLI" panel=2
+```
 
-The `v11` implementation introduces several features that make the protocol substantially more reliable than a purely text-based relay.
+`delivered` means input submitted to the target PTY, not model acceptance or task completion. Failed SEND/REPLY delivery uses `status=failed` and an error. BROADCAST produces one combined queue-admission ACK, not per-target delivery ACKs; STATUS uses `kind=status status=accepted`. QUERY returns controller information. Unarmed, suppressed or orphaned frames may have no ACK. These are distinct observation points, not interchangeable quality labels.
+
+## 5. Execution Model in Source `0.1.5`
+
+The source implementation combines several mechanisms intended to improve reliability beyond an untracked text relay.
 
 ### 5.1 Per-panel task queues
 
@@ -151,7 +162,7 @@ When Commander successfully delivers a user-selected collaboration task or route
 
 ### 5.3 Terminal-native transport
 
-The transport layer still operates through terminal I/O rather than a hidden service bus. This is a constraint, but it is also an advantage for research because the entire interaction remains observable from the screen, logs, and panel history.
+The transport layer operates through terminal I/O rather than a hidden service bus. Protocol output and controller feedback are visible in panels, but the screen, diagnostic log and bounded Activity history are not a complete transcript. Private provider prompts, reasoning, tool calls and directly typed context are not reconstructed by Commander.
 
 ### 5.4 Deduplication and echo control
 
@@ -159,7 +170,7 @@ Because terminal UIs can re-render visible content, Commander performs deduplica
 
 ### 5.5 UTF-8 safe decoding
 
-`v11` uses stream-safe UTF-8 decoding for PTY output. This matters for modern agent CLIs because progress indicators, spinner glyphs, and non-ASCII symbols often arrive in fragmented chunks.
+Source `0.1.5` uses stream-safe UTF-8 decoding for PTY output. This matters for modern agent CLIs because progress indicators, spinner glyphs, and non-ASCII symbols often arrive in fragmented chunks.
 
 ## 6. Why the Protocol Matters for AI Research
 
@@ -195,9 +206,9 @@ The protocol also has clear limitations, which are themselves useful from a rese
 
 The protocol operates through terminal rendering, PTY input, and screen scanning. This makes it realistic for command-line agents, but also vulnerable to prompt echo, UI formatting quirks, and timing issues.
 
-### 7.2 Human-readable syntax is easy to teach but easy to contaminate
+### 7.2 Human-readable syntax still requires containment
 
-Literal protocol markers can appear inside examples, templates, or help text. `v11` includes hardening to reduce false positives, but the risk is inherent to text-visible protocols.
+Literal protocol markers can appear inside examples, templates, or help text. Session-bound capabilities now make static or stale markers inert, and explicit template delivery binds trusted collaboration templates to the current session. Prompt-injection risk still exists after a human deliberately arms an agent, so routed output is also prohibited from replacing or killing an occupied target.
 
 ### 7.3 It is a coordination layer, not a semantic planner
 
@@ -205,7 +216,7 @@ Commander does not decide what the agents should believe, prioritize, or conclud
 
 ### 7.4 Persistence is still limited
 
-The current ledger is in-memory. This is enough for live orchestration and experimentation, but long-running research deployments would benefit from persistent event storage.
+The current ledger is in-memory and stores SEND/REPLY/BROADCAST only. Defaults are 1,000 records, 8 MiB total retained content and 256 KiB per record; F12 displays the latest 100 summaries. STATUS/QUERY and control responses are not part of that history. Ctrl+L exposes a rotating diagnostic log, not a conversation archive. A separate [opt-in semantic recorder and reviewed dataset exporter](datasets.md) is now available in source. Full transcripts, replay and model training are not implemented. The [session capture and training-data plan](session-capture-plan.md) retains the broader design.
 
 ## 8. Research Directions
 
@@ -213,7 +224,7 @@ Several natural research extensions follow from the current design.
 
 ### 8.1 Durable message logs
 
-Persisting messages and delivery events would support replay, offline analysis, and benchmark creation.
+Opt-in messages and delivery events can support offline analysis and benchmark creation. The [capture plan](session-capture-plan.md) separates recording from reviewed dataset export; automatic execution or replay of captured text is not implemented. Schema validation is not evidence of semantic quality or model-level improvement.
 
 ### 8.2 Alternative transports
 
@@ -229,6 +240,6 @@ The same task can be run with different combinations of terminal-native agents, 
 
 ## Conclusion
 
-The Commander Protocol is a compact but meaningful contribution to terminal-native multi-agent research. It combines human-readable commands with runtime state such as sessions, message identities, threads, acknowledgements, and delivery queues. In `v11`, it has matured from a simple marker parser into a coordination substrate that is inspectable, debuggable, and experimentally useful.
+The Commander Protocol combines human-readable commands with runtime state such as sessions, message identities, threads, acknowledgements, and delivery queues. Source `0.1.5` provides an inspectable coordination mechanism and opt-in data preparation; reproducible longitudinal studies still require permissioned collection, independent review and held-out evaluation.
 
 For AI research, its value is not that it solves all coordination problems. Its value is that it exposes them clearly enough to study. That makes it useful both as an engineering mechanism and as a research instrument for understanding how agents coordinate, fail, recover, and collaborate in real tool-using environments.

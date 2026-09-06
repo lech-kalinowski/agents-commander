@@ -1,38 +1,117 @@
 import blessed from 'blessed';
 import path from 'node:path';
-import type { AppConfig, Theme } from './config/types.js';
+import type { NormalizedAppConfig, Theme } from './config/types.js';
 import { getTheme } from './config/themes.js';
 import { loadConfig } from './config/loader.js';
+import {
+  resolveLaunchOptions,
+  type ExplicitLaunchOptions,
+  type ResolvedLaunchOptions,
+} from './config/launch-options.js';
 import { LayoutManager } from './screen/layout-manager.js';
-import { createFunctionBar } from './screen/function-bar.js';
+import { createFunctionBar, updateDefaultFunctionBar } from './screen/function-bar.js';
 import { createStatusBar, updateStatusBar } from './screen/status-bar.js';
 import { showHelpDialog } from './screen/dialog/help-dialog.js';
-import { showConfirmDialog } from './screen/dialog/confirm-dialog.js';
+import {
+  showConfirmDialog,
+  type ConfirmDialogController,
+} from './screen/dialog/confirm-dialog.js';
 import { showInputDialog } from './screen/dialog/input-dialog.js';
 import { showAgentDialog } from './screen/dialog/agent-dialog.js';
 import { showLogDialog } from './screen/dialog/log-dialog.js';
 import { showOrchestrateDialog } from './screen/dialog/orchestrate-dialog.js';
 import { showTemplateDialog } from './screen/dialog/template-dialog.js';
 import { showProtocolGuide } from './screen/dialog/protocol-dialog.js';
-import { Orchestrator } from './orchestration/orchestrator.js';
+import {
+  showActivityDialog,
+  type ActivityDialogHandle,
+} from './screen/dialog/activity-dialog.js';
+import {
+  Orchestrator,
+  type TaskTargetExpectation,
+} from './orchestration/orchestrator.js';
 import { PreviewPanel } from './panels/preview-panel.js';
 import { FilePanel } from './panels/file-panel.js';
 import { TerminalPanel } from './panels/terminal-panel.js';
 import { MarkdownEditor } from './editor/markdown-editor.js';
-import { AgentManager } from './agents/agent-manager.js';
-import { copyFiles, moveFiles, deleteFiles, createDirectory } from './file-manager/file-operations.js';
+import {
+  AgentManager,
+  type AgentLifecycleEvent,
+} from './agents/agent-manager.js';
+import type { AgentType } from './agents/types.js';
+import {
+  createDemoAgentLaunchSpec,
+  DEMO_AGENT_ROLES,
+  DEMO_AGENT_ROLE_ORDER,
+  type DemoAgentRole,
+} from './demo/demo-agents.js';
+import {
+  copyFiles,
+  moveFile,
+  moveFiles,
+  deleteFiles,
+  createDirectory,
+  validateEntryName,
+} from './file-manager/file-operations.js';
+import type { FileEntry } from './file-manager/types.js';
 import { startWatching, stopWatching } from './file-manager/file-watcher.js';
 import { appEvents } from './utils/events.js';
 import { formatDate } from './utils/format.js';
 import { logger } from './utils/logger.js';
-import { isDialogActive } from './utils/dialog-state.js';
+import { closeDialogsForScreen, isDialogActive } from './utils/dialog-state.js';
 import { showToast, showErrorToast } from './screen/toast.js';
 import { showWelcomeDialog } from './screen/dialog/welcome-dialog.js';
+import {
+  showPanelNavigatorDialog,
+  type PanelSummary,
+} from './screen/dialog/panel-navigator-dialog.js';
 import { buildVimLaunchSpec, resolveCtrlGAction } from './utils/shortcut-routing.js';
+import { formatUserError, sanitizeUserText } from './utils/user-facing-errors.js';
+import type { PanelDensity } from './panel-limits.js';
+import {
+  CODEX_MICRO_BINDINGS,
+  type CodexMicroAction,
+} from './hardware/codex-micro.js';
+import {
+  CodexMicroNativeBridge,
+  type CodexMicroDeviceStatus,
+  type CodexMicroHardwareEvent,
+} from './hardware/codex-micro-native.js';
+import {
+  detectCodexDecision,
+  type CodexDecisionAction,
+} from './hardware/codex-decision.js';
+import {
+  showCodexMicroTestDialog,
+  type CodexMicroTestDialogHandle,
+} from './screen/dialog/codex-micro-test-dialog.js';
+import { NOOP_CAPTURE } from './capture/index.js';
+import type { CaptureSink } from './capture/types.js';
+import type { StatusBarInfo } from './screen/status-bar.js';
+
+const RECOMMENDED_CONFERENCE_COLUMNS = 100;
+const RECOMMENDED_CONFERENCE_ROWS = 24;
+const CODEX_MICRO_DECISION_LEASE_MS = 5_000;
+const CODEX_MICRO_CLOCK_SKEW_MS = 1_000;
+
+interface PendingCodexMicroDecision {
+  action: CodexDecisionAction;
+  event: CodexMicroHardwareEvent;
+  controller: ConfirmDialogController | null;
+  expiresAt: number;
+  timeout: ReturnType<typeof setTimeout> | null;
+}
+
+export interface AppLaunchOptions extends ExplicitLaunchOptions {
+  /** Explicit launch-scoped recorder; never persisted in application config. */
+  capture?: CaptureSink;
+  onShutdown?: () => void | Promise<void>;
+  onSignalOwnership?: () => void;
+}
 
 export class App {
   private screen!: blessed.Widgets.Screen;
-  private config: AppConfig;
+  private config: NormalizedAppConfig;
   private theme: Theme;
   private layout!: LayoutManager;
   private agentManager: AgentManager;
@@ -40,43 +119,129 @@ export class App {
   private statusBar!: blessed.Widgets.BoxElement;
   private functionBar!: blessed.Widgets.BoxElement;
   private workingDir: string;
+  private launch: ResolvedLaunchOptions;
+  private onShutdown?: () => void | Promise<void>;
+  private onSignalOwnership?: () => void;
+  private destructiveTransitionInProgress = false;
+  private fullScreenOverlayActive = false;
+  private shutdownPromise: Promise<void> | null = null;
+  private disposePromise: Promise<void> | null = null;
+  private disposalStarted = false;
+  private demoStarted = false;
+  private demoPanelRoles = new Map<number, DemoAgentRole>();
+  private demoRollbackPromise: Promise<void> | null = null;
+  private activityDialog: ActivityDialogHandle | null = null;
+  private codexMicroTestDialog: CodexMicroTestDialogHandle | null = null;
+  private codexMicroBridge: CodexMicroNativeBridge | null = null;
+  private codexMicroStatus: CodexMicroDeviceStatus = {
+    state: 'starting',
+    transport: 'unknown',
+    connectionEpoch: null,
+  };
+  private pendingCodexMicroDecision: PendingCodexMicroDecision | null = null;
+  private codexMicroKeyboardWarningShown = false;
+  private unsubscribeCodexMicroStatus: (() => void) | null = null;
+  private unsubscribeCodexMicroInput: (() => void) | null = null;
+  private unsubscribeAgentLifecycle: (() => void) | null = null;
+  private watcherStarted = false;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private fileChangedHandler: (() => void) | null = null;
+  private processHandlersInstalled = false;
+  private capture: CaptureSink = NOOP_CAPTURE;
+  private unsubscribeCaptureLifecycle: (() => void) | null = null;
+  private captureStatusTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(workingDir?: string, overrides?: { theme?: string; panels?: number; showHidden?: boolean }) {
-    this.config = loadConfig();
-    if (overrides?.theme) this.config.theme = overrides.theme;
-    if (overrides?.panels && [2, 3, 4].includes(overrides.panels)) {
-      this.config.panelCount = overrides.panels as 2 | 3 | 4;
+  private readonly handleUncaughtException = (err: Error): void => {
+    if (err instanceof TypeError && err.stack?.includes('blessed')) {
+      logger.error('blessed render error (suppressed)', err);
+      return;
     }
-    if (overrides?.showHidden !== undefined) this.config.showHidden = overrides.showHidden;
+    logger.error('Uncaught exception', err);
+    this.markCaptureIncomplete('uncaught_exception');
+    void this.shutdown(1);
+  };
+
+  private readonly handleUnhandledRejection = (reason: unknown): void => {
+    logger.error('Unhandled promise rejection (suppressed)', reason);
+    this.markCaptureIncomplete('unhandled_rejection');
+  };
+
+  private readonly handleSigint = (): void => { void this.shutdown(130); };
+  private readonly handleSighup = (): void => { void this.shutdown(129); };
+  private readonly handleSigterm = (): void => { void this.shutdown(143); };
+
+  constructor(workingDir?: string, options: AppLaunchOptions = {}) {
+    this.launch = resolveLaunchOptions(loadConfig(), options);
+    this.config = this.launch.config;
     this.theme = getTheme(this.config.theme);
     this.workingDir = workingDir || process.cwd();
-    this.agentManager = new AgentManager();
+    this.onShutdown = options.onShutdown;
+    this.onSignalOwnership = options.onSignalOwnership;
+    this.agentManager = new AgentManager(this.config.agents, this.config.agentProfiles);
+    this.capture = options.capture ?? NOOP_CAPTURE;
+    if (this.capture.mode !== 'off') {
+      // Independent of the UI subscriber, which is removed before shutdown exits.
+      this.unsubscribeCaptureLifecycle = this.agentManager.onLifecycle((event) => {
+        try {
+          this.capture.record({
+            type: event.type === 'exited' ? 'session.end' : 'session.start',
+            actor: { sessionId: event.sessionId, panel: event.panelIndex + 1, agentType: event.agentType },
+            reason: event.type === 'restarted' ? 'restarted' : event.type === 'exited' ? 'session_exit' : 'launched',
+          });
+        } catch {
+          this.markCaptureIncomplete('lifecycle_capture_failed');
+        }
+      });
+    }
   }
 
   async run(): Promise<void> {
-    // Catch blessed rendering errors (orphaned children, null parent, etc.)
-    // These are non-fatal — the screen recovers on next render cycle.
-    process.on('uncaughtException', (err) => {
-      if (err instanceof TypeError && err.stack?.includes('blessed')) {
-        logger.error('blessed render error (suppressed)', err);
-        return;
+    try {
+      await this.runApplication();
+    } catch (error) {
+      this.markCaptureIncomplete('startup_failure');
+      try {
+        await this.dispose();
+      } catch (rollbackError) {
+        logger.error('Application startup rollback failed', rollbackError);
       }
-      // Re-throw non-blessed errors
-      logger.error('Uncaught exception', err);
-      process.exit(1);
-    });
+      logger.close();
+      throw error;
+    }
+  }
 
-    // Prevent unhandled promise rejections from crashing the process.
-    // These can happen when async key handlers fail (e.g. agent stdin closes
-    // during protocol injection).
-    process.on('unhandledRejection', (reason) => {
-      logger.error('Unhandled promise rejection (suppressed)', reason);
-    });
+  private installProcessHandlers(): void {
+    if (this.processHandlersInstalled) return;
+    this.processHandlersInstalled = true;
+    process.on('uncaughtException', this.handleUncaughtException);
+    process.on('unhandledRejection', this.handleUnhandledRejection);
+    process.on('SIGINT', this.handleSigint);
+    process.on('SIGHUP', this.handleSighup);
+    process.on('SIGTERM', this.handleSigterm);
+    const onSignalOwnership = this.onSignalOwnership;
+    this.onSignalOwnership = undefined;
+    onSignalOwnership?.();
+  }
+
+  private removeProcessHandlers(): void {
+    if (!this.processHandlersInstalled) return;
+    this.processHandlersInstalled = false;
+    process.removeListener('uncaughtException', this.handleUncaughtException);
+    process.removeListener('unhandledRejection', this.handleUnhandledRejection);
+    process.removeListener('SIGINT', this.handleSigint);
+    process.removeListener('SIGHUP', this.handleSighup);
+    process.removeListener('SIGTERM', this.handleSigterm);
+  }
+
+  private async runApplication(): Promise<void> {
+    this.installProcessHandlers();
 
     this.screen = blessed.screen({
       smartCSR: true,
       fullUnicode: true,
-      title: 'Agents Commander',
+      title: this.launch.conference
+        ? 'Agents Commander — Conference Mode'
+        : 'Agents Commander',
       cursor: {
         artificial: true,
         shape: 'block',
@@ -89,8 +254,22 @@ export class App {
     this.statusBar = createStatusBar(this.screen, this.theme);
 
     this.layout = new LayoutManager(this.screen, this.theme, this.config);
-    await this.layout.initialize(this.workingDir, this.config.panelCount);
-    this.orchestrator = new Orchestrator(this.layout, this.agentManager, this.screen, this.config);
+    await this.layout.initialize(
+      this.workingDir,
+      this.config.panelCount,
+      this.config.panelDensity,
+    );
+    this.layout.onOpenFile = (entry) => {
+      void this.openPreview(entry).catch((err) => {
+        logger.error(`Failed to preview file: ${entry.fullPath}`, err);
+        showErrorToast(this.screen, formatUserError('Preview', err));
+      });
+    };
+    this.orchestrator = new Orchestrator(this.layout, this.agentManager, this.screen, this.config, this.capture);
+    this.unsubscribeAgentLifecycle = this.agentManager.onLifecycle((event) => {
+      this.handleAgentLifecycle(event);
+      this.updateStatus();
+    });
 
     // Update status bar when panel is focused via mouse click
     this.layout.onPanelFocused = () => {
@@ -98,44 +277,948 @@ export class App {
       this.screen.render();
     };
 
+    this.watcherStarted = true;
     startWatching(this.workingDir, this.config.watchDebounce);
 
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    appEvents.on('file:changed', () => {
-      if (refreshTimer) return;
-      refreshTimer = setTimeout(() => {
-        refreshTimer = null;
+    this.fileChangedHandler = () => {
+      if (this.refreshTimer) return;
+      this.refreshTimer = setTimeout(() => {
+        this.refreshTimer = null;
         try {
           this.layout.refreshAll();
         } catch (err) {
           logger.error('Failed to refresh layout after file change', err);
         }
       }, 250); // Throttle refreshes to max 4 per second
-    });
+    };
+    appEvents.on('file:changed', this.fileChangedHandler);
 
     this.setupGlobalKeys();
+    this.startCodexMicroNativeInput();
     this.updateStatus();
 
     this.screen.on('resize', () => {
       this.layout.handleResize();
+      this.updateStatus();
     });
 
     this.screen.render();
     logger.info('Agents Commander started', { cwd: this.workingDir });
 
-    // Show welcome splash on startup
-    await showWelcomeDialog(this.screen, this.theme);
+    if (!this.launch.skipWelcome) {
+      await showWelcomeDialog(this.screen, this.theme);
+    }
+    this.warnCodexMicroKeyboardFallback();
+    if (!this.disposalStarted && this.launch.demo) {
+      await this.offerOfflineDemo();
+    }
+    if (!this.disposalStarted && this.launch.codexMicroTest) {
+      this.openCodexMicroTest(false);
+    }
   }
 
   // ── Menu actions ──────────────────────────────────────────────
+
+  private markCaptureIncomplete(reason: string): void {
+    try { this.capture?.markIncomplete(reason); } catch { /* Recording cannot break the UI. */ }
+  }
+
+  /** Recorder status callbacks are isolated from startup, shutdown and UI failures. */
+  refreshCaptureStatus(): void {
+    if (this.disposalStarted || !this.layout || !this.statusBar || !this.screen) return;
+    if (this.captureStatusTimer) return;
+    this.captureStatusTimer = setTimeout(() => {
+      this.captureStatusTimer = null;
+      if (this.disposalStarted) return;
+      try { this.updateStatus(); } catch { /* Recorder callbacks must not break routing. */ }
+    }, 50);
+  }
+
+  private captureStatus(): Pick<StatusBarInfo, 'captureLabel' | 'captureEvents'> {
+    if (!this.capture || this.capture.mode === 'off') return {};
+    try {
+      const status = this.capture.snapshot();
+      return {
+        captureLabel: status.state === 'incomplete' || status.state === 'complete'
+          ? 'REC:INCOMPLETE'
+          : status.mode === 'protocol' ? 'REC:PROTOCOL' : 'REC:METADATA',
+        captureEvents: status.events,
+      };
+    } catch {
+      return { captureLabel: 'REC:INCOMPLETE' };
+    }
+  }
 
   private actionHelp(): void {
     showHelpDialog(this.screen, this.theme);
   }
 
+  private actionActivity(): void {
+    const dialog = showActivityDialog(
+      this.screen,
+      this.theme,
+      (limit) => this.orchestrator.getRecentActivity(limit),
+    );
+    if (dialog) this.activityDialog = dialog;
+  }
+
+  private openCodexMicroTest(markHardwareAction = true): void {
+    this.codexMicroTestDialog = showCodexMicroTestDialog(this.screen, this.theme, {
+      inputMode: this.config.hardware.codexMicro.inputMode,
+      initialStatus: this.codexMicroStatus,
+      decisionControls: this.config.hardware.codexMicro.decisionControls,
+    });
+    if (markHardwareAction) {
+      this.codexMicroTestDialog.recordAction('open-test-overlay');
+    }
+  }
+
+  private startCodexMicroNativeInput(): void {
+    const micro = this.config.hardware.codexMicro;
+    if (!micro.enabled || micro.inputMode !== 'native' || this.codexMicroBridge) return;
+
+    const bridge = new CodexMicroNativeBridge();
+    this.codexMicroBridge = bridge;
+    this.unsubscribeCodexMicroStatus = bridge.onStatus((status) => {
+      this.handleCodexMicroStatus(status);
+    });
+    this.unsubscribeCodexMicroInput = bridge.onInput((event) => {
+      this.handleCodexMicroHardwareEvent(event);
+    });
+    bridge.start();
+  }
+
+  private warnCodexMicroKeyboardFallback(): void {
+    const micro = this.config.hardware.codexMicro;
+    if (
+      this.codexMicroKeyboardWarningShown
+      || this.disposalStarted
+      || !micro.enabled
+      || micro.inputMode !== 'keyboard'
+    ) return;
+    this.codexMicroKeyboardWarningShown = true;
+    showErrorToast(
+      this.screen,
+      'Codex Micro keyboard fallback has NO reader guard; keep ChatGPT fully quit',
+    );
+  }
+
+  private handleCodexMicroStatus(status: CodexMicroDeviceStatus): void {
+    const previous = this.codexMicroStatus;
+    this.codexMicroStatus = status;
+    this.codexMicroTestDialog?.setDeviceStatus(status);
+
+    const pending = this.pendingCodexMicroDecision;
+    if (
+      pending
+      && (
+        status.state !== 'connected'
+        || status.ownership !== 'guarded'
+        || status.connectionEpoch !== pending.event.connectionEpoch
+      )
+    ) {
+      if (pending.timeout) clearTimeout(pending.timeout);
+      pending.controller?.cancel();
+      this.pendingCodexMicroDecision = null;
+    }
+
+    if (
+      !this.disposalStarted
+      && status.state === 'busy'
+      && previous.state !== 'busy'
+    ) {
+      showErrorToast(
+        this.screen,
+        'Codex Micro is open in ChatGPT or another app; Commander controls are paused',
+      );
+    } else if (
+      !this.disposalStarted
+      && previous.state !== 'connected'
+      && status.state === 'connected'
+      && status.ownership === 'guarded'
+    ) {
+      const transport = status.transport === 'unknown' ? '' : ` (${status.transport.toUpperCase()})`;
+      showToast(this.screen, `Codex Micro ready for Commander${transport}`, 2000);
+    } else if (
+      !this.disposalStarted
+      && previous.state === 'connected'
+      && status.state !== 'connected'
+    ) {
+      showErrorToast(this.screen, 'Codex Micro disconnected; hardware actions are paused');
+    }
+
+    if (this.layout && this.statusBar && this.screen) this.updateStatus();
+  }
+
+  private isCurrentCodexMicroEvent(event: CodexMicroHardwareEvent): boolean {
+    const now = Date.now();
+    return this.codexMicroStatus.state === 'connected'
+      && this.codexMicroStatus.ownership === 'guarded'
+      && this.codexMicroStatus.connectionEpoch === event.connectionEpoch
+      && event.receivedAt <= now + CODEX_MICRO_CLOCK_SKEW_MS
+      && now - event.receivedAt <= CODEX_MICRO_DECISION_LEASE_MS;
+  }
+
+  private handleCodexMicroHardwareEvent(event: CodexMicroHardwareEvent): void {
+    if (this.disposalStarted || !this.isCurrentCodexMicroEvent(event)) return;
+
+    if (this.codexMicroTestDialog?.isOpen()) {
+      this.codexMicroTestDialog.recordHardwareInput(event.input, event.action);
+      return;
+    }
+
+    const pending = this.pendingCodexMicroDecision;
+    if (pending) {
+      if (Date.now() > pending.expiresAt) {
+        if (pending.timeout) clearTimeout(pending.timeout);
+        this.pendingCodexMicroDecision = null;
+        pending.controller?.cancel();
+        showErrorToast(this.screen, 'Codex Micro confirmation expired; press the decision key again');
+        return;
+      }
+      if (
+        pending.action === event.action
+        && pending.event.input === event.input
+        && pending.event.connectionEpoch === event.connectionEpoch
+        && event.sequence > pending.event.sequence
+        && (event.action === 'approve' || event.action === 'reject')
+      ) {
+        pending.event = event;
+        pending.controller?.confirm();
+      }
+      return;
+    }
+
+    if (
+      this.destructiveTransitionInProgress
+      || isDialogActive()
+      || this.fullScreenOverlayActive
+    ) return;
+
+    try {
+      const result = this.runCodexMicroAction(event.action, event);
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        (result as Promise<void>).catch((error) => {
+          logger.error('Codex Micro hardware action failed', error);
+        });
+      }
+    } catch (error) {
+      logger.error('Codex Micro hardware action failed', error);
+    }
+  }
+
+  private currentCodexDecision(action: CodexDecisionAction): {
+    terminal: TerminalPanel;
+    sessionId: string;
+    sessionGeneration: number;
+    inputGeneration: bigint;
+    fingerprint: string;
+    selectedLabel: string;
+  } | null {
+    const terminal = this.layout.activeTerminalPanel;
+    if (!terminal?.isRunning) return null;
+    if (!terminal.inputSynchronized) return null;
+    if (this.agentManager.getAgentType(terminal.panelIndex) !== 'codex') return null;
+    const sessionId = this.agentManager.getAgentSessionId(terminal.panelIndex);
+    if (!sessionId) return null;
+    const inputGeneration = terminal.inputGeneration;
+    const detected = detectCodexDecision(terminal.getVisibleGridLines(), action);
+    if (
+      !detected
+      || !terminal.inputSynchronized
+      || terminal.inputGeneration !== inputGeneration
+    ) return null;
+    return {
+      terminal,
+      sessionId,
+      sessionGeneration: terminal.sessionGeneration,
+      inputGeneration,
+      fingerprint: detected.fingerprint,
+      selectedLabel: detected.selectedLabel,
+    };
+  }
+
+  private async actionCodexMicroDecision(
+    action: CodexDecisionAction,
+    hardwareEvent?: CodexMicroHardwareEvent,
+  ): Promise<void> {
+    if (this.config.hardware.codexMicro.inputMode !== 'native') {
+      showErrorToast(
+        this.screen,
+        'Codex Micro decisions require native input with the sole-reader guard',
+      );
+      return;
+    }
+    if (
+      this.codexMicroStatus.state !== 'connected'
+      || this.codexMicroStatus.ownership !== 'guarded'
+    ) {
+      showErrorToast(this.screen, 'Codex Micro sole-reader guard is not active; no input was sent');
+      return;
+    }
+    if (!this.config.hardware?.codexMicro.decisionControls) {
+      showErrorToast(this.screen, 'Codex Micro decision controls are disabled in configuration');
+      return;
+    }
+    if (hardwareEvent && !this.isCurrentCodexMicroEvent(hardwareEvent)) return;
+
+    const expected = this.currentCodexDecision(action);
+    if (!expected) {
+      showErrorToast(
+        this.screen,
+        action === 'approve'
+          ? 'Approve once requires a selected one-time option in the active managed Codex prompt'
+          : 'Reject requires a selected reject option in the active managed Codex prompt',
+      );
+      return;
+    }
+
+    const title = action === 'approve' ? 'Codex Micro — Approve Once' : 'Codex Micro — Reject';
+    const message = `Submit the currently selected Codex option “${expected.selectedLabel}”? `
+      + 'Commander will send Enter only if the complete prompt is still unchanged.'
+      + (hardwareEvent ? ' Press the same device key again within 5 seconds to confirm.' : '');
+    let pending: PendingCodexMicroDecision | null = null;
+    let confirmed: boolean;
+    if (hardwareEvent) {
+      pending = {
+        action,
+        event: hardwareEvent,
+        controller: null,
+        expiresAt: Date.now() + CODEX_MICRO_DECISION_LEASE_MS,
+        timeout: null,
+      };
+      this.pendingCodexMicroDecision = pending;
+      const decision = pending;
+      decision.timeout = setTimeout(() => {
+        if (this.pendingCodexMicroDecision !== decision) return;
+        this.pendingCodexMicroDecision = null;
+        decision.controller?.cancel();
+        if (!this.disposalStarted) {
+          showErrorToast(this.screen, 'Codex Micro confirmation expired; press the decision key again');
+        }
+      }, CODEX_MICRO_DECISION_LEASE_MS);
+      decision.timeout.unref?.();
+      try {
+        confirmed = await showConfirmDialog(this.screen, this.theme, title, message, {
+          externalConfirmOnly: true,
+          onReady: (controller) => {
+            if (this.pendingCodexMicroDecision === pending) pending!.controller = controller;
+          },
+        });
+      } finally {
+        if (pending.timeout) clearTimeout(pending.timeout);
+        pending.timeout = null;
+        if (this.pendingCodexMicroDecision === pending) this.pendingCodexMicroDecision = null;
+      }
+    } else {
+      confirmed = await showConfirmDialog(this.screen, this.theme, title, message);
+    }
+    if (!confirmed || this.disposalStarted) return;
+
+    if (
+      this.codexMicroStatus.state !== 'connected'
+      || this.codexMicroStatus.ownership !== 'guarded'
+    ) {
+      showErrorToast(this.screen, 'Codex Micro sole-reader guard changed; no input was sent');
+      return;
+    }
+
+    const confirmedHardwareEvent = pending?.event;
+    if (
+      confirmedHardwareEvent
+      && (
+        Date.now() > pending!.expiresAt
+        || !this.isCurrentCodexMicroEvent(confirmedHardwareEvent)
+      )
+    ) {
+      showErrorToast(this.screen, 'Codex Micro confirmation expired or disconnected; no input was sent');
+      return;
+    }
+
+    const current = this.currentCodexDecision(action);
+    if (
+      !current
+      || current.terminal !== expected.terminal
+      || current.sessionId !== expected.sessionId
+      || current.sessionGeneration !== expected.sessionGeneration
+      || current.inputGeneration !== expected.inputGeneration
+      || current.fingerprint !== expected.fingerprint
+    ) {
+      showErrorToast(this.screen, 'Codex prompt changed during confirmation; no input was sent');
+      return;
+    }
+
+    const submitted = await this.orchestrator.submitGuardedCodexDecision(
+      expected.terminal,
+      {
+        action,
+        sessionId: expected.sessionId,
+        sessionGeneration: expected.sessionGeneration,
+        inputGeneration: expected.inputGeneration,
+        fingerprint: expected.fingerprint,
+        ...(confirmedHardwareEvent
+          ? {
+              validateOrigin: () => (
+                Date.now() <= pending!.expiresAt
+                && this.isCurrentCodexMicroEvent(confirmedHardwareEvent)
+              ),
+            }
+          : {}),
+      },
+    );
+    if (!submitted) {
+      showErrorToast(this.screen, 'Codex prompt or session changed; no input was sent');
+      return;
+    }
+    showToast(
+      this.screen,
+      action === 'approve' ? 'Submitted selected one-time approval' : 'Submitted selected rejection',
+    );
+  }
+
+  private runCodexMicroAction(
+    action: CodexMicroAction,
+    hardwareEvent?: CodexMicroHardwareEvent,
+  ): void | Promise<void> {
+    switch (action) {
+      case 'previous-panel':
+        this.layout.focusPanelOffset(-1);
+        break;
+      case 'next-panel':
+        this.layout.focusPanelOffset(1);
+        break;
+      case 'previous-page':
+        this.layout.focusPageOffset(-1);
+        break;
+      case 'next-page':
+        this.layout.focusPageOffset(1);
+        break;
+      case 'focus-slot-1':
+      case 'focus-slot-2':
+      case 'focus-slot-3':
+      case 'focus-slot-4': {
+        const slot = Number(action.at(-1));
+        if (!this.layout.focusVisibleSlot(slot)) {
+          showErrorToast(this.screen, `Visible panel slot ${slot} is unavailable`);
+        }
+        break;
+      }
+      case 'focus-panel-1':
+      case 'focus-panel-2':
+      case 'focus-panel-3':
+      case 'focus-panel-4':
+      case 'focus-panel-5':
+      case 'focus-panel-6': {
+        const slot = Number(action.at(-1));
+        if (!this.layout.focusWorkspaceSlot(slot)) {
+          showErrorToast(this.screen, `Active workspace slot ${slot} is unavailable`);
+        }
+        break;
+      }
+      case 'add-panel':
+        return this.actionAddPanel();
+      case 'cycle-density':
+        return this.actionCyclePanelDensity();
+      case 'open-navigator':
+        return this.actionNavigatePanel();
+      case 'open-activity':
+        this.actionActivity();
+        return;
+      case 'approve':
+      case 'reject':
+        return this.actionCodexMicroDecision(action, hardwareEvent);
+      case 'open-test-overlay':
+        this.openCodexMicroTest();
+        return;
+    }
+    this.updateStatus();
+    this.screen.render();
+  }
+
+  private assertLaunchAllowed(action: string): void {
+    if (this.disposalStarted) {
+      throw new Error(`Cannot ${action}; application shutdown has begun`);
+    }
+  }
+
+  private async waitForDemoRollback(): Promise<void> {
+    while (this.demoRollbackPromise) {
+      await this.demoRollbackPromise;
+    }
+  }
+
+  private beginDemoRollback(panelIndices: readonly number[]): Promise<void> {
+    const previous = this.demoRollbackPromise ?? Promise.resolve();
+    const uniquePanelIndices = [...new Set(panelIndices)];
+    const rollback = previous.then(async () => {
+      await Promise.allSettled(
+        uniquePanelIndices.map((panelIndex) => this.stopTerminalSession(panelIndex)),
+      );
+    });
+
+    let tracked!: Promise<void>;
+    tracked = rollback.finally(() => {
+      if (this.demoRollbackPromise === tracked) {
+        this.demoRollbackPromise = null;
+      }
+    });
+    this.demoRollbackPromise = tracked;
+    return tracked;
+  }
+
+  private async offerOfflineDemo(): Promise<void> {
+    await this.waitForDemoRollback();
+    if (this.disposalStarted) return;
+
+    const confirmed = await showConfirmDialog(
+      this.screen,
+      this.theme,
+      'Start Offline Conference Demo',
+      'Launch two deterministic local demo agents now? The demo uses no network or API credentials.',
+    );
+    if (this.disposalStarted) return;
+    if (!confirmed) {
+      showToast(this.screen, 'Offline demo was not started — press Ctrl+O to retry');
+      return;
+    }
+
+    try {
+      await this.startOfflineDemo();
+    } catch (error) {
+      logger.error('Offline demo failed to start', error);
+      if (this.disposalStarted) return;
+      showErrorToast(
+        this.screen,
+        `Offline demo failed: ${sanitizeUserText(
+          error instanceof Error ? error.message : String(error),
+          160,
+        )}. Press Ctrl+O to retry.`,
+      );
+    }
+  }
+
+  private async actionOrchestrateOrDemo(): Promise<void> {
+    await this.waitForDemoRollback();
+    if (this.disposalStarted) return;
+
+    const demoRolesAreRunning = [...this.demoPanelRoles.keys()].some(
+      (panelId) => this.hasLiveTerminalSession(panelId),
+    );
+    if (this.launch.demo && !demoRolesAreRunning) {
+      this.demoStarted = false;
+      await this.offerOfflineDemo();
+      return;
+    }
+    await this.actionOrchestrate();
+  }
+
+  private async startOfflineDemo(): Promise<void> {
+    await this.waitForDemoRollback();
+    this.assertLaunchAllowed('start the offline demo');
+    if (this.demoStarted) return;
+    this.demoStarted = true;
+    this.demoPanelRoles.clear();
+    const launchedPanels: number[] = [];
+    const terminals: TerminalPanel[] = [];
+
+    try {
+      while (this.layout.panelCount < DEMO_AGENT_ROLE_ORDER.length) {
+        const added = await this.layout.addPanel();
+        if (!added) throw new Error('Unable to create the two demo panels');
+      }
+      const demoPanelIds = this.layout.workspacePanelIds.slice(
+        0,
+        DEMO_AGENT_ROLE_ORDER.length,
+      );
+
+      for (let index = 0; index < DEMO_AGENT_ROLE_ORDER.length; index++) {
+        this.assertLaunchAllowed('launch an offline demo role');
+        const role = DEMO_AGENT_ROLE_ORDER[index];
+        const panelId = demoPanelIds[index];
+        if (this.hasLiveTerminalSession(panelId)) {
+          await this.stopTerminalSession(panelId);
+          this.assertLaunchAllowed('launch an offline demo role');
+        }
+        if (!this.layout.hasPanel(panelId)) {
+          throw new Error(`Demo panel ${panelId + 1} is no longer available`);
+        }
+        const terminal = this.layout.convertToTerminal(panelId);
+
+        // Register the role before launch so even an immediately failing child
+        // is attributed to the demo rather than treated as a generic session.
+        this.demoPanelRoles.set(panelId, role);
+        const protocolCapability = this.orchestrator.createProtocolCapability();
+        const launched = this.agentManager.launchInternalAgent(
+          createDemoAgentLaunchSpec(role, undefined, protocolCapability),
+          terminal,
+        );
+        if (!launched) {
+          this.demoPanelRoles.delete(panelId);
+          throw new Error(`Unable to launch the ${role} role`);
+        }
+        launchedPanels.push(panelId);
+        terminals.push(terminal);
+        this.orchestrator.connectPanel(terminal);
+        if (!this.orchestrator.armInternalProtocol(terminal, protocolCapability)) {
+          throw new Error(`Unable to arm Commander protocol for the ${role} role`);
+        }
+      }
+
+      this.layout.setActivePanel(demoPanelIds[0]);
+      this.updateStatus();
+      this.screen.render();
+
+      // Both scanner-enabled sessions are registered before the explicit
+      // start token is sent, so the first SEND marker cannot outrun routing.
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+      this.assertLaunchAllowed('send the offline demo START token');
+      if (!await this.orchestrator.sendProgrammaticInput(terminals[0], 'START', true)) {
+        throw new Error('Coordinator session closed before the START token was sent');
+      }
+      showToast(this.screen, 'Offline demo started — press F12 for routed activity');
+    } catch (error) {
+      this.demoStarted = false;
+      this.demoPanelRoles.clear();
+      await this.beginDemoRollback(launchedPanels);
+      throw error;
+    }
+  }
+
+  private handleAgentLifecycle(event: AgentLifecycleEvent): void {
+    if (event.type !== 'exited') return;
+    const role = this.demoPanelRoles.get(event.panelIndex);
+    if (!role) return;
+    this.demoPanelRoles.delete(event.panelIndex);
+
+    const processFailed = event.reason === 'spawn-error'
+      || (
+        event.reason === 'process-exit'
+        && (
+          event.signal !== null
+          || (event.exitCode !== null && event.exitCode !== 0)
+        )
+      );
+    if (!processFailed) {
+      if (event.reason !== 'process-exit') {
+        this.demoStarted = false;
+        const peerPanels = [...this.demoPanelRoles.keys()];
+        this.demoPanelRoles.clear();
+        void this.beginDemoRollback(peerPanels);
+      }
+      return;
+    }
+    if (!this.demoStarted) return;
+
+    this.demoStarted = false;
+    const peerPanels = [...this.demoPanelRoles.keys()];
+    this.demoPanelRoles.clear();
+
+    const detail = event.reason === 'spawn-error'
+      ? ' (spawn error)'
+      : event.signal
+      ? ` (${event.signal})`
+      : event.exitCode === null
+        ? ''
+        : ` (code ${event.exitCode})`;
+    logger.error('Offline demo role exited unexpectedly', {
+      role,
+      panelIndex: event.panelIndex,
+      exitCode: event.exitCode,
+      signal: event.signal,
+      reason: event.reason,
+    });
+    const rollback = this.beginDemoRollback(peerPanels);
+    void rollback.then(() => {
+      if (this.disposalStarted) return;
+      showErrorToast(
+        this.screen,
+        `${DEMO_AGENT_ROLES[role].name} stopped unexpectedly${detail}. `
+          + 'The peer was stopped; press Ctrl+O to retry.',
+        5000,
+      );
+    });
+  }
+
   private async actionAddPanel(): Promise<void> {
-    const added = await this.layout.addPanel();
-    if (added) this.updateStatus();
+    await this.runDestructiveTransition(async () => {
+      const added = await this.layout.addPanel();
+      if (this.disposalStarted) return;
+      if (added) this.updateStatus();
+      else showErrorToast(this.screen, 'Cannot add another panel: workspace or panel ID limit reached');
+    });
+  }
+
+  private actionToggleFullscreen(): void {
+    this.layout.toggleFullscreen();
+    this.updateStatus();
+  }
+
+  /** Duplicate configuration and directory, never a live session or its capability. */
+  private async actionDuplicatePanel(): Promise<void> {
+    await this.runDestructiveTransition(async () => {
+      const source = this.layout.activePanel;
+      const terminalSource = source instanceof TerminalPanel;
+      const cwd = source instanceof FilePanel ? source.currentPath : source.workingDir;
+      const managed = terminalSource ? this.getManagedSession(source.panelIndex) : undefined;
+      if (managed?.profileId === 'internal') {
+        showErrorToast(this.screen, 'Scripted demo roles cannot be cloned. Use F2 to launch an agent in a new panel.');
+        return;
+      }
+      if (managed) {
+        const error = this.agentManager.getProfileLaunchError(managed.profileId, managed.type);
+        if (error) {
+          showErrorToast(this.screen, `Cannot clone agent: ${error}`);
+          return;
+        }
+      }
+
+      // Adding a panel awaits a directory read; focus can change through a mouse
+      // click meanwhile. Resolve the newly allocated stable ID, not activePanel.
+      const previousIds = new Set(this.layout.workspacePanelIds);
+      try {
+        const added = await this.layout.addPanel(cwd);
+        if (this.disposalStarted) return;
+        if (!added) {
+          showErrorToast(this.screen, 'Cannot clone panel: workspace or panel ID limit reached');
+          return;
+        }
+        const newIds = this.layout.workspacePanelIds.filter((id) => !previousIds.has(id));
+        if (newIds.length !== 1) throw new Error('Cannot resolve the newly created panel');
+        const newId = newIds[0];
+        if (terminalSource) {
+          const terminal = this.layout.convertToTerminal(newId);
+          if (managed) {
+            const launched = this.agentManager.launchProfile(managed.profileId, terminal);
+            if (!launched) {
+              showErrorToast(this.screen, `Agent launch failed in P${newId + 1}; the source session is unchanged`);
+              this.layout.setActivePanel(newId);
+              this.updateStatus();
+              return;
+            }
+            this.orchestrator.connectPanel(terminal);
+          }
+        }
+        this.layout.setActivePanel(newId);
+        this.updateStatus();
+        showToast(this.screen, managed
+          ? `P${newId + 1}: fresh ${sanitizeUserText(managed.profileLabel ?? managed.name, 60)} session. Ctrl+P to enable protocol.`
+          : terminalSource
+            ? `P${newId + 1}: idle terminal copied at the same directory; running commands were not replayed`
+            : `P${newId + 1}: file panel copied at the same directory`);
+      } catch (error) {
+        logger.error('Panel duplication failed', error);
+        if (!this.disposalStarted) {
+          this.updateStatus();
+          showErrorToast(this.screen, 'Panel duplication failed; the source session was not changed');
+        }
+      }
+    });
+  }
+
+  private async actionMovePanel(): Promise<void> {
+    await this.runDestructiveTransition(async () => {
+      const source = this.layout.activePanel;
+      const position = this.layout.getWorkspacePosition(source.panelIndex);
+      if (position === null) return;
+      const value = await showInputDialog(
+        this.screen, this.theme, `Move P${source.panelIndex + 1}`,
+        `New position (1–${this.layout.panelCount}). Protocol ID stays P${source.panelIndex + 1}.`,
+        String(position),
+      );
+      if (value === null || this.disposalStarted) return;
+      if (this.layout.getPanel(source.panelIndex) !== source) return;
+      const input = value.trim();
+      const target = Number(input);
+      if (!/^\d+$/.test(input) || !Number.isSafeInteger(target) || target < 1 || target > this.layout.panelCount) {
+        showErrorToast(this.screen, `Enter a position from 1 to ${this.layout.panelCount}`);
+        return;
+      }
+      this.layout.movePanel(source.panelIndex, target);
+      this.updateStatus();
+      showToast(this.screen, `P${source.panelIndex + 1} is now at position #${target}; routing identity unchanged`);
+    });
+  }
+
+  private getLiveTerminalSessions(): TerminalPanel[] {
+    const managedPanels = new Set(
+      this.agentManager.getRunningAgents().map((agent) => agent.panelIndex),
+    );
+    return this.layout.terminalPanels.filter(
+      (panel) => panel.isRunning || managedPanels.has(panel.panelIndex),
+    );
+  }
+
+  private getManagedSession(panelIndex: number) {
+    return this.agentManager
+      .getRunningAgents()
+      .find((agent) => agent.panelIndex === panelIndex);
+  }
+
+  private hasLiveTerminalSession(panelIndex: number): boolean {
+    return Boolean(
+      this.layout.getTerminalPanel(panelIndex)?.isRunning ||
+      this.getManagedSession(panelIndex),
+    );
+  }
+
+  private async runDestructiveTransition(action: () => Promise<void>): Promise<void> {
+    if (this.destructiveTransitionInProgress) return;
+    this.destructiveTransitionInProgress = true;
+    try {
+      await action();
+    } finally {
+      this.destructiveTransitionInProgress = false;
+    }
+  }
+
+  private async actionChangeLayout(mode: PanelDensity): Promise<void> {
+    if (mode === this.layout.mode && !this.layout.isFullscreen) return;
+
+    await this.runDestructiveTransition(async () => {
+      try {
+        await this.layout.setMode(mode);
+        this.updateStatus();
+      } catch (err) {
+        logger.error(`Failed to change panel density to ${mode}`, err);
+        showErrorToast(this.screen, 'Panel density change failed — current view was preserved');
+      }
+    });
+  }
+
+  private async actionCyclePanelDensity(): Promise<void> {
+    const densities: readonly PanelDensity[] = ['auto', 2, 3, 4];
+    const currentIndex = densities.indexOf(this.layout.mode);
+    const nextDensity = densities[(currentIndex + 1 + densities.length) % densities.length];
+    await this.actionChangeLayout(nextDensity);
+  }
+
+  private async actionRemovePanel(): Promise<void> {
+    if (this.layout.panelCount <= 1) {
+      showErrorToast(this.screen, 'Keep at least one panel. F10 exits Commander.');
+      return;
+    }
+
+    await this.runDestructiveTransition(async () => {
+      const panelId = this.layout.activePanel.panelIndex;
+      const targetPanel = this.layout.getPanel(panelId);
+      if (!targetPanel) return;
+      const tp = this.layout.getTerminalPanel(panelId);
+      if (this.hasLiveTerminalSession(panelId)) {
+        const label = tp?.sessionName ? ` “${sanitizeUserText(tp.sessionName, 60)}”` : '';
+        const confirmed = await showConfirmDialog(
+          this.screen,
+          this.theme,
+          'Remove Panel',
+          `Panel ${panelId + 1}${label} has a live session. Close it and remove the panel?`,
+        );
+        if (!confirmed) return;
+        if (this.layout.getPanel(panelId) !== targetPanel) return;
+      }
+
+      try {
+        await this.stopTerminalSession(panelId);
+        if (this.layout.getPanel(panelId) !== targetPanel) return;
+
+        const removed = this.layout.removePanel(panelId);
+        if (removed) {
+          this.agentManager.handlePanelRemoval(panelId);
+          this.orchestrator.handlePanelRemoval(panelId);
+          this.updateStatus();
+        }
+      } catch (err) {
+        logger.error(`Failed to remove panel ${panelId + 1}`, err);
+        showErrorToast(this.screen, `Unable to remove Panel ${panelId + 1}`);
+      }
+    });
+  }
+
+  private async actionResetView(): Promise<void> {
+    await this.runDestructiveTransition(async () => {
+      const liveSessions = this.getLiveTerminalSessions();
+      if (liveSessions.length > 0) {
+        const confirmed = await showConfirmDialog(
+          this.screen,
+          this.theme,
+          'Reset View',
+          `${liveSessions.length} live terminal session(s) will be closed. Reset to two file panels?`,
+        );
+        if (!confirmed) return;
+      }
+
+      try {
+        await this.stopAllTerminalSessions();
+        this.orchestrator.resetState();
+        await this.layout.resetToDefault();
+        this.updateStatus();
+        showToast(this.screen, 'Panels reset to default');
+      } catch (err) {
+        logger.error('Failed to reset panel view', err);
+        showErrorToast(this.screen, 'Unable to reset the panel view');
+      }
+    });
+  }
+
+  private async confirmSessionReplacement(panelIndex: number, nextAction: string): Promise<boolean> {
+    const terminal = this.layout.getTerminalPanel(panelIndex);
+    const managed = this.getManagedSession(panelIndex);
+    if (!terminal?.isRunning && !managed) return true;
+    const sessionName = terminal?.sessionName || managed?.name;
+    const label = sessionName
+      ? ` “${sanitizeUserText(sessionName, 60)}”`
+      : '';
+    return showConfirmDialog(
+      this.screen,
+      this.theme,
+      'Replace Session',
+      `Panel ${panelIndex + 1}${label} is running. Close it and ${nextAction}?`,
+    );
+  }
+
+  private async confirmTaskTarget(
+    agentType: AgentType,
+    panelIndex: number,
+    nextAction: string,
+    profileId?: string,
+  ): Promise<TaskTargetExpectation | null> {
+    const targetExpectation = this.orchestrator.captureTaskTarget(panelIndex);
+    if (!targetExpectation) return null;
+    const terminal = this.layout.getTerminalPanel(panelIndex);
+    const managed = this.getManagedSession(panelIndex);
+    const reusesRunningAgent = Boolean(
+      terminal?.isRunning &&
+      managed?.type === agentType &&
+      (profileId === undefined || managed.profileId === profileId),
+    );
+
+    if (reusesRunningAgent || (!terminal?.isRunning && !managed)) {
+      return targetExpectation;
+    }
+    return await this.confirmSessionReplacement(panelIndex, nextAction)
+      ? targetExpectation
+      : null;
+  }
+
+  private async stopTerminalSession(panelIndex: number): Promise<void> {
+    const terminal = this.layout.getTerminalPanel(panelIndex);
+    let termination: Promise<void> = Promise.resolve();
+    if (this.agentManager.hasAgent(panelIndex)) {
+      termination = this.agentManager.killAgent(panelIndex);
+    } else if (terminal) {
+      termination = terminal.killAgent(true);
+    }
+    if (terminal) this.orchestrator.disconnectPanel(panelIndex);
+    await termination;
+  }
+
+  private async stopAllTerminalSessions(): Promise<void> {
+    const terminalPanels = [...this.layout.terminalPanels];
+    const terminations: Array<Promise<void>> = [
+      Promise.resolve(this.agentManager.killAll()),
+      ...terminalPanels.map(
+        (panel) => Promise.resolve(panel.killAgent(true)),
+      ),
+    ];
+    await Promise.allSettled(terminations);
   }
 
   private async actionViewFile(): Promise<void> {
@@ -149,16 +1232,39 @@ export class App {
       showErrorToast(this.screen, 'Select a file to view');
       return;
     }
-    const preview = new PreviewPanel(
-      this.screen,
-      this.theme,
-      { top: 0, left: 0, width: '100%', height: '100%' },
-      () => {
+    await this.openPreview(entry);
+  }
+
+  private async openPreview(entry: FileEntry): Promise<void> {
+    if (this.fullScreenOverlayActive) return;
+    this.fullScreenOverlayActive = true;
+    let released = false;
+    const releaseOverlay = () => {
+      if (released) return;
+      released = true;
+      // Keep the guard active until every listener for the closing key has run.
+      queueMicrotask(() => {
+        this.fullScreenOverlayActive = false;
+        if (this.disposalStarted) return;
         this.layout.activePanel.setFocus(true);
-      },
-    );
-    await preview.loadFile(entry.fullPath);
-    preview.focus();
+      });
+    };
+
+    let preview: PreviewPanel | null = null;
+    try {
+      preview = new PreviewPanel(
+        this.screen,
+        this.theme,
+        { top: 0, left: 0, width: '100%', height: '100%' },
+        releaseOverlay,
+      );
+      preview.focus();
+      await preview.loadFile(entry.fullPath);
+    } catch (err) {
+      releaseOverlay();
+      preview?.close();
+      throw err;
+    }
   }
 
   private async actionEditFile(): Promise<void> {
@@ -176,16 +1282,14 @@ export class App {
   }
 
   private async actionEditInVim(): Promise<boolean> {
+    if (this.disposalStarted) return false;
     const fp = this.layout.activeFilePanel;
     const entry = fp?.currentEntry;
     if (!fp || !entry || entry.isDirectory) {
       return false;
     }
 
-    const panelIndex = this.layout.allPanels.indexOf(fp);
-    if (panelIndex === -1) {
-      return false;
-    }
+    const panelIndex = fp.panelIndex;
 
     const panelPath = fp.currentPath;
     const spec = buildVimLaunchSpec(entry.fullPath);
@@ -214,7 +1318,9 @@ export class App {
     panelPath: string,
     filePath: string,
   ): Promise<void> {
+    if (this.disposalStarted) return;
     const fp = await this.layout.convertToFile(panelIndex, panelPath);
+    if (this.disposalStarted) return;
     fp.focusEntry(filePath);
     this.updateStatus();
   }
@@ -244,8 +1350,10 @@ export class App {
       try {
         await copyFiles(entries.map((e) => e.fullPath), target.currentPath);
         await this.layout.refreshAll();
+        showToast(this.screen, `Copied ${entries.length} item(s)`);
       } catch (err) {
         logger.error('Copy failed', err);
+        showErrorToast(this.screen, formatUserError('Copy', err));
       }
     }
   }
@@ -264,17 +1372,27 @@ export class App {
 
     if (entries.length === 1) {
       const newName = await showInputDialog(
-        this.screen, this.theme, 'Rename/Move', 'New name:', entries[0].name,
+        this.screen, this.theme, 'Rename', 'New name in this panel:', entries[0].name,
       );
       if (newName) {
-        const target = this.layout.inactiveFilePanel;
-        const destDir = target ? target.currentPath : fp.currentPath;
         try {
-          const { moveFile } = await import('./file-manager/file-operations.js');
-          await moveFile(entries[0].fullPath, path.join(destDir, newName));
+          validateEntryName(newName);
+        } catch (err) {
+          logger.error('Invalid move destination name', err);
+          showErrorToast(this.screen, formatUserError('Move', err));
+          return;
+        }
+        try {
+          // A single-item rename stays in the active panel. With paged
+          // workspaces an arbitrary inactive panel may be hidden and point at
+          // an unrelated directory; multi-item moves still show their target
+          // path in an explicit confirmation dialog below.
+          await moveFile(entries[0].fullPath, path.join(fp.currentPath, newName));
           await this.layout.refreshAll();
+          showToast(this.screen, `Renamed “${sanitizeUserText(entries[0].name, 80)}”`);
         } catch (err) {
           logger.error('Move failed', err);
+          showErrorToast(this.screen, formatUserError('Move', err));
         }
       }
     } else {
@@ -291,8 +1409,10 @@ export class App {
         try {
           await moveFiles(entries.map((e) => e.fullPath), target.currentPath);
           await this.layout.refreshAll();
+          showToast(this.screen, `Moved ${entries.length} item(s)`);
         } catch (err) {
           logger.error('Move failed', err);
+          showErrorToast(this.screen, formatUserError('Move', err));
         }
       }
     }
@@ -307,10 +1427,13 @@ export class App {
     const name = await showInputDialog(this.screen, this.theme, 'Create Directory', 'Directory name:');
     if (name) {
       try {
+        validateEntryName(name);
         await createDirectory(path.join(fp.currentPath, name));
         await fp.loadDirectory();
+        showToast(this.screen, `Created directory “${sanitizeUserText(name, 80)}”`);
       } catch (err) {
         logger.error('Mkdir failed', err);
+        showErrorToast(this.screen, formatUserError('Create directory', err));
       }
     }
   }
@@ -326,6 +1449,28 @@ export class App {
       showErrorToast(this.screen, 'Select a file to delete');
       return;
     }
+    const deleteTargets = entries.map((entry) => {
+      if (
+        typeof entry.deviceId !== 'string'
+        || !/^(?:0|[1-9]\d*)$/u.test(entry.deviceId)
+        || typeof entry.inode !== 'string'
+        || !/^(?:0|[1-9]\d*)$/u.test(entry.inode)
+        || !Number.isFinite(entry.identityMode)
+        || typeof entry.ctimeNs !== 'string'
+        || !/^(?:0|[1-9]\d*)$/u.test(entry.ctimeNs)
+      ) return null;
+      return {
+        path: entry.fullPath,
+        deviceId: entry.deviceId,
+        inode: entry.inode,
+        mode: entry.identityMode as number,
+        ctimeNs: entry.ctimeNs,
+      };
+    });
+    if (deleteTargets.some((target) => target === null)) {
+      showErrorToast(this.screen, 'Refresh the panel before deleting these items');
+      return;
+    }
 
     const names = entries.map((e) => e.name).join(', ');
     const confirmed = await showConfirmDialog(
@@ -334,10 +1479,12 @@ export class App {
     );
     if (confirmed) {
       try {
-        await deleteFiles(entries.map((e) => e.fullPath));
+        await deleteFiles(deleteTargets.filter((target) => target !== null));
         await fp.loadDirectory();
+        showToast(this.screen, `Deleted ${entries.length} item(s)`);
       } catch (err) {
         logger.error('Delete failed', err);
+        showErrorToast(this.screen, formatUserError('Delete', err));
       }
     }
   }
@@ -347,17 +1494,37 @@ export class App {
     const choice = await showAgentDialog(
       screen,
       this.theme,
-      this.layout.panelCount,
-      this.layout.allPanels.indexOf(this.layout.activePanel),
+      this.layout.workspacePanelIds,
+      this.layout.activePanel.panelIndex,
+      this.config.agents,
+      this.config.agentProfiles,
     );
 
+    if (this.disposalStarted) return;
     if (choice) {
       const { agentType, panelIndex } = choice;
-      let tp = this.layout.getTerminalPanel(panelIndex);
-      if (!tp) {
-        tp = this.layout.convertToTerminal(panelIndex);
+      const profileId = choice.profileId ?? agentType;
+      const targetPanel = this.layout.getPanel(panelIndex);
+      if (!targetPanel) {
+        showErrorToast(screen, `Panel ${panelIndex + 1} is no longer available`);
+        return;
       }
-      const ok = this.agentManager.launchAgent(agentType, tp);
+      if (this.hasLiveTerminalSession(panelIndex)) {
+        const confirmed = await this.confirmSessionReplacement(panelIndex, `launch ${agentType}`);
+        if (!confirmed) return;
+        if (this.layout.getPanel(panelIndex) !== targetPanel) return;
+        await this.stopTerminalSession(panelIndex);
+        if (this.disposalStarted || this.layout.getPanel(panelIndex) !== targetPanel) return;
+        if (this.hasLiveTerminalSession(panelIndex)) {
+          showErrorToast(
+            screen,
+            `Panel ${panelIndex + 1} started another session; launch was cancelled`,
+          );
+          return;
+        }
+      }
+      const tp = this.layout.convertToTerminal(panelIndex);
+      const ok = this.agentManager.launchProfile(profileId, tp);
       if (ok) {
         this.orchestrator.connectPanel(tp);
         this.layout.setActivePanel(panelIndex);
@@ -372,20 +1539,47 @@ export class App {
     const choice = await showTemplateDialog(
       screen,
       this.theme,
-      this.layout.panelCount,
-      this.layout.allPanels.indexOf(this.layout.activePanel),
+      this.layout.workspacePanelIds,
+      this.layout.activePanel.panelIndex,
     );
 
+    if (this.disposalStarted) return;
     if (!choice) return;
 
-    const { content, panelIndex, templateName } = choice;
-
+    const { content, panelIndex, templateName, requiresProtocol } = choice;
+    if (!this.layout.hasPanel(panelIndex)) {
+      showErrorToast(screen, `Panel ${panelIndex + 1} is no longer available`);
+      return;
+    }
+    const preparedTemplate = this.orchestrator.prepareTemplateTask(
+      panelIndex,
+      content,
+      requiresProtocol,
+    );
+    if (!preparedTemplate.success) {
+      showErrorToast(screen, preparedTemplate.error);
+      return;
+    }
     // Check if a managed agent is running on the target panel
-    const managedAgent = this.agentManager.getAgentType(panelIndex);
+    const managedAgent = this.getManagedSession(panelIndex)?.type ?? null;
 
     if (managedAgent) {
       // Managed agent already running — send content directly via orchestrator
-      const result = await this.orchestrator.sendTask(managedAgent, panelIndex, content);
+      const targetExpectation = await this.confirmTaskTarget(
+        managedAgent,
+        panelIndex,
+        `send template “${sanitizeUserText(templateName, 60)}”`,
+      );
+      if (!targetExpectation) return;
+      if (this.disposalStarted || !this.layout.hasPanel(panelIndex)) return;
+      const result = await this.orchestrator.sendTemplateTask(
+        managedAgent,
+        panelIndex,
+        preparedTemplate,
+        undefined,
+        targetExpectation,
+      );
+      if (this.disposalStarted) return;
       if (!result.success) {
         logger.error(`Template send failed: ${result.error}`);
         showErrorToast(screen, `Failed to send template: ${result.error}`);
@@ -397,22 +1591,34 @@ export class App {
       const agentChoice = await showAgentDialog(
         screen,
         this.theme,
-        this.layout.panelCount,
+        this.layout.workspacePanelIds,
         panelIndex,
+        this.config.agents,
+        this.config.agentProfiles,
       );
+      if (this.disposalStarted) return;
       if (agentChoice) {
         const targetPanel = agentChoice.panelIndex;
-        // Kill any non-agent session (vim, shell) before launching the agent
-        const existingTp = this.layout.getTerminalPanel(targetPanel);
-        if (existingTp?.isRunning && !this.agentManager.isAgentRunning(targetPanel)) {
-          existingTp.killAgent(true);
-          this.orchestrator.disconnectPanel(targetPanel);
+        if (!this.layout.hasPanel(targetPanel)) {
+          showErrorToast(screen, `Panel ${targetPanel + 1} is no longer available`);
+          return;
         }
-        const result = await this.orchestrator.sendTask(
+        const targetExpectation = await this.confirmTaskTarget(
           agentChoice.agentType,
           targetPanel,
-          content,
+          `launch ${agentChoice.agentType} and send the template`,
+          agentChoice.profileId,
         );
+        if (!targetExpectation) return;
+        if (this.disposalStarted || !this.layout.hasPanel(targetPanel)) return;
+        const result = await this.orchestrator.sendTemplateTask(
+          agentChoice.agentType,
+          targetPanel,
+          preparedTemplate,
+          agentChoice.profileId,
+          targetExpectation,
+        );
+        if (this.disposalStarted) return;
         if (!result.success) {
           logger.error(`Template send failed: ${result.error}`);
           showErrorToast(screen, `Failed to send template: ${result.error}`);
@@ -426,14 +1632,108 @@ export class App {
     screen.render();
   }
 
+  private async actionOrchestrate(): Promise<void> {
+    const choice = await showOrchestrateDialog(
+      this.screen,
+      this.theme,
+      this.layout.workspacePanelIds,
+      this.layout.activePanel.panelIndex,
+      this.config.agents,
+      this.config.agentProfiles,
+    );
+
+    if (this.disposalStarted) return;
+    if (!choice) return;
+    if (!this.layout.hasPanel(choice.panelIndex)) {
+      showErrorToast(this.screen, `Panel ${choice.panelIndex + 1} is no longer available`);
+      return;
+    }
+
+    const targetExpectation = await this.confirmTaskTarget(
+      choice.agentType,
+      choice.panelIndex,
+      `launch ${choice.agentType} and send the task`,
+      choice.profileId,
+    );
+    if (!targetExpectation) return;
+    if (this.disposalStarted || !this.layout.hasPanel(choice.panelIndex)) return;
+
+    const result = await this.orchestrator.sendTask(
+      choice.agentType,
+      choice.panelIndex,
+      choice.task,
+      choice.profileId,
+      targetExpectation,
+    );
+    if (this.disposalStarted) return;
+    if (!result.success) {
+      logger.error(`Orchestrate failed: ${result.error}`);
+      showErrorToast(
+        this.screen,
+        `Task delivery failed: ${result.error ?? 'unknown error'}`,
+      );
+    }
+    this.updateStatus();
+    this.screen.render();
+  }
+
+  private panelSummaries(): PanelSummary[] {
+    const runningByPanel = new Map(
+      this.agentManager.getRunningAgents().map((agent) => [agent.panelIndex, agent]),
+    );
+
+    return this.layout.allPanels.map((panel, index) => {
+      const running = runningByPanel.get(panel.panelIndex);
+      if (panel instanceof FilePanel) {
+        return {
+          panelId: panel.panelIndex,
+          panelNumber: panel.panelIndex + 1,
+          workspacePosition: index + 1,
+          title: path.basename(panel.currentPath) || panel.currentPath,
+          kind: 'files',
+          status: panel.isVisible ? 'visible' : 'hidden',
+          cwd: panel.currentPath,
+        };
+      }
+      return {
+        panelId: panel.panelIndex,
+        panelNumber: panel.panelIndex + 1,
+        workspacePosition: index + 1,
+        title: running?.profileLabel ?? panel.sessionName ?? 'Terminal',
+        kind: 'terminal',
+        status: running?.status ?? panel.status,
+        cwd: panel.workingDir,
+        ...(running ? { agent: running.name } : {}),
+        ...(running?.model ? { model: running.model } : {}),
+      };
+    });
+  }
+
+  private async actionNavigatePanel(): Promise<void> {
+    const panelId = await showPanelNavigatorDialog(
+      this.screen,
+      this.theme,
+      this.panelSummaries(),
+      this.layout.activePanelId ?? undefined,
+    );
+    if (this.disposalStarted || panelId === null) return;
+    if (!this.layout.hasPanel(panelId)) {
+      showErrorToast(this.screen, `Panel ${panelId + 1} is no longer available`);
+      return;
+    }
+    this.layout.setActivePanel(panelId);
+    this.updateStatus();
+    this.screen.render();
+  }
+
   private async actionQuit(): Promise<void> {
-    const running = this.agentManager.getRunningAgents();
+    const running = this.getLiveTerminalSessions();
     const msg = running.length > 0
-      ? `${running.length} agent(s) running. Exit anyway?`
+      ? `${running.length} live terminal session(s) will be closed. Exit anyway?`
       : 'Exit Agents Commander?';
     const confirmed = await showConfirmDialog(this.screen, this.theme, 'Quit', msg);
     if (confirmed) {
-      this.shutdown();
+      await this.shutdown();
     }
   }
 
@@ -447,7 +1747,12 @@ export class App {
     // rejections from crashing the process.
     const guard = (action: () => void | Promise<void>) => {
       return () => {
-        if (isDialogActive()) return;
+        if (
+          this.disposalStarted
+          || this.destructiveTransitionInProgress
+          || isDialogActive()
+          || this.fullScreenOverlayActive
+        ) return;
         try {
           const result = action();
           if (result && typeof (result as Promise<void>).catch === 'function') {
@@ -467,7 +1772,12 @@ export class App {
     // User can Tab to a file panel to access these shortcuts.
     const termGuard = (action: () => void | Promise<void>) => {
       return () => {
-        if (isDialogActive()) return;
+        if (
+          this.disposalStarted
+          || this.destructiveTransitionInProgress
+          || isDialogActive()
+          || this.fullScreenOverlayActive
+        ) return;
         if (this.layout.activeTerminalPanel?.isRunning) return;
         try {
           const result = action();
@@ -490,56 +1800,38 @@ export class App {
     }));
 
     // F-keys (work everywhere, but not during dialogs)
-    // Layout: F1=Help F2=Agent F3=+Panel F4=View F5=Edit F6=Copy F7=Move F8=Mkdir F9=Del F10=Quit
+    // Panel-first function keys. F4 toggles the viewport without blocking input.
     screen.key(['f1'], guard(() => this.actionHelp()));
     screen.key(['f2'], guard(() => this.actionLaunchAgent()));
     screen.key(['f3'], guard(() => this.actionAddPanel()));
-    screen.key(['f4'], guard(() => this.actionViewFile()));
+    screen.key(['f4'], guard(() => this.actionToggleFullscreen()));
     screen.key(['f5'], guard(() => this.actionEditFile()));
-    screen.key(['f6'], guard(() => this.actionCopy()));
-    screen.key(['f7'], guard(() => this.actionMove()));
+    screen.key(['f6'], guard(() => this.actionDuplicatePanel()));
+    screen.key(['f7'], guard(() => this.actionMovePanel()));
     screen.key(['f8'], guard(() => this.actionMkdir()));
-    screen.key(['f9'], guard(() => this.actionDelete()));
+    screen.key(['f9'], guard(() => this.actionRemovePanel()));
     screen.key(['f10'], guard(() => this.actionQuit()));
 
+    // Secondary file operations. Modified keys pass through to running agents.
+    // Enter already opens file preview, while F5 and F8 retain Edit and Mkdir.
+    screen.key(['S-f6'], termGuard(() => this.actionCopy()));
+    screen.key(['S-f7'], termGuard(() => this.actionMove()));
+    screen.key(['S-f9'], termGuard(() => this.actionDelete()));
+
     // Ctrl+W - Remove active panel
-    screen.key(['C-w'], guard(() => {
-      if (this.layout.panelCount <= 2) return;
-      const idx = this.layout.allPanels.indexOf(this.layout.activePanel);
-      const tp = this.layout.getTerminalPanel(idx);
-      if (tp?.isRunning) {
-        if (this.agentManager.isAgentRunning(tp.panelIndex)) {
-          this.agentManager.killAgent(tp.panelIndex);
-        } else {
-          tp.killAgent(true);
-        }
-      }
-      if (tp) {
-        this.orchestrator.disconnectPanel(idx);
-      }
-      const removed = this.layout.removePanel();
-      if (removed) {
-        this.agentManager.reindexAfterPanelRemoval(idx);
-        this.orchestrator.reindexAfterPanelRemoval(idx);
-      }
-      this.updateStatus();
-    }));
+    screen.key(['C-w'], guard(() => this.actionRemovePanel()));
 
     // Ctrl+K - Kill agent on active terminal panel
     screen.key(['C-k'], guard(async () => {
       const tp = this.layout.activeTerminalPanel;
-      if (tp && tp.isRunning) {
+      const hasManagedAgent = tp ? this.agentManager.hasAgent(tp.panelIndex) : false;
+      if (tp && (tp.isRunning || hasManagedAgent)) {
         const confirmed = await showConfirmDialog(
           screen, this.theme, 'Kill Session',
           'Terminate the running session?',
         );
         if (confirmed) {
-          if (this.agentManager.isAgentRunning(tp.panelIndex)) {
-            this.agentManager.killAgent(tp.panelIndex);
-          } else {
-            tp.killAgent();
-          }
-          this.orchestrator.disconnectPanel(tp.panelIndex);
+          await this.stopTerminalSession(tp.panelIndex);
           screen.render();
         }
       }
@@ -568,33 +1860,34 @@ export class App {
       }
     }));
 
-    // F12 - Inter-agent communication guide (F11 is captured by macOS)
-    screen.key(['f12'], guard(() => {
-      showProtocolGuide(screen, this.theme);
-    }));
+    // F12 - live routed-message activity (works from terminal panels).
+    screen.key(['f11'], guard(() => this.actionNavigatePanel()));
+    screen.key(['f12'], guard(() => this.actionActivity()));
 
-    // Ctrl+O - Orchestrate: send task to another agent
-    screen.key(['C-o'], guard(async () => {
-      const choice = await showOrchestrateDialog(
-        screen,
-        this.theme,
-        this.layout.panelCount,
-        this.layout.allPanels.indexOf(this.layout.activePanel),
-      );
+    // Shift+F12 - protocol guide (F12 itself is reserved for Activity).
+    screen.key(['S-f12'], guard(() => showProtocolGuide(screen, this.theme)));
 
-      if (choice) {
-        const result = await this.orchestrator.sendTask(
-          choice.agentType,
-          choice.panelIndex,
-          choice.task,
-        );
-        if (!result.success) {
-          logger.error(`Orchestrate failed: ${result.error}`);
-        }
-        this.updateStatus();
-        screen.render();
+    // Programmed keyboard shortcuts remain an explicit compatibility mode.
+    // Shipping devices are handled through the isolated native bridge.
+    if (
+      this.config?.hardware?.codexMicro.enabled
+      && this.config.hardware.codexMicro.inputMode === 'keyboard'
+    ) {
+      for (const binding of CODEX_MICRO_BINDINGS) {
+        const runAction = guard(() => this.runCodexMicroAction(binding.action));
+        screen.key([binding.key], () => {
+          if (this.codexMicroTestDialog?.isOpen()) {
+            this.codexMicroTestDialog.recordAction(binding.action);
+            return;
+          }
+          runAction();
+        });
       }
-    }));
+    }
+
+    // Ctrl+O - Orchestrate; in offline-demo mode it also provides a safe
+    // retry/replay path when neither bundled role is running.
+    screen.key(['C-o'], guard(() => this.actionOrchestrateOrDemo()));
 
     // Ctrl+P - Inject protocol instructions into active agent
     let injecting = false;
@@ -615,7 +1908,11 @@ export class App {
         showToast(screen, `Injecting protocol into ${agentInfo?.name ?? 'agent'}…`, 2000);
         screen.render();
         this.orchestrator.connectPanel(tp);
-        await this.orchestrator.injectProtocol(tp);
+        const injected = await this.orchestrator.injectProtocol(tp);
+        if (!injected) {
+          showErrorToast(screen, 'Protocol injection stopped because the agent session changed');
+          return;
+        }
         const agents = this.agentManager.getRunningAgents();
         const info = agents.find((a) => a.panelIndex === tp.panelIndex);
         showToast(screen, `Protocol injected into ${info?.name ?? 'agent'} [Panel ${tp.panelIndex + 1}]`);
@@ -628,21 +1925,22 @@ export class App {
     }));
 
     // Ctrl+T - Convert active panel to terminal (or back to file)
-    screen.key(['C-t'], guard(async () => {
-      const idx = this.layout.allPanels.indexOf(this.layout.activePanel);
+    screen.key(['C-t'], guard(() => this.runDestructiveTransition(async () => {
+      const idx = this.layout.activePanel.panelIndex;
       if (this.layout.isTerminalPanel(idx)) {
+        const targetPanel = this.layout.getPanel(idx);
+        if (!targetPanel) return;
         const tp = this.layout.getTerminalPanel(idx);
-        if (tp?.isRunning) {
+        const hasManagedAgent = this.agentManager.hasAgent(idx);
+        if (tp?.isRunning || hasManagedAgent) {
           const confirmed = await showConfirmDialog(
             screen, this.theme, 'Close Terminal',
             'A session is running. Kill it and switch back to a file panel?',
           );
           if (!confirmed) return;
-          if (this.agentManager.isAgentRunning(idx)) {
-            this.agentManager.killAgent(idx);
-          } else {
-            tp.killAgent(true);
-          }
+          if (this.layout.getPanel(idx) !== targetPanel) return;
+          await this.stopTerminalSession(idx);
+          if (this.layout.getPanel(idx) !== targetPanel) return;
         }
         this.orchestrator.disconnectPanel(idx);
         await this.layout.convertToFile(idx);
@@ -651,7 +1949,7 @@ export class App {
       }
       this.updateStatus();
       screen.render();
-    }));
+    })));
 
     // Ctrl+H - Toggle hidden files (termGuard: terminal backspace)
     screen.key(['C-h'], termGuard(() => {
@@ -669,52 +1967,86 @@ export class App {
       showLogDialog(screen, this.theme);
     }));
 
-    // Ctrl+2/3/4 - Change layout
-    const changeLayout = async (mode: 2 | 3 | 4) => {
-      this.agentManager.killAll();
-      this.orchestrator.resetState();
-      await this.layout.setMode(mode);
-      this.updateStatus();
-    };
-    screen.key(['C-2'], guard(() => changeLayout(2)));
-    screen.key(['C-3'], guard(() => changeLayout(3)));
-    screen.key(['C-4'], guard(() => changeLayout(4)));
+    // Shift+F4 is a portable density cycle. Ctrl+number aliases are retained
+    // for terminals that can emit them distinctly.
+    screen.key(['S-f4'], guard(() => this.actionCyclePanelDensity()));
+    screen.key(['C-0'], guard(() => this.actionChangeLayout('auto')));
+    screen.key(['C-2'], guard(() => this.actionChangeLayout(2)));
+    screen.key(['C-3'], guard(() => this.actionChangeLayout(3)));
+    screen.key(['C-4'], guard(() => this.actionChangeLayout(4)));
 
     // Ctrl+E - Reset to default 2-panel file view (kills all agents)
     // termGuard: vim scroll-down uses C-e
-    screen.key(['C-e'], termGuard(async () => {
-      const running = this.agentManager.getRunningAgents();
-      if (running.length > 0) {
-        const confirmed = await showConfirmDialog(
-          screen, this.theme, 'Reset View',
-          `${running.length} agent(s) running. Kill all and reset?`,
-        );
-        if (!confirmed) return;
-      }
-      this.agentManager.killAll();
-      this.orchestrator.resetState();
-      await this.layout.resetToDefault();
-      this.updateStatus();
-      showToast(screen, 'Panels reset to default');
-    }));
+    screen.key(['C-e'], termGuard(() => this.actionResetView()));
 
-    // Update status on list navigation
-    for (const panel of this.layout.allPanels) {
-      if (panel instanceof FilePanel) {
-        panel.list.on('select item', () => {
-          this.updateStatus();
-          screen.render();
-        });
+  }
+
+  private conferenceStatus(): { modeLabel?: string; warning?: string } {
+    const microEnabled = this.config?.hardware?.codexMicro.enabled === true;
+    let microLabel = '';
+    if (microEnabled) {
+      if (this.config.hardware.codexMicro.inputMode === 'keyboard') {
+        microLabel = 'MICRO:KEYS/NO-GUARD';
+      } else if (!this.codexMicroStatus) {
+        microLabel = 'MICRO';
+      } else if (
+        this.codexMicroStatus.state === 'connected'
+        && this.codexMicroStatus.ownership === 'guarded'
+      ) {
+        microLabel = this.codexMicroStatus.transport === 'usb'
+          ? 'MICRO:USB/GUARD'
+          : this.codexMicroStatus.transport === 'bluetooth'
+            ? 'MICRO:BT/GUARD'
+            : 'MICRO:GUARD';
+      } else if (this.codexMicroStatus.state === 'busy') {
+        microLabel = 'MICRO:BUSY';
+      } else if (this.codexMicroStatus.state === 'starting') {
+        microLabel = 'MICRO:WAIT';
+      } else if (this.codexMicroStatus.state === 'disconnected') {
+        microLabel = 'MICRO:LOST';
+      } else {
+        microLabel = 'MICRO:!';
       }
     }
+    if (!this.launch.conference) {
+      return microLabel ? { modeLabel: microLabel } : {};
+    }
+    const columns = typeof this.screen.width === 'number' ? this.screen.width : 80;
+    const rows = typeof this.screen.height === 'number' ? this.screen.height : 24;
+    const warning = columns < RECOMMENDED_CONFERENCE_COLUMNS || rows < RECOMMENDED_CONFERENCE_ROWS
+      ? `screen ${columns}x${rows}; use ${RECOMMENDED_CONFERENCE_COLUMNS}x${RECOMMENDED_CONFERENCE_ROWS}+`
+      : undefined;
+    return {
+      modeLabel: [this.launch.demo ? 'OFFLINE DEMO' : 'CONFERENCE', microLabel]
+        .filter(Boolean)
+        .join(' + '),
+      warning,
+    };
   }
 
   private updateStatus(): void {
+    updateDefaultFunctionBar(this.functionBar, this.theme, this.layout.isFullscreen);
+    for (const [index, workspacePanel] of this.layout.allPanels.entries()) {
+      workspacePanel.setWorkspacePosition(index + 1);
+    }
     const panel = this.layout.activePanel;
+    const launchStatus = this.conferenceStatus();
+    const workspaceStatus = {
+      ...this.captureStatus(),
+      panelNumber: panel.panelIndex + 1,
+      workspacePosition: this.layout.getWorkspacePosition(panel.panelIndex) ?? undefined,
+      fullscreen: this.layout.isFullscreen,
+      panelCount: this.layout.panelCount,
+      pageNumber: this.layout.viewport.pageNumber,
+      pageCount: this.layout.viewport.pageCount,
+      density: this.layout.density,
+    };
 
     if (panel instanceof FilePanel) {
       const entry = panel.currentEntry;
       updateStatusBar(this.statusBar, {
+        ...launchStatus,
+        ...workspaceStatus,
         fileName: entry?.name ?? '..',
         fileSize: entry?.size,
         fileDate: entry ? formatDate(entry.modified) : undefined,
@@ -725,36 +2057,238 @@ export class App {
       const agents = this.agentManager.getRunningAgents();
       const info = agents.find((a) => a.panelIndex === panel.panelIndex);
       updateStatusBar(this.statusBar, {
+        ...launchStatus,
+        ...workspaceStatus,
         fileName: info ? `${info.name} [${info.status}]` : panel.sessionName ? `${panel.sessionName} [${panel.status}]` : 'Terminal',
         dirPath: this.workingDir,
       });
+    } else {
+      updateStatusBar(this.statusBar, { ...launchStatus, ...workspaceStatus });
     }
 
     this.screen.render();
   }
 
   private async openEditor(filePath: string): Promise<void> {
-    const editor = new MarkdownEditor(
-      this.screen,
-      this.theme,
-      filePath,
-      () => {
-        this.layout.refreshAll();
+    if (this.fullScreenOverlayActive) return;
+    this.fullScreenOverlayActive = true;
+    let released = false;
+    const releaseOverlay = () => {
+      if (released) return;
+      released = true;
+      queueMicrotask(() => {
+        this.fullScreenOverlayActive = false;
+        if (this.disposalStarted) return;
+        void this.layout.refreshAll();
         this.layout.activePanel.setFocus(true);
-      },
-    );
-    await editor.open();
+      });
+    };
+
+    try {
+      const editor = new MarkdownEditor(
+        this.screen,
+        this.theme,
+        filePath,
+        releaseOverlay,
+        this.config.editor,
+      );
+      await editor.open();
+    } catch (err) {
+      releaseOverlay();
+      throw err;
+    }
   }
 
-  private shutdown(): void {
-    this.agentManager.killAll();
-    for (const panel of this.layout.terminalPanels) {
-      panel.killAgent(true);
-    }
-    stopWatching();
-    logger.info('Agents Commander shutting down');
-    logger.close();
-    this.screen.destroy();
-    process.exit(0);
+  /**
+   * Release every resource owned by this App instance without terminating the
+   * host process. Safe to call after partial startup and safe to call again.
+   */
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    this.disposalStarted = true;
+    if (this.captureStatusTimer) clearTimeout(this.captureStatusTimer);
+    this.captureStatusTimer = null;
+
+    let resolveDispose!: () => void;
+    let rejectDispose!: (reason: unknown) => void;
+    this.disposePromise = new Promise<void>((resolve, reject) => {
+      resolveDispose = resolve;
+      rejectDispose = reject;
+    });
+
+    const performDispose = async (): Promise<void> => {
+      const failures: unknown[] = [];
+      // Seal admission immediately. Keep capture subscribed until lanes settle
+      // and AgentManager emits the final session exits.
+      let routeDrain: Promise<boolean> = Promise.resolve(true);
+      try {
+        routeDrain = (this.orchestrator?.sealAndDrain?.(1500) ?? routeDrain).catch(() => {
+          this.markCaptureIncomplete('route_drain_failed');
+          return false;
+        });
+      } catch {
+        this.markCaptureIncomplete('route_drain_failed');
+      }
+      const pendingDecision = this.pendingCodexMicroDecision;
+      this.pendingCodexMicroDecision = null;
+      if (pendingDecision?.timeout) clearTimeout(pendingDecision.timeout);
+      pendingDecision?.controller?.cancel();
+      try {
+        if (this.screen) closeDialogsForScreen(this.screen);
+      } catch (error) {
+        failures.push(error);
+        logger.error('Failed to close active dialogs during disposal', error);
+      }
+      try {
+        this.unsubscribeAgentLifecycle?.();
+      } catch (error) {
+        failures.push(error);
+        logger.error('Failed to unsubscribe application lifecycle listener', error);
+      }
+      this.unsubscribeAgentLifecycle = null;
+      try {
+        this.unsubscribeCodexMicroStatus?.();
+        this.unsubscribeCodexMicroInput?.();
+        await this.codexMicroBridge?.stop();
+      } catch (error) {
+        failures.push(error);
+        logger.error('Failed to stop Codex Micro input bridge', error);
+      }
+      this.unsubscribeCodexMicroStatus = null;
+      this.unsubscribeCodexMicroInput = null;
+      this.codexMicroBridge = null;
+      this.demoStarted = false;
+      this.demoPanelRoles.clear();
+      if (this.activityDialog) {
+        try {
+          this.activityDialog.close();
+        } catch (error) {
+          failures.push(error);
+          logger.error('Failed to close routed-message activity during disposal', error);
+        }
+        this.activityDialog = null;
+      }
+      if (this.codexMicroTestDialog) {
+        try {
+          this.codexMicroTestDialog.close();
+        } catch (error) {
+          failures.push(error);
+          logger.error('Failed to close Codex Micro test dialog during disposal', error);
+        }
+        this.codexMicroTestDialog = null;
+      }
+
+      let managedPanels: TerminalPanel[] = [];
+      try {
+        if (!await routeDrain) this.markCaptureIncomplete('route_drain_timeout');
+      } catch {
+        this.markCaptureIncomplete('route_drain_failed');
+      }
+      try {
+        managedPanels = this.agentManager.prepareForShutdown();
+      } catch (error) {
+        failures.push(error);
+        logger.error('Failed to stop agent lifecycle management', error);
+      }
+
+      const terminalPanels = new Set<TerminalPanel>([
+        ...managedPanels,
+        ...(this.layout?.terminalPanels ?? []),
+      ]);
+      const terminalShutdowns: Array<Promise<void>> = [];
+      for (const panel of terminalPanels) {
+        try {
+          // Invoke synchronously so every known panel is launch-sealed before
+          // disposal reaches its first await.
+          terminalShutdowns.push(panel.shutdownAgent());
+        } catch (error) {
+          failures.push(error);
+          logger.error('Failed to begin terminal shutdown', error);
+        }
+      }
+      const terminalResults = await Promise.allSettled(terminalShutdowns);
+      for (const result of terminalResults) {
+        if (result.status === 'rejected') failures.push(result.reason);
+      }
+      if (terminalResults.some((result) => result.status === 'rejected')) {
+        logger.error('Failed to stop every terminal session during disposal');
+      }
+      await TerminalPanel.waitForPendingTerminations();
+
+      try { this.unsubscribeCaptureLifecycle?.(); } catch { this.markCaptureIncomplete('lifecycle_unsubscribe_failed'); }
+      this.unsubscribeCaptureLifecycle = null;
+      try {
+        await this.capture?.close(failures.length === 0);
+      } catch {
+        // Capture failures must not prevent the terminal from being restored.
+        this.markCaptureIncomplete('capture_close_failed');
+        logger.warn('Session recording could not be sealed; treat it as incomplete');
+      }
+
+      if (this.refreshTimer) {
+        clearTimeout(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+      if (this.fileChangedHandler) {
+        appEvents.removeListener('file:changed', this.fileChangedHandler);
+        this.fileChangedHandler = null;
+      }
+
+      if (this.watcherStarted) {
+        try {
+          stopWatching();
+        } catch (error) {
+          failures.push(error);
+          logger.error('Failed to stop the file watcher', error);
+        }
+        this.watcherStarted = false;
+      }
+
+      try {
+        this.screen?.destroy();
+      } catch (error) {
+        failures.push(error);
+        logger.error('Failed to restore the terminal during disposal', error);
+      }
+
+      const onShutdown = this.onShutdown;
+      this.onShutdown = undefined;
+      if (onShutdown) {
+        try {
+          await onShutdown();
+        } catch (error) {
+          failures.push(error);
+          logger.error('Launch cleanup failed during disposal', error);
+        }
+      }
+
+      this.removeProcessHandlers();
+      if (failures.length > 0) {
+        throw new AggregateError(failures, 'Agents Commander disposal was incomplete');
+      }
+    };
+    void performDispose().then(resolveDispose, rejectDispose);
+
+    return this.disposePromise;
+  }
+
+  private shutdown(exitCode = 0): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+
+    this.shutdownPromise = (async () => {
+      let finalExitCode = exitCode;
+      try {
+        await this.dispose();
+      } catch (error) {
+        finalExitCode = finalExitCode || 1;
+        logger.error('Agents Commander shutdown was incomplete', error);
+      }
+
+      logger.info('Agents Commander shutting down', { exitCode: finalExitCode });
+      logger.close();
+      process.exit(finalExitCode);
+    })();
+
+    return this.shutdownPromise;
   }
 }

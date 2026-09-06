@@ -1,3 +1,6 @@
+import type { AgentProfile } from '../agents/types.js';
+import type { PanelDensity } from '../panel-limits.js';
+
 export interface Theme {
   name: string;
   panel: {
@@ -26,16 +29,58 @@ export interface OrchestrationConfig {
   ackTimeout: number;
   dedupWindow: number;
   maxContentLines: number;
+  maxContentBytes: number;
+}
+
+export interface AgentCommandConfig {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+export type CodexMicroInputMode = 'native' | 'keyboard';
+
+export interface CodexMicroConfig {
+  /** Enable the optional physical control surface integration. */
+  enabled: boolean;
+  /** Use the shipping vendor-HID protocol or legacy programmed shortcuts. */
+  inputMode?: CodexMicroInputMode;
+  /** Allow guarded approve/reject controls for active Codex prompts. */
+  decisionControls: boolean;
+}
+
+export interface HardwareConfig {
+  codexMicro: CodexMicroConfig;
+}
+
+export interface NormalizedCodexMicroConfig extends CodexMicroConfig {
+  inputMode: CodexMicroInputMode;
+}
+
+export interface NormalizedHardwareConfig extends HardwareConfig {
+  codexMicro: NormalizedCodexMicroConfig;
 }
 
 export interface AppConfig {
   theme: string;
-  panelCount: 2 | 3 | 4;
+  /** Panels retained in the active workspace, independent of view density. */
+  panelCount: number;
+  /** Responsive view density or an explicit visible-panel cap. */
+  panelDensity: PanelDensity;
   showHidden: boolean;
   sortBy: 'name' | 'size' | 'date' | 'ext';
   sortAscending: boolean;
   watchDebounce: number;
   editor: { tabSize: number; wordWrap: boolean };
-  agents: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
+  agents: Record<string, AgentCommandConfig>;
+  /** Named launch profiles. Legacy `agents` entries remain adapter-level defaults. */
+  agentProfiles: AgentProfile[];
   orchestration?: Partial<OrchestrationConfig>;
+  /** Optional for backwards compatibility with pre-hardware API consumers. */
+  hardware?: HardwareConfig;
+}
+
+/** Fully normalized runtime configuration returned by the config loader. */
+export interface NormalizedAppConfig extends AppConfig {
+  hardware: NormalizedHardwareConfig;
 }

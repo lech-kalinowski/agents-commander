@@ -12,8 +12,41 @@ export type AgentType =
 
 export type AgentStatus = 'idle' | 'starting' | 'running' | 'error' | 'exited';
 
+interface AgentProfileBase {
+  /** Stable configuration identity, distinct from the adapter/protocol type. */
+  id: string;
+  /** User-facing name shown in selectors and session status. */
+  label: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  /** Normalization error retained so an explicit malformed profile cannot silently fall back. */
+  configurationError?: string;
+}
+
+export interface OpenCodeAgentProfile extends AgentProfileBase {
+  adapter: 'opencode';
+  /** Full OpenCode model selector in provider/model form. */
+  model?: string;
+  /** Optional OpenCode agent name passed with --agent. */
+  agent?: string;
+  /** Optional OpenCode configuration path mapped to OPENCODE_CONFIG. */
+  configPath?: string;
+}
+
+export interface StandardAgentProfile extends AgentProfileBase {
+  adapter: Exclude<AgentType, 'opencode'>;
+  model?: never;
+  agent?: never;
+  configPath?: never;
+}
+
+export type AgentProfile = OpenCodeAgentProfile | StandardAgentProfile;
+
 export interface AgentInfo {
   type: AgentType;
+  profileId: string;
+  profileLabel: string;
   name: string;
   command: string;
   args: string[];
@@ -22,6 +55,8 @@ export interface AgentInfo {
   installCommand: string;
   installed: boolean;
   supported: boolean; // Phase 1 supported agents
+  model?: string;
+  configurationError?: string;
   /** CLI flag to set the project root directory (e.g. '--directory' for Claude). */
   projectDirFlag?: string;
 }
@@ -29,18 +64,19 @@ export interface AgentInfo {
 export interface AgentSession {
   id: string;
   type: AgentType;
+  profileId: string;
   status: AgentStatus;
   panelIndex: number;
   pid?: number;
   startedAt: Date;
 }
 
-export const KNOWN_AGENTS: Omit<AgentInfo, 'installed'>[] = [
+export const KNOWN_AGENTS: Omit<AgentInfo, 'installed' | 'profileId' | 'profileLabel'>[] = [
   {
     type: 'claude',
     name: 'Claude Code',
     command: 'claude',
-    args: ['--dangerously-skip-permissions'],
+    args: [],
     env: {},
     description: 'Anthropic - AI coding agent with MCP support',
     installCommand: 'npm install -g @anthropic-ai/claude-code',
@@ -50,7 +86,7 @@ export const KNOWN_AGENTS: Omit<AgentInfo, 'installed'>[] = [
     type: 'codex',
     name: 'Codex CLI',
     command: 'codex',
-    args: ['--full-auto', '--no-alt-screen'],
+    args: ['--no-alt-screen'],
     env: {},
     description: 'OpenAI - AI coding agent',
     installCommand: 'npm install -g @openai/codex',
@@ -60,7 +96,7 @@ export const KNOWN_AGENTS: Omit<AgentInfo, 'installed'>[] = [
     type: 'gemini',
     name: 'Gemini CLI',
     command: 'gemini',
-    args: ['--yolo'],
+    args: [],
     env: {},
     description: 'Google - AI coding agent',
     installCommand: 'npm install -g @google/gemini-cli',
@@ -92,9 +128,9 @@ export const KNOWN_AGENTS: Omit<AgentInfo, 'installed'>[] = [
     command: 'opencode',
     args: [],
     env: {},
-    description: 'Open source AI coding agent (Go)',
-    installCommand: 'brew install opencode',
-    supported: false,
+    description: 'Open source multi-provider AI coding agent',
+    installCommand: 'npm install -g opencode-ai',
+    supported: true,
   },
   {
     type: 'goose',
@@ -126,4 +162,20 @@ export const KNOWN_AGENTS: Omit<AgentInfo, 'installed'>[] = [
     installCommand: 'npm install -g @sourcegraph/amp',
     supported: false,
   },
+  {
+    type: 'generic',
+    name: 'Shell',
+    command: 'bash',
+    args: [],
+    env: {},
+    description: 'Generic interactive shell',
+    installCommand: 'Install bash or configure agents.generic.command',
+    supported: true,
+  },
 ];
+
+export const DEFAULT_AGENT_PROFILES: AgentProfile[] = KNOWN_AGENTS.map((agent) => ({
+  id: agent.type,
+  label: agent.name,
+  adapter: agent.type,
+})) as AgentProfile[];

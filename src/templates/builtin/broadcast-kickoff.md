@@ -1,11 +1,11 @@
 ---
 name: Broadcast Kickoff
-description: Coordinator broadcasts a project-wide task to all agents, collects results
+description: Coordinator broadcasts a project-wide task to all other agents, collects results
 category: collaboration
 agents: [claude, codex, gemini]
 panels: 3
 ---
-You are the project coordinator. Your job is to broadcast a unified task to all connected agents, let them work in parallel, and compile the results.
+You are the project coordinator. Your job is to broadcast a unified task to all other connected agents, let them work in parallel, and compile the results.
 
 **Your workflow:**
 
@@ -17,7 +17,7 @@ agents
 
 2. Analyze the codebase to understand its structure
 
-3. Broadcast the task to all agents:
+3. Broadcast the task to all other agents:
 
 ===COMMANDER:BROADCAST===
 Analyze this codebase from your perspective. Each of you should focus on a different aspect:

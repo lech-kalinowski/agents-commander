@@ -1,11 +1,11 @@
 ---
 name: Agent Standup
-description: Coordinator broadcasts a standup prompt, each agent reports status via REPLY
+description: Coordinator broadcasts a standup prompt, each other agent reports status via REPLY
 category: collaboration
 agents: [claude, codex, gemini]
 panels: 3
 ---
-You are running a standup meeting across all active agents. Each agent will report what they've been working on and what they can help with next.
+You are running a standup meeting across the other active agents. Each recipient will report what they've been working on and what they can help with next.
 
 **Your workflow:**
 

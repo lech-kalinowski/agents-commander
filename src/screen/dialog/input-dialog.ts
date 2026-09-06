@@ -1,6 +1,11 @@
 import blessed from 'blessed';
 import type { Theme } from '../../config/types.js';
-import { enterDialog, leaveDialog } from '../../utils/dialog-state.js';
+import {
+  enterDialog,
+  leaveDialog,
+  registerDialogCancellation,
+} from '../../utils/dialog-state.js';
+import { bindOverlayResize, screenGeometry, truncateOverlayText } from './geometry.js';
 
 export function showInputDialog(
   screen: blessed.Widgets.Screen,
@@ -10,13 +15,15 @@ export function showInputDialog(
   defaultValue = '',
 ): Promise<string | null> {
   return new Promise((resolve) => {
-    enterDialog();
+    enterDialog(screen);
+    const safePrompt = truncateOverlayText(prompt, 300);
+    const geometry = screenGeometry(screen, 50, 8);
     const dialog = blessed.box({
       parent: screen,
       top: 'center',
       left: 'center',
-      width: 50,
-      height: 8,
+      width: geometry.width,
+      height: geometry.height,
       border: { type: 'line' },
       style: {
         bg: theme.dialog.bg,
@@ -32,7 +39,9 @@ export function showInputDialog(
       parent: dialog,
       top: 1,
       left: 2,
-      content: prompt,
+      width: '100%-6',
+      tags: false,
+      content: safePrompt,
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
@@ -40,7 +49,7 @@ export function showInputDialog(
       parent: dialog,
       top: 3,
       left: 2,
-      width: 44,
+      width: '100%-6',
       height: 1,
       style: {
         bg: 'black',
@@ -59,20 +68,46 @@ export function showInputDialog(
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
-    const cleanup = () => {
-      leaveDialog();
-      dialog.destroy();
-      screen.render();
+    const unbindResize = bindOverlayResize(screen, dialog, 50, 8);
+
+    let resolved = false;
+    let ownerCancelled = false;
+    let unregisterCancellation = () => {};
+    const finish = (value: string | null, defer = true) => {
+      if (resolved) return;
+      resolved = true;
+      const cleanup = () => {
+        // Disposal may already have released this screen's modal entry. Never
+        // pop a newer dialog from a deferred cleanup in that case.
+        const steps = [
+          unregisterCancellation,
+          () => { if (!ownerCancelled) leaveDialog(screen); },
+          unbindResize,
+          () => dialog.destroy(),
+          () => screen.render(),
+        ];
+        for (const step of steps) {
+          try { step(); } catch { /* Keep teardown best-effort, including after screen disposal. */ }
+        }
+        resolve(value);
+      };
+      // Blessed dispatches one CR as enter followed by return. Its textbox
+      // rewinds focus before emitting submit/cancel: keep the modal shield
+      // until the complete synchronous key dispatch finishes.
+      if (defer) queueMicrotask(cleanup);
+      else cleanup();
     };
+    unregisterCancellation = registerDialogCancellation(screen, () => {
+      ownerCancelled = true;
+      finish(null, false);
+    });
 
     input.on('submit', (value: string) => {
-      cleanup();
-      resolve(value || null);
+      finish(value || null);
     });
 
     input.on('cancel', () => {
-      cleanup();
-      resolve(null);
+      finish(null);
     });
 
     input.focus();

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildPiProfiles, parseArguments, preparePiShowcase, requireSupportedNode, validateBaseUrl, validatePiModel } from '../../Example/apex-sixteen-panel/prepare-pi.mjs';
+import { buildPiProfiles, parseArguments, preparePiShowcase, requireSupportedNode, validateBaseUrl, validatePiModel, validateMaxTokens } from '../../Example/apex-sixteen-panel/prepare-pi.mjs';
 import { SCENARIO } from '../../Example/apex-sixteen-panel/scenario.mjs';
 import { loadConfig } from '../../src/config/loader.js';
 import { discoverAgentsWithResolver } from '../../src/agents/agent-registry.js';
@@ -154,5 +154,74 @@ describe('offline sixteen-panel APEX Pi preparation', () => {
     const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8', timeout: 5000 });
     expect(help.status).toBe(0);
     expect(help.stdout).toContain('--credentials');
+    expect(help.stdout).toContain('--max-tokens');
+    expect(help.stdout).toContain('--scenario');
+  });
+
+  it.each([
+    { scenario: 'review-council', maxTokens: 8192, expected: 8192, count: 16 },
+    { scenario: 'broadcast-test', maxTokens: undefined, expected: 8192, count: 3 },
+    { scenario: 'broadcast-test', maxTokens: '4096', expected: 4096, count: 3 },
+  ])('propagates $scenario output budget $maxTokens to every model and setup manifest', async ({ scenario, maxTokens, expected, count }) => {
+    const options = await fixture();
+    const read = vi.spyOn(fs, 'readFile');
+    const result = await preparePiShowcase({ ...options, scenario, maxTokens });
+    expect(read).not.toHaveBeenCalled();
+    read.mockRestore();
+    expect(result).toMatchObject({ scenario, profiles: count, configuredLimits: { contextWindow: 32768, maxTokens: expected }, liveModelVerified: false });
+    const manifest = JSON.parse(await fs.readFile(path.join(options.out, 'scenario.json'), 'utf8'));
+    expect(manifest).toMatchObject({ preparationScenario: scenario, configuredLimits: result.configuredLimits, liveModelVerified: false });
+    const fragment = JSON.parse(await fs.readFile(path.join(options.out, 'commander-profiles.json'), 'utf8'));
+    expect(fragment.agentProfiles).toEqual(buildPiProfiles({ ...options, scenario }));
+    expect(fragment.agentProfiles).toHaveLength(count);
+    for (const profile of fragment.agentProfiles) {
+      expect(profile.args).toHaveLength(11); // Existing registration contract remains valid.
+      const roleDir = path.join(options.out, 'roles', profile.id);
+      const config = JSON.parse(await fs.readFile(path.join(roleDir, 'models.json'), 'utf8'));
+      expect(config.providers.apex.models[0].maxTokens).toBe(expected);
+      expect(config.providers.apex.models[0].samplingParams).toEqual({ tool_choice: 'none' });
+      const settings = JSON.parse(await fs.readFile(path.join(roleDir, 'settings.json'), 'utf8'));
+      expect(settings.compaction.enabled).toBe(false);
+      expect(settings.retry.enabled).toBe(false);
+      expect(settings.retry.provider.maxRetries).toBe(0);
+    }
+    const setup = await fs.readFile(path.join(options.out, 'SETUP.txt'), 'utf8');
+    expect(setup).toContain(`${expected} output-token ceiling`);
+    expect(setup).toContain('not verified provider capabilities');
+    if (scenario === 'broadcast-test') {
+      expect(setup).toContain('ALL other connected agents, including hidden panels');
+      expect(fragment.agentProfiles.map((profile: { id: string }) => profile.id)).toEqual([
+        'apex-pi-broadcast-sender', 'apex-pi-broadcast-receiver-1', 'apex-pi-broadcast-receiver-2',
+      ]);
+      expect(result.files.some((name: string) => name.startsWith('continue-wave-'))).toBe(false);
+      expect(await fs.readFile(path.join(options.out, 'start.txt'), 'utf8')).toBe('START APEX BROADCAST\n');
+    }
+  });
+
+  it.each([0, 255, 16385, NaN, Infinity, 2048.5, true, null, '', ' 8192', '8192 ', '+8192', '-8192', '8e3', '0x2000', '8192.0', '08192'])
+  ('rejects invalid output budget %# before creating files', async (maxTokens) => {
+    const options = await fixture();
+    expect(() => validateMaxTokens(maxTokens)).toThrow('decimal integer');
+    await expect(preparePiShowcase({ ...options, maxTokens })).rejects.toThrow('decimal integer');
+    await expect(fs.stat(options.out)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('accepts bounded integer budgets and validates optional CLI flags without making them required', async () => {
+    const options = await fixture();
+    for (const value of [256, '256', 16384, '16384', 8192, '8192']) expect(validateMaxTokens(value)).toBe(Number(value));
+    const args = ['--model', options.model, '--base-url', options.baseUrl, '--pi-entry', options.piEntry,
+      '--credentials', options.credentials, '--out', options.out, '--scenario', 'broadcast-test', '--max-tokens', '4096'];
+    expect(parseArguments(args)).toMatchObject({ scenario: 'broadcast-test', maxTokens: 4096 });
+    for (const extra of [['--scenario', 'broadcast-test'], ['--max-tokens', '8192']]) {
+      expect(() => parseArguments([...args, ...extra])).toThrow();
+    }
+    for (const scenario of ['', null, 'unknown', 'BROADCAST-TEST']) {
+      await expect(preparePiShowcase({ ...options, scenario })).rejects.toThrow('scenario must be');
+    }
+    await expect(fs.stat(options.out)).rejects.toMatchObject({ code: 'ENOENT' });
+    const run = spawnSync(process.execPath, [path.resolve('Example/apex-sixteen-panel/prepare-pi.mjs'), ...args], { encoding: 'utf8', timeout: 5000 });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe('');
+    expect(JSON.parse(run.stdout)).toMatchObject({ profiles: 3, configuredLimits: { contextWindow: 32768, maxTokens: 4096 } });
   });
 });

@@ -186,7 +186,9 @@ example, not the two-agent scripted `--demo` or a verified APEX benchmark.
 The [Pi guide](Example/apex-sixteen-panel/PI.md#output-budget-and-truncation)
 also provides a configurable `--max-tokens` output ceiling and a separate
 three-panel broadcast test (`--scenario broadcast-test`), with one sender and
-two receivers that print local receipts. Run it in a fresh Commander instance:
+two receivers that print local receipts. Both Pi scenarios default to a tested
+131,072-token request ceiling and a 245,760-token local context allowance;
+`--context-window` is configurable too. Run the broadcast test in a fresh Commander instance:
 broadcasts reach all connected agents, including hidden panels. Preparation and
 offline tests do not establish a successful live model run.
 The [Pi setup guide](Example/apex-sixteen-panel/PI.md) includes private credential

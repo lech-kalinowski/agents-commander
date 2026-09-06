@@ -10,8 +10,12 @@ import { PI_BROADCAST_SCENARIO, broadcastRolePrompt } from './broadcast-scenario
 
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/u;
 const RUNTIME = fileURLToPath(new URL('./pi-runtime.mjs', import.meta.url));
-export const PI_CONTEXT_WINDOW = 32768;
-export const PI_OUTPUT_LIMITS = Object.freeze({ min: 256, max: 16384, reviewDefault: 2048, broadcastDefault: 8192 });
+// The tested APEX endpoint reports 262144 total context tokens but adds prompt
+// overhead. Leave 16384 tokens of empirical headroom before Pi's own reserve.
+export const PI_CONTEXT_WINDOW = 245760;
+export const PI_CONTEXT_LIMITS = Object.freeze({ min: 8192, max: 262144 });
+export const PI_CONTEXT_RESERVE = 4096;
+export const PI_OUTPUT_LIMITS = Object.freeze({ min: 256, max: 131072, reviewDefault: 131072, broadcastDefault: 131072 });
 export const USAGE = `Prepare an APEX Pi showcase (Node.js 22.19+).
 
 node Example/apex-sixteen-panel/prepare-pi.mjs \\
@@ -24,25 +28,40 @@ node Example/apex-sixteen-panel/prepare-pi.mjs \\
 All five options are required. Supply your provider's actual model and base URL.
 Optional: --scenario review-council|broadcast-test (default: review-council)
 Optional: --max-tokens INTEGER (${PI_OUTPUT_LIMITS.min}..${PI_OUTPUT_LIMITS.max})
-Output ceilings default to ${PI_OUTPUT_LIMITS.reviewDefault} for the sixteen-role council and
-${PI_OUTPUT_LIMITS.broadcastDefault} for the isolated three-panel broadcast test. Provider support is not verified.
-Higher ceilings may increase inference usage; Pi may lower them as context fills.
+Optional: --context-window INTEGER (${PI_CONTEXT_LIMITS.min}..${PI_CONTEXT_LIMITS.max}; default ${PI_CONTEXT_WINDOW})
+Both scenarios default to a ${PI_OUTPUT_LIMITS.reviewDefault} output-token ceiling, reduced for smaller contexts.
+An explicit output ceiling must leave at least ${PI_CONTEXT_RESERVE} context tokens free.
+The default ceiling was accepted by the tested APEX endpoint; other providers
+may differ. Pi further lowers output as input fills the context. These are not
+guaranteed response lengths. Higher ceilings may increase inference usage.
 Preparation does not read or copy credentials, start agents, install software,
 make network requests, or change configuration outside the new output directory.
 `;
 
-export function validateMaxTokens(value) {
+function validateIntegerOption(value, min, max, name) {
   if (typeof value === 'string' && /^[1-9]\d*$/u.test(value)) value = Number(value);
   if (typeof value !== 'number' || !Number.isSafeInteger(value)
-    || value < PI_OUTPUT_LIMITS.min || value > PI_OUTPUT_LIMITS.max) {
-    throw new Error(`max-tokens must be a decimal integer from ${PI_OUTPUT_LIMITS.min} to ${PI_OUTPUT_LIMITS.max}.`);
+    || value < min || value > max) {
+    throw new Error(`${name} must be a decimal integer from ${min} to ${max}.`);
   }
   return value;
 }
 
+export function validateMaxTokens(value) {
+  return validateIntegerOption(value, PI_OUTPUT_LIMITS.min, PI_OUTPUT_LIMITS.max, 'max-tokens');
+}
+
+export function validateContextWindow(value) {
+  return validateIntegerOption(value, PI_CONTEXT_LIMITS.min, PI_CONTEXT_LIMITS.max, 'context-window');
+}
+
 function selectScenario(name = 'review-council') {
-  if (name === 'review-council') return { name, definition: SCENARIO, prompt: (role) => rolePrompt(role, 'generic'), defaultMaxTokens: PI_OUTPUT_LIMITS.reviewDefault };
-  if (name === 'broadcast-test') return { name, definition: PI_BROADCAST_SCENARIO, prompt: broadcastRolePrompt, defaultMaxTokens: PI_OUTPUT_LIMITS.broadcastDefault };
+  if (name === 'review-council') return {
+    name, definition: SCENARIO, prompt: (role) => rolePrompt(role, 'generic'), defaultMaxTokens: PI_OUTPUT_LIMITS.reviewDefault,
+  };
+  if (name === 'broadcast-test') return {
+    name, definition: PI_BROADCAST_SCENARIO, prompt: broadcastRolePrompt, defaultMaxTokens: PI_OUTPUT_LIMITS.broadcastDefault,
+  };
   throw new Error('scenario must be review-council or broadcast-test.');
 }
 
@@ -81,6 +100,7 @@ export function parseArguments(args) {
     ['--model', 'model'], ['--base-url', 'baseUrl'], ['--pi-entry', 'piEntry'],
     ['--credentials', 'credentials'], ['--out', 'out'],
     ['--scenario', 'scenario'], ['--max-tokens', 'maxTokens'],
+    ['--context-window', 'contextWindow'],
   ]);
   const result = {};
   for (let i = 0; i < args.length; i += 2) {
@@ -94,6 +114,7 @@ export function parseArguments(args) {
     throw new Error('Missing --model, --base-url, --pi-entry, --credentials or --out. Use --help.');
   }
   if (Object.hasOwn(result, 'maxTokens')) result.maxTokens = validateMaxTokens(result.maxTokens);
+  if (Object.hasOwn(result, 'contextWindow')) result.contextWindow = validateContextWindow(result.contextWindow);
   selectScenario(result.scenario);
   return result;
 }
@@ -135,8 +156,14 @@ export async function preparePiShowcase(options) {
   requireSupportedNode();
   const selected = selectScenario(options.scenario);
   const scenario = selected.definition;
-  const maxTokens = validateMaxTokens(options.maxTokens === undefined ? selected.defaultMaxTokens : options.maxTokens);
-  const configuredLimits = { contextWindow: PI_CONTEXT_WINDOW, maxTokens };
+  const contextWindow = validateContextWindow(options.contextWindow === undefined ? PI_CONTEXT_WINDOW : options.contextWindow);
+  const maxTokens = validateMaxTokens(options.maxTokens === undefined
+    ? Math.min(selected.defaultMaxTokens, contextWindow - PI_CONTEXT_RESERVE)
+    : options.maxTokens);
+  if (maxTokens > contextWindow - PI_CONTEXT_RESERVE) {
+    throw new Error(`max-tokens must leave at least ${PI_CONTEXT_RESERVE} tokens free in context-window; input needs additional room.`);
+  }
+  const configuredLimits = { contextWindow, maxTokens };
   const model = validatePiModel(options.model);
   const baseUrl = validateBaseUrl(options.baseUrl);
   const piEntry = absolutePath(options.piEntry, 'piEntry');
@@ -182,9 +209,12 @@ These are model instructions, not an enforced scheduler or recipient allowlist.`
 Merge agentProfiles from commander-profiles.json into your existing Commander
 config, preserving other settings and resolving duplicate profile IDs explicitly.
 ${operationGuide}
-The configured ${PI_CONTEXT_WINDOW} context and ${maxTokens} output-token ceiling are local settings,
-not verified provider capabilities. Higher ceilings may increase inference usage.
-Pi reserves context space and may request fewer tokens as the conversation grows.
+The configured ${contextWindow} context and ${maxTokens} output-token ceiling are local settings,
+not universal provider capabilities or guaranteed response lengths. The tested APEX
+endpoint accepted a 131072 ceiling for a short response; a full-length response was
+not tested. The default 245760 context leaves empirical room for provider overhead.
+Pi reserves another ${PI_CONTEXT_RESERVE} context tokens and subtracts input tokens, so it may request
+fewer output tokens as the conversation grows. Higher ceilings may increase usage.
 Retries and automatic compaction are disabled. If output is truncated, inspect
 F12 before retrying: a completed frame may already have been delivered. Do not
 blindly continue/rebroadcast an incomplete frame; use fresh sessions for a new test.
@@ -205,7 +235,7 @@ See Example/apex-sixteen-panel/PI.md in this source checkout for the runbook.
     } } });
     files[path.join(relative, 'settings.json')] = json({
       compaction: { enabled: false },
-      retry: { enabled: false, provider: { timeoutMs: 60000, maxRetries: 0 } },
+      retry: { enabled: false, provider: { timeoutMs: 300000, maxRetries: 0 } },
     });
     files[path.join(relative, 'prompt.md')] = selected.prompt(role);
   }

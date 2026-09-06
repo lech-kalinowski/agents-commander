@@ -121,8 +121,16 @@ export function showOrchestrateDialog(
     });
 
     // Manual navigation (keys:false means we handle up/down/enter ourselves)
-    agentList.key(['up'], () => { agentList.up(1); screen.render(); });
-    agentList.key(['down'], () => { agentList.down(1); screen.render(); });
+    agentList.key(['up'], () => {
+      if (resolved || pending) return;
+      agentList.up(1);
+      screen.render();
+    });
+    agentList.key(['down'], () => {
+      if (resolved || pending) return;
+      agentList.down(1);
+      screen.render();
+    });
 
     // ── Panel picker (hidden initially) ──
     const panelBox = blessed.box({
@@ -195,6 +203,7 @@ export function showOrchestrateDialog(
     });
 
     let resolved = false;
+    let pending = false;
     let unregisterCancellation = () => {};
     const unbindResize = bindOverlayResize(screen, dialog, 70, 22, (nextGeometry) => {
       pickerWidth = Math.max(12, nextGeometry.width - 10);
@@ -220,8 +229,24 @@ export function showOrchestrateDialog(
       }
     });
 
+    const finish = (choice: OrchestrateChoice) => {
+      if (resolved || pending) return;
+      pending = true;
+      // Keep the modal shield until Blessed dispatches both enter and return.
+      // Screen teardown may still cancel this queued choice before it commits.
+      queueMicrotask(() => {
+        if (resolved) return;
+        try {
+          cleanup();
+        } finally {
+          resolve(choice);
+        }
+      });
+    };
+
     // ── STEP 1: Agent selection ──
     const handleAgentSelect = (index: number) => {
+      if (resolved || pending) return;
       selectedAgent = agents[index];
       if (!selectedAgent) return;
       showStep2();
@@ -249,6 +274,7 @@ export function showOrchestrateDialog(
     }
 
     function showStep2() {
+      if (resolved || pending) return;
       currentStep = 2;
       numberInput.reset();
       agentList.hide();
@@ -265,7 +291,7 @@ export function showOrchestrateDialog(
     }
 
     panelBox.on('keypress', (ch: string | undefined, _key: any) => {
-      if (currentStep !== 2 || !ch || !/^\d$/u.test(ch)) return;
+      if (resolved || pending || currentStep !== 2 || !ch || !/^\d$/u.test(ch)) return;
       const panelId = numberInput.acceptDigit(ch);
       if (panelId !== null) selectedPanel = panelId;
       renderPanelContent();
@@ -273,7 +299,7 @@ export function showOrchestrateDialog(
     });
 
     const movePanelSelection = (direction: -1 | 1) => {
-      if (currentStep !== 2) return;
+      if (resolved || pending || currentStep !== 2) return;
       numberInput.reset();
       selectedPanel = adjacentPanelId(panelIds, selectedPanel, direction) ?? selectedPanel;
       renderPanelContent();
@@ -287,7 +313,7 @@ export function showOrchestrateDialog(
     });
 
     panelBox.key(['escape'], () => {
-      if (currentStep !== 2) return;
+      if (resolved || pending || currentStep !== 2) return;
       numberInput.reset();
       currentStep = 1;
       panelBox.hide();
@@ -300,7 +326,7 @@ export function showOrchestrateDialog(
 
     // ── STEP 3: Task input ──
     function showStep3() {
-      if (currentStep !== 2) return;
+      if (resolved || pending || currentStep !== 2) return;
       currentStep = 3;
       panelBox.hide();
       stepBox.setContent(
@@ -314,10 +340,13 @@ export function showOrchestrateDialog(
       footer.setContent(' Enter=Send  Esc=Back ');
       screen.render();
 
+      // readInput otherwise saves the background terminal as its return focus
+      // (the panel picker is hidden), restoring it before the submit callback.
+      taskInput.focus();
       taskInput.readInput((_err: Error | null, value: string | undefined) => {
+        if (resolved || pending) return;
         if (value != null && value.trim().length > 0) {
-          cleanup();
-          resolve({
+          finish({
             agentType: selectedAgent!.type,
             profileId: selectedAgent!.profileId,
             panelIndex: selectedPanel,

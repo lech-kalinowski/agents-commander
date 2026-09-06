@@ -327,6 +327,14 @@ for schemas, review steps, limitations and the model-specific training gate.
 
 Don't want to wait for agents to figure it out? Press `Ctrl+O` to manually send a task to any agent in any panel. Commander handles launching, initialization, and delivery.
 
+Choose the target by its stable **P-number**. A running session with the same
+profile receives the task directly; a different running profile requires a
+**Replace Session** confirmation. To run agents side by side, choose an empty
+panel instead. In Yes/No dialogs, Left/Up selects Yes, Right/Down selects No,
+Tab/Shift+Tab switches choices, and Enter accepts. You can also click a choice,
+press Y/N, or cancel with Escape. No is selected by default. Hardware-only
+approvals still require the device; terminal input cannot approve them.
+
 ### Prompt Template Library
 
 **121 built-in prompt templates** across 14 categories, from multi-agent collaboration workflows to single-agent tasks like security audits, testing, debugging, and architecture reviews.

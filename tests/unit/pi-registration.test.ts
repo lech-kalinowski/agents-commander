@@ -35,6 +35,18 @@ describe('explicit APEX Pi profile registration', () => {
     expect(await fs.readdir(path.dirname(options.configPath))).toEqual(['config.json']);
   });
 
+  it('registers broadcast profiles alongside the unchanged sixteen-role council', async () => {
+    const options = await fixture();
+    await registerPiProfiles(options);
+    const broadcast = buildPiProfiles({ model: 'test/apex-v1', piEntry: path.join(options.root, 'pi.js'),
+      credentials: path.join(options.root, 'credential-file-does-not-exist'), out: path.join(options.root, 'broadcast'), scenario: 'broadcast-test' });
+    await fs.writeFile(options.profilesPath, JSON.stringify({ agentProfiles: broadcast }));
+    expect(await registerPiProfiles(options)).toMatchObject({ added: 3, unchanged: 0 });
+    const config = JSON.parse(await fs.readFile(options.configPath, 'utf8'));
+    expect(config.agentProfiles).toEqual([...options.profiles, ...broadcast]);
+    expect(await registerPiProfiles(options)).toMatchObject({ added: 0, unchanged: 3, backupPath: null });
+  });
+
   it('preserves unrelated settings/profiles, backs up exact bytes privately and reruns without writes', async () => {
     const options = await fixture();
     const unrelated = { id: 'my-codex', label: 'My Codex', adapter: 'codex', args: ['--no-alt-screen'] };

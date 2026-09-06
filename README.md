@@ -182,6 +182,13 @@ Supply the exact APEX model and the provider setup for your chosen harness;
 no provider identity or live-model compatibility is assumed. Preparation does
 not launch agents or change your saved configuration. This is a source-checkout
 example, not the two-agent scripted `--demo` or a verified APEX benchmark.
+
+The [Pi guide](Example/apex-sixteen-panel/PI.md#output-budget-and-truncation)
+also provides a configurable `--max-tokens` output ceiling and a separate
+three-panel broadcast test (`--scenario broadcast-test`), with one sender and
+two receivers that print local receipts. Run it in a fresh Commander instance:
+broadcasts reach all connected agents, including hidden panels. Preparation and
+offline tests do not establish a successful live model run.
 The [Pi setup guide](Example/apex-sixteen-panel/PI.md) includes private credential
 loading, profile registration and a live model smoke command.
 

@@ -101,6 +101,79 @@ Hidden sessions continue running. Commander reserves Ctrl+P for protocol
 bootstrap, overriding Pi's model-cycling shortcut. Full collaboration timing and
 the models' observance of wave instructions require rehearsal.
 
+## Output budget and truncation
+
+Preparation accepts `--max-tokens INTEGER`, from **256 to 16,384**. It sets the
+output ceiling in every generated role's `models.json`, and records the same
+value in `scenario.json` and `SETUP.txt`. For example, add `--max-tokens 8192` to
+the preparation command above. The review council still defaults to **2,048**;
+the separate broadcast test below defaults to **8,192**. Existing generated
+directories and registered profiles are never silently rewritten.
+
+These are requested limits, not verified APEX capabilities. Confirm that your
+provider accepts the chosen ceiling; a higher ceiling may increase usage/cost.
+The local context setting remains 32,768 tokens. The pinned Pi runtime reserves
+4,096 context tokens and can reduce the actual requested output budget as the
+conversation grows. Increasing the ceiling cannot guarantee completion.
+
+Pi's **“Response was truncated before completion.”** means the provider reported
+a length stop. Check **F12 before retrying**: a complete Commander frame might
+already have routed before later output was cut off. A frame missing its matching
+END is not routed, but remains buffered. Do not blindly continue or rebroadcast
+it; inspect the results and use fresh sessions for a separate, manually authorized
+attempt. Keep payloads short. Automatic retries and compaction remain disabled.
+
+## Separate three-panel broadcast test
+
+The sixteen-role council intentionally forbids BROADCAST. This separate scenario
+uses three new profile IDs: one sender and two receivers that print local receipts
+without REPLY, SEND, or rebroadcast. It does not change the council's prompts.
+
+**Use a fresh Commander instance with only these three agents running.** BROADCAST
+reaches all other connected running agents, including hidden panels—not only
+profiles whose names contain “Broadcast”. A three-panel view does not isolate an
+existing sixteen-agent workspace.
+
+After installing Pi as above, close other Commander instances before registration.
+Prepare a new private output directory; no model is called by these commands:
+
+```bash
+APEX_BROADCAST="$PWD/.commander-local/apex-pi-broadcast"
+APEX_PI_ENTRY="$PWD/.commander-local/pi-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+
+node Example/apex-sixteen-panel/prepare-pi.mjs \
+  --scenario broadcast-test --max-tokens 8192 \
+  --model callstack/Apex-20260831 \
+  --base-url https://api.callstack.ai/v1 \
+  --pi-entry "$APEX_PI_ENTRY" \
+  --credentials "$PWD/apex_api" \
+  --out "$APEX_BROADCAST"
+
+node Example/apex-sixteen-panel/register-pi.mjs \
+  --profiles "$APEX_BROADCAST/commander-profiles.json"
+
+npm run build
+node dist/bin/agents-commander.js --conference --panels 3 --density 3 "$APEX_BROADCAST"
+```
+
+1. In **F2**, launch **APEX Pi Broadcast Sender** at stable **P1**,
+   **APEX Pi Broadcast Receiver 1** at **P2**, and **Receiver 2** at **P3**.
+   Select each target explicitly; profile labels do not pick panels for you.
+2. Press **Ctrl+P** in each panel and wait for plain readiness acknowledgments.
+3. Use **Ctrl+O** to send `START APEX BROADCAST` once to the existing sender at P1.
+4. Inspect **F12** for two delivered broadcast records with the same short body.
+   P2 and P3 should print `APEX_BROADCAST_RECEIVED P2` and
+   `APEX_BROADCAST_RECEIVED P3` locally. No routed replies are expected.
+5. Stop and inspect any missing receipt, length error, or extra route. Do not
+   resend automatically. A new attempt requires fresh sessions and a new START.
+
+The sender is instructed to emit one fixed body of at most 80 words, with no
+preamble or trailing explanation. These are model instructions, not enforced
+exactly-once delivery or a recipient allowlist. Offline tests verify generator
+budgets and Commander fan-out, not live APEX compliance; generated metadata stays
+`liveModelVerified: false`. Launching/bootstrapping agents and sending START use
+the provider normally and can incur inference charges.
+
 ## Runtime and recording
 
 The wrapper reads the key only when launching Pi, checks that its base URL
@@ -119,8 +192,8 @@ automatic compaction and retries are disabled. Explicit model requests still
 use the provider network. This configuration is for the text review showcase;
 it does not enable Pi's normal code-editing tools.
 
-The configured context limit is 32,768 tokens and output limit 2,048 tokens.
-These are conservative local settings, not a statement of model capacity.
+The configured context limit is 32,768 tokens. Output ceilings are configurable
+as described above; these are local settings, not a statement of model capacity.
 Pi's zero default cost metadata does not establish that inference is free.
 The provider timeout is 60 seconds. Stop or inspect a failed wave before
 continuing; the model's wave instructions are not a scheduler.

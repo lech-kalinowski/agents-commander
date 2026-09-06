@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildPiProfiles, parseArguments, preparePiShowcase, requireSupportedNode, validateBaseUrl, validatePiModel, validateMaxTokens } from '../../Example/apex-sixteen-panel/prepare-pi.mjs';
+import { buildPiProfiles, parseArguments, preparePiShowcase, requireSupportedNode, validateBaseUrl, validatePiModel, validateMaxTokens, validateContextWindow } from '../../Example/apex-sixteen-panel/prepare-pi.mjs';
 import { SCENARIO } from '../../Example/apex-sixteen-panel/scenario.mjs';
 import { loadConfig } from '../../src/config/loader.js';
 import { discoverAgentsWithResolver } from '../../src/agents/agent-registry.js';
@@ -76,10 +76,10 @@ describe('offline sixteen-panel APEX Pi preparation', () => {
       expect(config.providers.apex).toEqual({
         baseUrl: options.baseUrl, api: 'openai-completions', apiKey: '$APEX_API_KEY',
         compat: { supportsStore: false, supportsDeveloperRole: false, supportsReasoningEffort: false, maxTokensField: 'max_tokens' },
-        models: [{ id: options.model, name: 'APEX', contextWindow: 32768, maxTokens: 2048, samplingParams: { tool_choice: 'none' } }],
+        models: [{ id: options.model, name: 'APEX', contextWindow: 245760, maxTokens: 131072, samplingParams: { tool_choice: 'none' } }],
       });
       expect(JSON.parse(await fs.readFile(path.join(roleDir, 'settings.json'), 'utf8'))).toEqual({
-        compaction: { enabled: false }, retry: { enabled: false, provider: { timeoutMs: 60000, maxRetries: 0 } },
+        compaction: { enabled: false }, retry: { enabled: false, provider: { timeoutMs: 300000, maxRetries: 0 } },
       });
       const prompt = await fs.readFile(path.join(roleDir, 'prompt.md'), 'utf8');
       expect(prompt).toContain(SCENARIO.brief);
@@ -155,20 +155,26 @@ describe('offline sixteen-panel APEX Pi preparation', () => {
     expect(help.status).toBe(0);
     expect(help.stdout).toContain('--credentials');
     expect(help.stdout).toContain('--max-tokens');
+    expect(help.stdout).toContain('--context-window');
     expect(help.stdout).toContain('--scenario');
   });
 
   it.each([
-    { scenario: 'review-council', maxTokens: 8192, expected: 8192, count: 16 },
-    { scenario: 'broadcast-test', maxTokens: undefined, expected: 8192, count: 3 },
-    { scenario: 'broadcast-test', maxTokens: '4096', expected: 4096, count: 3 },
-  ])('propagates $scenario output budget $maxTokens to every model and setup manifest', async ({ scenario, maxTokens, expected, count }) => {
+    { scenario: 'review-council', maxTokens: undefined, contextWindow: undefined, expected: 131072, expectedContext: 245760, count: 16 },
+    { scenario: 'broadcast-test', maxTokens: undefined, contextWindow: undefined, expected: 131072, expectedContext: 245760, count: 3 },
+    { scenario: 'review-council', maxTokens: 8192, contextWindow: 262144, expected: 8192, expectedContext: 262144, count: 16 },
+    { scenario: 'broadcast-test', maxTokens: '4096', contextWindow: '16384', expected: 4096, expectedContext: 16384, count: 3 },
+    { scenario: 'review-council', maxTokens: 131072, contextWindow: 135168, expected: 131072, expectedContext: 135168, count: 16 },
+    { scenario: 'broadcast-test', maxTokens: undefined, contextWindow: 8192, expected: 4096, expectedContext: 8192, count: 3 },
+    { scenario: 'review-council', maxTokens: undefined, contextWindow: 32768, expected: 28672, expectedContext: 32768, count: 16 },
+    { scenario: 'broadcast-test', maxTokens: 256, contextWindow: 8192, expected: 256, expectedContext: 8192, count: 3 },
+  ])('propagates $scenario output budget $maxTokens and context $contextWindow to every model and setup manifest', async ({ scenario, maxTokens, contextWindow, expected, expectedContext, count }) => {
     const options = await fixture();
     const read = vi.spyOn(fs, 'readFile');
-    const result = await preparePiShowcase({ ...options, scenario, maxTokens });
+    const result = await preparePiShowcase({ ...options, scenario, maxTokens, contextWindow });
     expect(read).not.toHaveBeenCalled();
     read.mockRestore();
-    expect(result).toMatchObject({ scenario, profiles: count, configuredLimits: { contextWindow: 32768, maxTokens: expected }, liveModelVerified: false });
+    expect(result).toMatchObject({ scenario, profiles: count, configuredLimits: { contextWindow: expectedContext, maxTokens: expected }, liveModelVerified: false });
     const manifest = JSON.parse(await fs.readFile(path.join(options.out, 'scenario.json'), 'utf8'));
     expect(manifest).toMatchObject({ preparationScenario: scenario, configuredLimits: result.configuredLimits, liveModelVerified: false });
     const fragment = JSON.parse(await fs.readFile(path.join(options.out, 'commander-profiles.json'), 'utf8'));
@@ -178,16 +184,18 @@ describe('offline sixteen-panel APEX Pi preparation', () => {
       expect(profile.args).toHaveLength(11); // Existing registration contract remains valid.
       const roleDir = path.join(options.out, 'roles', profile.id);
       const config = JSON.parse(await fs.readFile(path.join(roleDir, 'models.json'), 'utf8'));
-      expect(config.providers.apex.models[0].maxTokens).toBe(expected);
+      expect(config.providers.apex.models[0]).toMatchObject({ maxTokens: expected, contextWindow: expectedContext });
       expect(config.providers.apex.models[0].samplingParams).toEqual({ tool_choice: 'none' });
       const settings = JSON.parse(await fs.readFile(path.join(roleDir, 'settings.json'), 'utf8'));
       expect(settings.compaction.enabled).toBe(false);
       expect(settings.retry.enabled).toBe(false);
       expect(settings.retry.provider.maxRetries).toBe(0);
+      expect(settings.retry.provider.timeoutMs).toBe(300000);
     }
     const setup = await fs.readFile(path.join(options.out, 'SETUP.txt'), 'utf8');
     expect(setup).toContain(`${expected} output-token ceiling`);
-    expect(setup).toContain('not verified provider capabilities');
+    expect(setup).toContain(`${expectedContext} context`);
+    expect(setup).toContain('not universal provider capabilities or guaranteed response lengths');
     if (scenario === 'broadcast-test') {
       expect(setup).toContain('ALL other connected agents, including hidden panels');
       expect(fragment.agentProfiles.map((profile: { id: string }) => profile.id)).toEqual([
@@ -198,7 +206,7 @@ describe('offline sixteen-panel APEX Pi preparation', () => {
     }
   });
 
-  it.each([0, 255, 16385, NaN, Infinity, 2048.5, true, null, '', ' 8192', '8192 ', '+8192', '-8192', '8e3', '0x2000', '8192.0', '08192'])
+  it.each([0, 255, 131073, NaN, Infinity, 2048.5, true, null, '', ' 8192', '8192 ', '+8192', '-8192', '8e3', '0x2000', '8192.0', '08192'])
   ('rejects invalid output budget %# before creating files', async (maxTokens) => {
     const options = await fixture();
     expect(() => validateMaxTokens(maxTokens)).toThrow('decimal integer');
@@ -206,14 +214,47 @@ describe('offline sixteen-panel APEX Pi preparation', () => {
     await expect(fs.stat(options.out)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it.each([0, 8191, 262145, NaN, Infinity, 16384.5, true, null, '', ' 32768', '32768 ', '+32768', '-32768', '3e4', '0x8000', '32768.0', '032768'])
+  ('rejects invalid context window %# before creating files', async (contextWindow) => {
+    const options = await fixture();
+    expect(() => validateContextWindow(contextWindow)).toThrow('decimal integer');
+    await expect(preparePiShowcase({ ...options, contextWindow })).rejects.toThrow('decimal integer');
+    await expect(fs.stat(options.out)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each([
+    { maxTokens: 4097, contextWindow: 8192 },
+    { maxTokens: 8192, contextWindow: 8192 },
+    { maxTokens: '131072', contextWindow: '131072' },
+    { maxTokens: 131072, contextWindow: 135167 },
+  ])('rejects output $maxTokens incompatible with context $contextWindow before reading inputs or writing output', async ({ maxTokens, contextWindow }) => {
+    const options = await fixture();
+    const read = vi.spyOn(fs, 'readFile');
+    const mkdir = vi.spyOn(fs, 'mkdir');
+    const write = vi.spyOn(fs, 'writeFile');
+    await expect(preparePiShowcase({ ...options, maxTokens, contextWindow })).rejects.toThrow();
+    expect(read).not.toHaveBeenCalled();
+    expect(mkdir).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    await expect(fs.stat(options.out)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('accepts bounded integer budgets and validates optional CLI flags without making them required', async () => {
     const options = await fixture();
-    for (const value of [256, '256', 16384, '16384', 8192, '8192']) expect(validateMaxTokens(value)).toBe(Number(value));
+    for (const value of [256, '256', 131072, '131072', 8192, '8192']) expect(validateMaxTokens(value)).toBe(Number(value));
+    for (const value of [8192, '8192', 262144, '262144', 245760, '245760']) expect(validateContextWindow(value)).toBe(Number(value));
     const args = ['--model', options.model, '--base-url', options.baseUrl, '--pi-entry', options.piEntry,
-      '--credentials', options.credentials, '--out', options.out, '--scenario', 'broadcast-test', '--max-tokens', '4096'];
-    expect(parseArguments(args)).toMatchObject({ scenario: 'broadcast-test', maxTokens: 4096 });
-    for (const extra of [['--scenario', 'broadcast-test'], ['--max-tokens', '8192']]) {
+      '--credentials', options.credentials, '--out', options.out, '--scenario', 'broadcast-test', '--max-tokens', '4096', '--context-window', '32768'];
+    expect(parseArguments(args)).toMatchObject({ scenario: 'broadcast-test', maxTokens: 4096, contextWindow: 32768 });
+    for (const extra of [['--scenario', 'broadcast-test'], ['--max-tokens', '8192'], ['--context-window', '32768']]) {
       expect(() => parseArguments([...args, ...extra])).toThrow();
+    }
+    const requiredArgs = args.slice(0, 10);
+    for (const flag of ['--max-tokens', '--context-window']) {
+      for (const value of ['', ' 8192', '8192.0', '8e3', '08192']) {
+        expect(() => parseArguments([...requiredArgs, flag, value])).toThrow();
+      }
+      expect(() => parseArguments([...requiredArgs, flag])).toThrow();
     }
     for (const scenario of ['', null, 'unknown', 'BROADCAST-TEST']) {
       await expect(preparePiShowcase({ ...options, scenario })).rejects.toThrow('scenario must be');
@@ -223,5 +264,13 @@ describe('offline sixteen-panel APEX Pi preparation', () => {
     expect(run.status).toBe(0);
     expect(run.stderr).toBe('');
     expect(JSON.parse(run.stdout)).toMatchObject({ profiles: 3, configuredLimits: { contextWindow: 32768, maxTokens: 4096 } });
+    const scenario = JSON.parse(await fs.readFile(path.join(options.out, 'scenario.json'), 'utf8'));
+    expect(scenario.configuredLimits).toEqual({ contextWindow: 32768, maxTokens: 4096 });
+    const profiles = JSON.parse(await fs.readFile(path.join(options.out, 'commander-profiles.json'), 'utf8'));
+    for (const profile of profiles.agentProfiles) {
+      const model = JSON.parse(await fs.readFile(path.join(options.out, 'roles', profile.id, 'models.json'), 'utf8'));
+      expect(model.providers.apex.models[0]).toMatchObject(scenario.configuredLimits);
+    }
+    expect(await fs.readFile(path.join(options.out, 'SETUP.txt'), 'utf8')).toContain('32768 context and 4096 output-token ceiling');
   });
 });

@@ -103,18 +103,30 @@ the models' observance of wave instructions require rehearsal.
 
 ## Output budget and truncation
 
-Preparation accepts `--max-tokens INTEGER`, from **256 to 16,384**. It sets the
+Preparation accepts `--max-tokens INTEGER`, from **256 to 131,072**. It sets the
 output ceiling in every generated role's `models.json`, and records the same
-value in `scenario.json` and `SETUP.txt`. For example, add `--max-tokens 8192` to
-the preparation command above. The review council still defaults to **2,048**;
-the separate broadcast test below defaults to **8,192**. Existing generated
-directories and registered profiles are never silently rewritten.
+value in `scenario.json` and `SETUP.txt`. Both the review council and broadcast
+test now default to **131,072 output tokens**, prioritizing completion over a
+small response budget. For example, add `--max-tokens 131072` to preparation.
+Preparation never silently rewrites existing directories or registered profiles;
+restart running Pi sessions after changing their generated model settings.
 
-These are requested limits, not verified APEX capabilities. Confirm that your
-provider accepts the chosen ceiling; a higher ceiling may increase usage/cost.
-The local context setting remains 32,768 tokens. The pinned Pi runtime reserves
-4,096 context tokens and can reduce the actual requested output budget as the
-conversation grows. Increasing the ceiling cannot guarantee completion.
+`--context-window INTEGER` accepts **8,192 to 262,144** tokens and defaults to
+**245,760**. An explicit output ceiling must leave at least 4,096 context tokens
+free. If you choose a smaller context and omit `--max-tokens`, preparation uses
+the smaller of 131,072 and `context-window - 4096`. Pi additionally subtracts
+estimated input tokens, so actual requests can be smaller than the ceiling.
+
+Verified against `callstack/Apex-20260831` on `https://api.callstack.ai/v1` on
+2026-09-06: the endpoint reported a **262,144-token total context** and accepted
+`max_tokens: 131072` for a short completed response (`finish_reason: stop`).
+This verifies an accepted request ceiling, **not** the provider's maximum output
+limit or successful generation of 131K tokens. Model discovery did not publish
+output limits. The short request reported 15,861 prompt tokens, so the default Pi
+context leaves 16,384 tokens of empirical provider headroom before Pi's own 4,096
+reserve. That allowance is not a guarantee for every future request. Raising
+`--context-window` above the default reduces it; other endpoints may need different
+settings. Larger budgets cannot guarantee completion or remove provider limits.
 
 Pi's **“Response was truncated before completion.”** means the provider reported
 a length stop. Check **F12 before retrying**: a complete Commander frame might
@@ -142,7 +154,7 @@ APEX_BROADCAST="$PWD/.commander-local/apex-pi-broadcast"
 APEX_PI_ENTRY="$PWD/.commander-local/pi-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
 
 node Example/apex-sixteen-panel/prepare-pi.mjs \
-  --scenario broadcast-test --max-tokens 8192 \
+  --scenario broadcast-test --max-tokens 131072 --context-window 245760 \
   --model callstack/Apex-20260831 \
   --base-url https://api.callstack.ai/v1 \
   --pi-entry "$APEX_PI_ENTRY" \
@@ -192,11 +204,13 @@ automatic compaction and retries are disabled. Explicit model requests still
 use the provider network. This configuration is for the text review showcase;
 it does not enable Pi's normal code-editing tools.
 
-The configured context limit is 32,768 tokens. Output ceilings are configurable
-as described above; these are local settings, not a statement of model capacity.
+The configured context allowance defaults to 245,760 tokens and the output
+ceiling to 131,072. Both are configurable as described above; the context allowance
+reserves empirical provider headroom and is not a statement of maximum capacity.
 Pi's zero default cost metadata does not establish that inference is free.
-The provider timeout is 60 seconds. Stop or inspect a failed wave before
-continuing; the model's wave instructions are not a scheduler.
+The provider response-header timeout is five minutes; it is not a total streaming
+generation deadline. Retries and compaction remain disabled. Stop or inspect a
+failed wave before continuing; the model's wave instructions are not a scheduler.
 
 Commander capture remains opt-in. Follow [the dataset guide](../../docs/datasets.md)
 when recording. Captures identify `generic`; retain model/harness provenance

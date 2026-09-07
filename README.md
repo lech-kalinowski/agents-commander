@@ -48,10 +48,10 @@ new npm package.
 
 ### Current source version
 
-Use Node.js 22+ and build the current development branch:
+Use Node.js 22+ and build the current `main` source checkout:
 
 ```bash
-git clone --branch codex/product-0.1.5 https://github.com/lech-kalinowski/agents-commander.git
+git clone https://github.com/lech-kalinowski/agents-commander.git
 cd agents-commander
 npm install
 npm run build

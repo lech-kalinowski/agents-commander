@@ -6,6 +6,45 @@ const MAX_LITERAL_BYTES = 64 * 1024;
 interface Match { length: number; replacement: string; rule: string }
 interface TrieNode { next: Map<string, TrieNode>; terminal?: Match; output?: Match; failure?: TrieNode }
 
+/** Consume complete quoted/bare values without a backtracking value regex. */
+function redactCredentialAssignments(content: string, onRedact: () => void): string {
+  const assignment = /\b(?:password|passwd|api[_-]?key|access[_-]?token|client[_-]?secret)["']?[ \t]*[:=][ \t]*/giu;
+  const parts: string[] = [];
+  let previousEnd = 0;
+  let match: RegExpExecArray | null;
+  while ((match = assignment.exec(content))) {
+    const start = assignment.lastIndex;
+    let end = start;
+    let quote: string | undefined;
+    while (end < content.length) {
+      const character = content[end];
+      if (character === '\\') {
+        // Include escaped quotes, delimiters and whitespace in the value.
+        end = Math.min(end + 2, content.length);
+        continue;
+      }
+      if (quote) {
+        if (character === quote) {
+          if (content[end + 1] === quote) { end += 2; continue; }
+          quote = undefined;
+        }
+      } else if (character === '"' || character === "'") quote = character;
+      else if (/[\s,;\]}]/u.test(character)) break;
+      end++;
+    }
+    if (end === start) continue;
+    const first = content[start];
+    const wrappingQuote = (first === '"' || first === "'") && !quote && content[end - 1] === first ? first : '';
+    parts.push(content.slice(previousEnd, start), `${wrappingQuote}[REDACTED:secret]${wrappingQuote}`);
+    onRedact();
+    previousEnd = end;
+    // Matches never restart within a consumed value, including an unterminated
+    // quoted value. All scanning is bounded by the admitted content size.
+    assignment.lastIndex = end;
+  }
+  return parts.length ? parts.join('') + content.slice(previousEnd) : content;
+}
+
 /** Bounded literal trie: no user-supplied regular expressions are evaluated. */
 export class CaptureRedactor {
   private root: TrieNode = { next: new Map() };
@@ -108,8 +147,7 @@ export class CaptureRedactor {
     if (privateParts.length) text = privateParts.join('') + text.slice(previousEnd);
     replace(/\b(?:sk-[A-Za-z0-9_-]{16,256}|gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|AKIA[A-Z0-9]{16})\b/gu, '[REDACTED:token]', 'token');
     replace(/\bBearer[ \t]+[A-Za-z0-9._~+/-]{8,512}={0,2}/giu, 'Bearer [REDACTED:token]', 'bearer');
-    text = text.replace(/\b(password|passwd|api[_-]?key|access[_-]?token|client[_-]?secret)[ \t]*[:=][ \t]*["']?[^\s"',;]{1,512}/giu,
-      (_match, label: string) => { count('credential_assignment'); return `${label}=[REDACTED:secret]`; });
+    text = redactCredentialAssignments(text, () => count('credential_assignment'));
     replace(/\/(?:Users|home)\/[^\s/]{1,128}(?:\/[^\s"'<>]{0,512})?/gu, '[REDACTED:home_path]', 'home_path');
     replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu, '[CONTROL]', 'terminal_control');
     return { content: text, redactions };

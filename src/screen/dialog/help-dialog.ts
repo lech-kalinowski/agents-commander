@@ -220,9 +220,12 @@ export function showHelpDialog(screen: blessed.Widgets.Screen, theme: Theme): vo
     screen.render();
   };
   unregisterCancellation = registerDialogCancellation(screen, close);
+  // Keep the shield through named shortcut dispatch and CR's synthetic Return.
+  // Owner cancellation remains synchronous; stale queued closes are idempotent.
+  const requestClose = () => { queueMicrotask(close); };
 
   // Close on dialog-level keys
-  dialog.key(['escape', 'enter', 'q', 'f1'], close);
+  dialog.key(['escape', 'enter', 'q', 'f1'], requestClose);
 
   // Also listen on screen level as fallback (some blessed scrollable
   // boxes don't reliably route key events to dialog.key handlers)
@@ -230,7 +233,7 @@ export function showHelpDialog(screen: blessed.Widgets.Screen, theme: Theme): vo
     if (!key) return;
     const name = key.full || key.name;
     if (name === 'escape' || name === 'enter' || name === 'q' || name === 'f1') {
-      close();
+      requestClose();
     }
   };
   screen.on('keypress', onScreenKey);

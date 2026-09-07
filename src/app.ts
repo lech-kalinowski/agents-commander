@@ -235,6 +235,7 @@ export class App {
   }
 
   private async runApplication(): Promise<void> {
+    this.assertLaunchAllowed('start Agents Commander');
     this.installProcessHandlers();
 
     this.screen = blessed.screen({
@@ -260,6 +261,9 @@ export class App {
       this.config.panelCount,
       this.config.panelDensity,
     );
+    // Directory reads can outlive signal-driven or embedded disposal. Never
+    // install new resource owners after the one-time cleanup has already run.
+    if (this.disposalStarted) return;
     this.layout.onOpenFile = (entry) => {
       void this.openPreview(entry).catch((err) => {
         logger.error(`Failed to preview file: ${entry.fullPath}`, err);

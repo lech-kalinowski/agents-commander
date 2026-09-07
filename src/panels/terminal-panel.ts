@@ -15,6 +15,7 @@ import {
   matchStatusMarker,
   matchQueryMarker,
   isEndMarker,
+  isWithinProtocolContentBudget,
   looksLikeInstructionEcho,
   type CommandCallback,
   type CommanderMessage,
@@ -710,6 +711,9 @@ export class TerminalPanel {
       this.proc.on('close', (code: number | null, signal: string | null) => {
         if (this.proc === thisProc) {
           this.flushDecodedPtyStreams();
+          this.flushFinalProtocolOutput(thisProc);
+          // A public protocol callback may replace this session synchronously.
+          if (this.proc !== thisProc) return;
           this._status = code === 0 ? 'exited' : 'error';
           this.vterm.write(`\r\n--- ${this.agentName} exited (code=${code}, signal=${signal ?? 'none'}) ---\r\n`);
           this.updateHeader();
@@ -838,6 +842,9 @@ export class TerminalPanel {
    */
   private feedScannerFromVTerm(newData = false): void {
     if (!this.scannerEnabled || !this.scanner) return;
+    const child = this.proc;
+    const scanner = this.scanner;
+    const vterm = this.vterm;
 
     // 1. Feed new scrollback lines (non-TUI / normal scroll)
     const sbStart = this.vterm.primaryScrollbackStartIndex;
@@ -849,7 +856,8 @@ export class TerminalPanel {
         this.lastScrollbackIndex = this.vterm.primaryScrollbackStartIndex;
         continue;
       }
-      this.scanner.feed(`${row.text}${row.wrapsToNext ? '' : '\n'}`);
+      scanner.feed(`${row.text}${row.wrapsToNext ? '' : '\n'}`);
+      if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
       this.lastScrollbackIndex++;
     }
 
@@ -880,6 +888,9 @@ export class TerminalPanel {
   private scanGridForProtocol(): void {
     if (!this.onCommanderMessage) return;
     if (this.scanner?.isMuted) return;
+    const child = this.proc;
+    const scanner = this.scanner;
+    const vterm = this.vterm;
 
     const lines = this.vterm.getGridLogicalLines();
     const visibleKeys = new Set<string>();
@@ -948,7 +959,14 @@ export class TerminalPanel {
       }
 
       if (startIdx >= 0 && isEndMarker(line, capability)) {
-        const content = lines.slice(startIdx + 1, i).join('\n').trim();
+        const contentLines = lines.slice(startIdx + 1, i);
+        if (!this.protocolContentWithinLimits(contentLines)) {
+          startIdx = -1;
+          capability = null;
+          target = null;
+          continue;
+        }
+        const content = contentLines.join('\n').trim();
         const canonical = TerminalPanel.canonicalizeContent(content);
         const key = this.buildEmissionKey(
           msgType,
@@ -978,6 +996,7 @@ export class TerminalPanel {
             content,
             ...(capability ? { capability } : {}),
           }, 'grid');
+          if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
         } else if (!this.protocolReservations.has(key)) {
           this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
         }
@@ -1536,6 +1555,9 @@ export class TerminalPanel {
   private scanRenderedTailForReplies(): void {
     if (!this.onCommanderMessage) return;
     if (this.scanner?.isMuted) return;
+    const child = this.proc;
+    const scanner = this.scanner;
+    const vterm = this.vterm;
 
     const tailLines = this.vterm.getTailLogicalLines(120);
     const visibleKeys = new Set<string>();
@@ -1555,11 +1577,15 @@ export class TerminalPanel {
       }
 
       if (isEndMarker(line, capability)) {
-        const content = tailLines
+        const contentLines = tailLines
           .slice(startIdx + 1, i)
-          .map((tailLine) => tailLine.replace(/\x1b\[[0-9;]*m/g, ''))
-          .join('\n')
-          .trim();
+          .map((tailLine) => tailLine.replace(/\x1b\[[0-9;]*m/g, ''));
+        if (!this.protocolContentWithinLimits(contentLines)) {
+          startIdx = -1;
+          capability = null;
+          continue;
+        }
+        const content = contentLines.join('\n').trim();
         const canonical = TerminalPanel.canonicalizeContent(content);
         const key = this.buildEmissionKey('reply', 'generic', -1, canonical, capability);
         visibleKeys.add(key);
@@ -1577,6 +1603,7 @@ export class TerminalPanel {
             content,
             ...(capability ? { capability } : {}),
           }, 'tail');
+          if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
         } else if (!this.protocolReservations.has(key)) {
           this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
         }
@@ -1587,6 +1614,13 @@ export class TerminalPanel {
     }
 
     this.activeTailReplyKeys = visibleKeys;
+  }
+
+  private protocolContentWithinLimits(lines: readonly string[]): boolean {
+    const bytes = lines.reduce((total, line) => total + Buffer.byteLength(line, 'utf8') + 1, 0);
+    return isWithinProtocolContentBudget(
+      lines.length, bytes, this.orchConfig.maxContentLines, this.orchConfig.maxContentBytes,
+    );
   }
 
   private markTailRepliesAsProcessed(lines: string[], ttlMs: number): Set<string> {
@@ -1819,6 +1853,33 @@ export class TerminalPanel {
     const pendingStderr = this.stderrDecoder?.end() ?? '';
     if (pendingStderr) {
       this.vterm.write(pendingStderr);
+    }
+  }
+
+  /** Finalize only the naturally closing, still-current session's output. */
+  private flushFinalProtocolOutput(child: ChildProcess): void {
+    if (this.proc !== child || !this.scannerEnabled || !this.scanner) return;
+    this.feedScannerFromVTerm();
+    if (this.proc !== child) return;
+    // Reconcile the currently visible grid first, refreshing dedup identities
+    // for blocks already observed before the process became idle and exited.
+    this.scanGridForProtocol();
+    if (this.proc !== child) return;
+    if (!this.vterm.inAltScreen) {
+      // The primary scanner has consumed scrollback only. On close its final
+      // grid rows can be finalized too, including a block spanning the boundary.
+      for (const row of this.vterm.getGridPlainRows()) {
+        this.scanner?.feed(`${row.text}${row.wrapsToNext ? '' : '\n'}`);
+        if (this.proc !== child) return;
+      }
+    }
+    // While running, replies wait for grid/tail reconciliation. At close that
+    // reconciliation has just completed and no further redraw can arrive.
+    const pendingReplies = [...this.pendingReplyEmissions.values()];
+    this.clearPendingReplyEmissions();
+    for (const pending of pendingReplies) {
+      this.emitDeduped(pending.msg, 'scrollback');
+      if (this.proc !== child) return;
     }
   }
 

@@ -14,11 +14,36 @@
 
 ### Fixed
 
+- Preserve confirmation ownership across cancellation and immediate reopening;
+  an owner-cancelled dialog cannot commit a queued approval or release a newer
+  dialog's input shield.
+- Keep repeated F11 navigator opens usable and prevent the selection's
+  Enter/Return pair from reaching the previously focused terminal.
+- Keep Help/Logs close shortcuts from reopening their dialogs, and shield the
+  closing Enter/Return pair in Help and the protocol guide.
+- Redact complete recognized credential assignments, including quoted JSON keys,
+  spaces/escapes and long values, before capture persistence. Existing captures
+  and exports are not retroactively sanitized; human review is still required.
+- Preserve long protocol body lines across fragmented PTY output with bounded,
+  incremental buffering; enforce configured byte/line limits in visible-grid
+  and scrollback-tail scans too. Scan complete final output on natural process close
+  without reviving exited-source ACK/reply windows or weakening target guards.
+- Reject named pipes and other nonregular preview/editor inputs without a
+  blocking open, retaining symlink and filesystem identity checks.
+- Prevent asynchronous startup from installing resources after disposal, and
+  safely fall back for unknown/inherited theme-property names.
 - Keep panels created during a modal operation behind the dialog and its
   registered mouse shield, preventing background file selection or focus
   changes while a batch launch is awaiting directory loading.
 
-This workflow is not included in the npm 0.1.5 package. Provider usage and
+### Maintenance
+
+- Update development test/build dependencies to patched versions; retain
+  runtime dependency ranges and the published package version.
+- Add build/watch startup and owned-process cleanup to the verification gate,
+  plus a QA coverage and manual acceptance guide.
+
+These unreleased changes are not included in the npm 0.1.5 package. Provider usage and
 configured startup/resume behavior still apply.
 
 ## 0.1.5

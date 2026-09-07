@@ -254,9 +254,11 @@ export function showProtocolGuide(screen: blessed.Widgets.Screen, theme: Theme):
     screen.render();
   };
   unregisterCancellation = registerDialogCancellation(screen, close);
+  // Keep modal ownership through both Enter and Return from one physical CR.
+  const requestClose = () => { queueMicrotask(close); };
 
   // Close on dialog-level keys
-  dialog.key(['escape', 'enter', 'q', 'S-f12', 'C-g'], close);
+  dialog.key(['escape', 'enter', 'q', 'S-f12', 'C-g'], requestClose);
 
   // Also listen on screen level as fallback (some blessed scrollable
   // boxes don't reliably route key events to dialog.key handlers)
@@ -264,13 +266,13 @@ export function showProtocolGuide(screen: blessed.Widgets.Screen, theme: Theme):
     if (!key) return;
     const name = key.full || key.name;
     if (name === 'escape' || name === 'enter' || name === 'q') {
-      close();
+      requestClose();
     } else if (
       name === 'C-g' ||
       name === 'S-f12' ||
       (key.name === 'f12' && key.shift)
     ) {
-      queueMicrotask(close);
+      requestClose();
     }
   };
   screen.on('keypress', onScreenKey);

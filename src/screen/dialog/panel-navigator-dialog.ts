@@ -161,6 +161,10 @@ export function showPanelNavigatorDialog(
     let dialogStateEntered = true;
     let unregisterCancellation = () => {};
     let closed = false;
+    let pending = false;
+    let ownerCancelled = false;
+    let openingDispatch = true;
+    queueMicrotask(() => { openingDispatch = false; });
     let query = '';
     let selectedIndex = 0;
     let currentGeometry = screenGeometry(
@@ -202,23 +206,33 @@ export function showPanelNavigatorDialog(
         dialog = null;
       }
       if (dialogStateEntered) {
-        cleanupStep(() => leaveDialog(screen));
+        // Screen cancellation owns release of this entry. Do not pop a modal
+        // opened later while deferred key-dispatch cleanup was pending.
+        if (!ownerCancelled) cleanupStep(() => leaveDialog(screen));
         dialogStateEntered = false;
       }
       cleanupStep(() => screen.render());
       return errors;
     };
 
-    const finish = (result: number | null): void => {
-      if (closed) return;
-      const errors = cleanup();
-      if (errors.length > 0) {
-        reject(errors[0]);
-      } else {
-        resolve(result);
-      }
+    const finish = (result: number | null, defer = true): void => {
+      if (closed || (pending && defer)) return;
+      pending = true;
+      const complete = () => {
+        if (closed) return;
+        const errors = cleanup();
+        if (errors.length > 0) reject(errors[0]);
+        else resolve(ownerCancelled ? null : result);
+      };
+      // One physical CR dispatches enter and return synchronously. Keep modal
+      // focus and shielding through both events; freeze the selected result.
+      if (defer) queueMicrotask(complete);
+      else complete();
     };
-    unregisterCancellation = registerDialogCancellation(screen, () => finish(null));
+    unregisterCancellation = registerDialogCancellation(screen, () => {
+      ownerCancelled = true;
+      finish(null, false);
+    });
 
     const renderFooter = (): void => {
       if (!footer) return;
@@ -339,9 +353,11 @@ export function showPanelNavigatorDialog(
       selectedIndex = initialActiveIndex >= 0 ? initialActiveIndex : 0;
 
       list.on('select item', (_item: unknown, index: number) => {
+        if (closed || pending) return;
         if (index >= 0 && index < filteredPanels.length) selectedIndex = index;
       });
       list.on('select', (_item: unknown, index: number) => {
+        if (closed || pending) return;
         const selected = filteredPanels[index];
         if (selected) finish(selected.panelId);
       });
@@ -361,7 +377,7 @@ export function showPanelNavigatorDialog(
       );
 
       onScreenKey = (ch: string | undefined, key: any) => {
-        if (closed || !key) return;
+        if (closed || pending || !key) return;
         const name = key.full || key.name;
         if (name === 'escape') {
           finish(null);
@@ -414,10 +430,10 @@ export function showPanelNavigatorDialog(
 
       screen.on('keypress', onScreenKey);
       keyListenerAttached = true;
-      // Blessed emits raw `keypress` before `key f11`. Closing on the later
-      // named event keeps the app-level F11 guard active for the same physical
-      // keypress and prevents an immediate close/reopen cycle.
-      onF11 = () => finish(null);
+      // Blessed iterates mutable listener arrays. On a later F11 reopening,
+      // this newly appended listener can run during the same opening event.
+      // Arm closing only once that synchronous dispatch has completed.
+      onF11 = () => { if (!openingDispatch) finish(null); };
       screen.key(['f11'], onF11);
       f11ListenerAttached = true;
       renderList(false);

@@ -100,6 +100,8 @@ try {
     'dist/demo/demo-agent.js',
     'docs/codex-micro.md',
     'docs/datasets.md',
+    'docs/README.md',
+    'docs/qa.md',
     'assets/logo.png',
     'assets/logo-wordmark.png',
     'LICENSE',

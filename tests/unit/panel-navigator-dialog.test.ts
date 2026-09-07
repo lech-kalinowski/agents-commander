@@ -263,6 +263,7 @@ describe('Panel Navigator dialog', () => {
   it('closes on the later named F11 event without handling raw F11 keypress', async () => {
     const screen = createScreen();
     const promise = showPanelNavigatorDialog(screen, theme, [panel(1)]);
+    await Promise.resolve(); // The opening key dispatch must finish before F11 can close.
 
     screen.emit('keypress', undefined, { name: 'f11', full: 'f11' });
     expect(isDialogActive()).toBe(true);

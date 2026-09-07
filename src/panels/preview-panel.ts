@@ -93,7 +93,7 @@ export class PreviewPanel {
     try {
       handle = await fs.open(
         filePath,
-        fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+        fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0),
       );
       const stat = await handle.stat();
       if (!stat.isFile()) {

@@ -17,7 +17,8 @@ import {
   type ConfirmDialogController,
 } from './screen/dialog/confirm-dialog.js';
 import { showInputDialog } from './screen/dialog/input-dialog.js';
-import { showAgentDialog } from './screen/dialog/agent-dialog.js';
+import { showAgentDialog, type AgentLaunchChoice } from './screen/dialog/agent-dialog.js';
+import { showBulkLaunchProgress } from './screen/dialog/bulk-launch-progress.js';
 import { showLogDialog } from './screen/dialog/log-dialog.js';
 import { showOrchestrateDialog } from './screen/dialog/orchestrate-dialog.js';
 import { showTemplateDialog } from './screen/dialog/template-dialog.js';
@@ -67,7 +68,7 @@ import {
 } from './screen/dialog/panel-navigator-dialog.js';
 import { buildVimLaunchSpec, resolveCtrlGAction } from './utils/shortcut-routing.js';
 import { formatUserError, sanitizeUserText } from './utils/user-facing-errors.js';
-import type { PanelDensity } from './panel-limits.js';
+import { isActivePanelCount, type PanelDensity } from './panel-limits.js';
 import {
   CODEX_MICRO_BINDINGS,
   type CodexMicroAction,
@@ -1498,9 +1499,14 @@ export class App {
       this.layout.activePanel.panelIndex,
       this.config.agents,
       this.config.agentProfiles,
+      { maxNewPanels: this.layout.availablePanelCapacity },
     );
 
     if (this.disposalStarted) return;
+    if (choice?.newPanelCount !== undefined) {
+      await this.actionLaunchAgentBatch(choice);
+      return;
+    }
     if (choice) {
       const { agentType, panelIndex } = choice;
       const profileId = choice.profileId ?? agentType;
@@ -1532,6 +1538,106 @@ export class App {
       }
       screen.render();
     }
+  }
+
+  /** Repeats one profile in new panels only; no worktree, task or protocol copying. */
+  private async actionLaunchAgentBatch(choice: AgentLaunchChoice): Promise<void> {
+    await this.runDestructiveTransition(async () => {
+      if (this.disposalStarted) return;
+      const count = choice.newPanelCount;
+      const source = this.layout.getPanel(choice.panelIndex);
+      const profileId = choice.profileId ?? choice.agentType;
+      if (!source || !isActivePanelCount(count) || count > this.layout.availablePanelCapacity) {
+        showErrorToast(this.screen, 'Batch cancelled: invalid count, unavailable source, or insufficient panel capacity');
+        return;
+      }
+      const cwd = source instanceof FilePanel ? source.currentPath : source.workingDir;
+      const launchError = this.agentManager.getProfileLaunchError(profileId, choice.agentType);
+      if (launchError) {
+        showErrorToast(this.screen, `Cannot launch batch: ${launchError}`);
+        return;
+      }
+      const confirmed = await showConfirmDialog(
+        this.screen, this.theme, 'Launch New Terminals',
+        `Start ${count} copies of profile ${sanitizeUserText(profileId, 60)}?\n`
+          + `Directory: ${sanitizeUserText(cwd, 120)}\n`
+          + 'Existing panels stay unchanged. Same settings and directory, not isolated worktrees. '
+          + 'Configured prompts/resume options apply to every copy; provider charges may apply.',
+      );
+      if (!confirmed || this.disposalStarted) return;
+      if (this.layout.getPanel(choice.panelIndex) !== source
+        || (source instanceof FilePanel ? source.currentPath : source.workingDir) !== cwd
+        || count > this.layout.availablePanelCapacity) {
+        showErrorToast(this.screen, 'Batch cancelled: source directory or panel capacity changed');
+        return;
+      }
+      const currentError = this.agentManager.getProfileLaunchError(profileId, choice.agentType);
+      if (currentError) {
+        showErrorToast(this.screen, `Cannot launch batch: ${currentError}`);
+        return;
+      }
+
+      const progress = showBulkLaunchProgress(this.screen, this.theme, count);
+      const attempted = new Set<number>();
+      const started: number[] = [];
+      let failure: string | null = null;
+      let failedPanelId: number | null = null;
+      const unsubscribe = this.agentManager.onLifecycle((event) => {
+        if (event.type !== 'exited' || !attempted.has(event.panelIndex) || this.disposalStarted) return;
+        failedPanelId = event.panelIndex;
+        failure ??= `P${event.panelIndex + 1} exited during batch startup; inspect its output`;
+      });
+      try {
+        for (let index = 0; index < count; index++) {
+          if (this.disposalStarted || progress.cancelled || failure) break;
+          const previousIds = new Set(this.layout.workspacePanelIds);
+          const added = await this.layout.addPanel(cwd, { activate: false });
+          if (this.disposalStarted || progress.cancelled || failure) break;
+          if (!added) { failure = 'Panel capacity or stable-ID limit reached'; break; }
+          const newIds = this.layout.workspacePanelIds.filter((id) => !previousIds.has(id));
+          if (newIds.length !== 1) { failure = 'Cannot safely identify the new panel'; break; }
+          const panelId = newIds[0];
+          const newPanel = this.layout.getPanel(panelId);
+          if (!(newPanel instanceof FilePanel) || this.agentManager.hasAgent(panelId)) {
+            failure = `P${panelId + 1} changed during allocation; no session was replaced`;
+            break;
+          }
+          const terminal = this.layout.convertToTerminal(panelId);
+          attempted.add(panelId);
+          if (!this.agentManager.launchProfile(profileId, terminal)) {
+            failedPanelId = panelId;
+            failure = `P${panelId + 1} failed to launch; inspect its output`;
+            break;
+          }
+          started.push(panelId);
+          if (this.disposalStarted) break;
+          this.orchestrator.connectPanel(terminal);
+          progress.update(started.length);
+          this.updateStatus();
+          // Keep input, early-exit notifications and shutdown responsive without
+          // claiming a CLI/provider is ready just because its PTY helper spawned.
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        }
+      } catch (error) {
+        logger.error('Bulk agent launch failed', error);
+        failure = 'Batch interrupted by a launch error; inspect the new panels';
+      } finally {
+        unsubscribe();
+        progress.close();
+      }
+      if (this.disposalStarted) return;
+      const focusId = failedPanelId ?? started[0];
+      if (focusId !== undefined && focusId !== null && this.layout.hasPanel(focusId)) {
+        this.layout.setActivePanel(focusId);
+      }
+      this.updateStatus();
+      const summary = `${started.length}/${count} CLI processes started. `;
+      if (failure) showErrorToast(this.screen, summary + failure, 6000);
+      else showToast(this.screen, summary + (progress.cancelled
+        ? 'Remaining launches cancelled; started sessions kept.'
+        : 'Check agent output/login. F11: panels; Ctrl+P: protocol per panel.'), 6000);
+      this.screen.render();
+    });
   }
 
   private async actionBrowseTemplates(): Promise<void> {

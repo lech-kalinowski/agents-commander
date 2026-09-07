@@ -17,6 +17,8 @@ runtime requirements, features, and bundled license. The versioned install is
 `node dist/bin/agents-commander.js` or `npm start -- <options> <directory>`.
 Do not confuse an older global installation with this checkout; pushing source
 does not publish npm. See `AGENTS.md` and README for the current conventions.
+F2/N bulk launch is an unreleased source addition after npm 0.1.5, not a feature
+of the published 0.1.5 package.
 
 ## Project Structure
 
@@ -49,6 +51,7 @@ TypeScript + blessed + chokidar + marked + tsup
 
 - All imports use `.js` extension (ESM)
 - F-keys: F1=Help, F2=Agent, F3=+Panel, F4=Full/Back, F5=Edit, F6=Clone, F7=Order, F8=Mkdir, F9=Close panel, F10=Quit
+- F2 then N launches one selected profile into a requested number of NEW panels at the selected source directory after confirmation; existing sessions remain untouched. Esc stops remaining launches. No automatic protocol/task/capture; shared CWD and configured resume/startup effects are preserved.
 - F4 toggles active-panel fullscreen; F4 again restores the grid without restarting sessions
 - F6 opens a new panel at the same directory and starts a fresh instance of the same agent profile, not its conversation, process state, or protocol capability; it does not copy files
 - F7 changes workspace position only; stable P IDs and routing/session identity must not change

@@ -18,6 +18,7 @@ import {
 import type { AgentCommandConfig } from '../../config/types.js';
 import { bindOverlayResize, screenGeometry } from './geometry.js';
 import { sanitizeUserText } from '../../utils/user-facing-errors.js';
+import { MAX_ACTIVE_PANELS } from '../../panel-limits.js';
 
 function escapeTaggedText(value: unknown, maxLength: number): string {
   const escape = (blessed as unknown as { escape(text: string): string }).escape;
@@ -28,6 +29,8 @@ export interface AgentLaunchChoice {
   agentType: AgentType;
   profileId: string;
   panelIndex: number;
+  /** Create this many new terminals using panelIndex as the source directory. */
+  newPanelCount?: number;
 }
 
 let agentDialogOpen = false;
@@ -39,11 +42,17 @@ export function showAgentDialog(
   activePanelIndex: number,
   agentOverrides?: Record<string, AgentCommandConfig>,
   agentProfiles?: readonly AgentProfile[],
+  options: { maxNewPanels?: number } = {},
 ): Promise<AgentLaunchChoice | null> {
   if (agentDialogOpen) return Promise.resolve(null);
   const panelIds = normalizePanelIds(panelSource);
   const firstPanelId = initialPanelId(panelIds, activePanelIndex);
   if (firstPanelId === null) return Promise.resolve(null);
+  const batchEnabled = options.maxNewPanels !== undefined;
+  const availableNewPanels = Number.isSafeInteger(options.maxNewPanels)
+    && (options.maxNewPanels ?? -1) >= 0
+    ? Math.min(options.maxNewPanels!, MAX_ACTIVE_PANELS - panelIds.length)
+    : 0;
   agentDialogOpen = true;
   enterDialog(screen);
 
@@ -51,7 +60,7 @@ export function showAgentDialog(
     const agents = discoverAgents(agentOverrides, agentProfiles);
     const preferredHeight = agents.length + 14;
     const geometry = screenGeometry(screen, 64, preferredHeight);
-    const listHeight = Math.max(3, Math.min(agents.length, geometry.height - 13));
+    const listHeight = Math.max(1, Math.min(agents.length, geometry.height - 13));
 
     const dialog = blessed.box({
       parent: screen,
@@ -131,20 +140,44 @@ export function showAgentDialog(
       top: panelLine,
       left: 1,
       width: '100%-4',
-      height: 6,
+      height: Math.max(1, Math.min(6, geometry.height - panelLine - 3)),
       tags: true,
       content: '',
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
     let selectedPanel = firstPanelId;
+    let batchMode = false;
+    let batchDigits = String(Math.min(16, availableNewPanels));
+    let replaceBatchDigits = true;
     let pickerWidth = Math.max(12, geometry.width - 8);
     const numberInput = new PanelNumberInputBuffer(panelIds, () => {
       updatePanelDisplay();
       screen.render();
     });
 
+    function batchCount(): number | null {
+      if (!/^[1-9]\d{0,2}$/u.test(batchDigits)) return null;
+      const count = Number(batchDigits);
+      return count <= availableNewPanels ? count : null;
+    }
+
     function updatePanelDisplay(): void {
+      if (batchMode) {
+        const validation = availableNewPanels === 0
+          ? 'No capacity. N returns to single-panel launch.'
+          : batchCount() === null
+            ? `Invalid: enter a whole count from 1 to ${availableNewPanels}.`
+            : `Type 1-${availableNewPanels}; first digit replaces the count.`;
+        panelLabel.setContent(
+          `{bold}NEW terminals: [${escapeTaggedText(batchDigits || ' ', 16)}]{/bold}`
+          + `  Capacity: ${availableNewPanels}\n`
+          + 'Existing panels unchanged\n'
+          + `Directory from P${selectedPanel + 1} (Left/Right)\n\n`
+          + (batchCount() === null ? `{red-fg}${validation}{/red-fg}` : validation),
+        );
+        return;
+      }
       const header = '{bold}Target panel:{/bold}  (arrows or type P-number)\n\n';
       panelLabel.setContent(
         header + renderPanelBoxes(selectedPanel, panelIds, 4, pickerWidth, numberInput.digits),
@@ -152,11 +185,15 @@ export function showAgentDialog(
     }
     updatePanelDisplay();
 
-    blessed.text({
+    const footer = blessed.text({
       parent: dialog,
       bottom: 0,
-      left: 'center',
-      content: ' Enter=Launch  Left/Right=Panel  0-9=Type P#  Esc=Cancel ',
+      left: 1,
+      width: '100%-4',
+      height: 1,
+      content: batchEnabled
+        ? ' Enter=Launch  N=New panels  Left/Right=Panel  Esc=Cancel '
+        : ' Enter=Launch  Left/Right=Panel  0-9=Type P#  Esc=Cancel ',
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
@@ -171,9 +208,10 @@ export function showAgentDialog(
       64,
       preferredHeight,
       (nextGeometry) => {
-        const nextListHeight = Math.max(3, Math.min(agents.length, nextGeometry.height - 13));
+        const nextListHeight = Math.max(1, Math.min(agents.length, nextGeometry.height - 13));
         list.height = nextListHeight;
         panelLabel.top = nextListHeight + 4;
+        panelLabel.height = Math.max(1, Math.min(6, nextGeometry.height - nextListHeight - 7));
         pickerWidth = Math.max(12, nextGeometry.width - 8);
         updatePanelDisplay();
       },
@@ -262,9 +300,48 @@ export function showAgentDialog(
     list.key(['left'], () => moveSelection(-1));
     list.key(['right'], () => moveSelection(1));
 
+    if (batchEnabled) {
+      list.key(['n', 'S-n'], () => {
+        if (resolved || pending) return;
+        batchMode = !batchMode;
+        replaceBatchDigits = true;
+        numberInput.reset();
+        footer.setContent(batchMode
+          ? ' Enter=Create  N=Single  0-9=Count  Backspace=Edit  Esc=Cancel '
+          : ' Enter=Launch  N=New panels  Left/Right=Panel  Esc=Cancel ');
+        updatePanelDisplay();
+        screen.render();
+      });
+      list.key(['backspace'], () => {
+        if (resolved || pending || !batchMode) return;
+        batchDigits = batchDigits.slice(0, -1);
+        replaceBatchDigits = false;
+        updatePanelDisplay();
+        screen.render();
+      });
+      // Preserve invalid printable input so e.g. "1.5" cannot silently become
+      // an accepted count of 15. Navigation and modal controls remain separate.
+      list.on('keypress', (character, key) => {
+        if (resolved || pending || !batchMode || !character || key.ctrl || key.meta) return;
+        if (!/^[ -~]$/u.test(character) || /^[0-9nN]$/u.test(character)) return;
+        appendBatchDigit(character);
+      });
+    }
+
+    function appendBatchDigit(character: string): void {
+      batchDigits = (replaceBatchDigits ? character : batchDigits + character).slice(0, 16);
+      replaceBatchDigits = false;
+      updatePanelDisplay();
+      screen.render();
+    }
+
     for (let n = 0; n <= 9; n++) {
       list.key([String(n)], () => {
         if (resolved || pending) return;
+        if (batchMode) {
+          appendBatchDigit(String(n));
+          return;
+        }
         const panelId = numberInput.acceptDigit(String(n));
         if (panelId !== null) selectedPanel = panelId;
         updatePanelDisplay();
@@ -274,7 +351,7 @@ export function showAgentDialog(
 
     const handleSelect = (index: number) => {
       if (resolved || pending) return;
-      if (!numberInput.canConfirm) {
+      if (batchMode ? batchCount() === null : !numberInput.canConfirm) {
         updatePanelDisplay();
         screen.render();
         return;
@@ -285,6 +362,7 @@ export function showAgentDialog(
           agentType: agent.type,
           profileId: agent.profileId,
           panelIndex: selectedPanel,
+          ...(batchMode ? { newPanelCount: batchCount()! } : {}),
         });
       } else if (agent && !agent.installed) {
         showNotice(

@@ -140,6 +140,25 @@ describe('LayoutManager responsive workspace', () => {
     vi.clearAllMocks();
   });
 
+  it('allocates in the background without moving focus or paging', async () => {
+    const { layout } = createLayout();
+    await layout.initialize('/repo', 2, 2);
+    const source = layout.activePanel as any;
+    expect(layout.availablePanelCapacity).toBe(98);
+    await layout.addPanel('/batch', { activate: false });
+    expect(layout.activePanel).toBe(source);
+    expect(layout.visiblePanelIds).toEqual([0, 1]);
+    expect((layout.getPanel(2) as any).setFocus).not.toHaveBeenCalled();
+    expect((layout.getPanel(2) as any).currentPath).toBe('/batch');
+    expect(layout.availablePanelCapacity).toBe(97);
+    (layout as any).nextPanelId = MAX_PANEL_ID;
+    expect(layout.availablePanelCapacity).toBe(1);
+    await layout.addPanel('/last', { activate: false });
+    expect(layout.availablePanelCapacity).toBe(0);
+    expect(await layout.addPanel('/overflow', { activate: false })).toBe(false);
+    expect(layout.activePanel).toBe(source);
+  });
+
   it('keeps panel IDs and unaffected objects stable across removal and creation', async () => {
     const { layout } = createLayout();
     await layout.initialize('/repo', 3, 2);

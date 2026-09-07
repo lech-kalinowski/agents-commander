@@ -70,6 +70,7 @@ function createHarness(options: {
     mode: options.mode ?? 2,
     density: options.mode ?? 2,
     panelCount: 3,
+    availablePanelCapacity: 97,
     workspacePanelIds: [0, 1, 2],
     viewport: { pageNumber: 1, pageCount: 1 },
     terminalPanels: livePanels,
@@ -278,6 +279,7 @@ describe('App destructive layout actions', () => {
     vi.mocked(showOrchestrateDialog).mockResolvedValue(null);
     const { app, layout } = createHarness();
     layout.workspacePanelIds = [0, 2, 9, 99];
+    layout.availablePanelCapacity = 96;
     layout.activePanel = { panelIndex: 99, sessionName: null, isRunning: false };
 
     await app.actionLaunchAgent();
@@ -291,6 +293,7 @@ describe('App destructive layout actions', () => {
       99,
       app.config.agents,
       app.config.agentProfiles,
+      { maxNewPanels: 96 },
     );
     expect(showTemplateDialog).toHaveBeenCalledWith(
       app.screen,

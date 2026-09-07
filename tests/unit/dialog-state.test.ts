@@ -54,6 +54,7 @@ describe('screen-scoped dialog state', () => {
       width: '100%',
       height: '100%',
       mouse: true,
+      clickable: true,
       keys: false,
       transparent: true,
     }));

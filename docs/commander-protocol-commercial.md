@@ -9,11 +9,13 @@ current source adds [opt-in capture and reviewed dataset export](datasets.md).
 
 ### License scope
 
-The repository's [LICENSE](../LICENSE) identifies **CC-BY-NC-4.0** and states
-that commercial use requires explicit written permission from the author.
-The commercial scenarios below do not grant that permission. Refer to the
-license and the author's commercial-licensing contact rather than treating
-this document as a commercial license or a legal interpretation.
+Current source uses the **MIT License** in the repository's [LICENSE](../LICENSE),
+which permits commercial use subject to retaining the copyright and permission
+notice. Preserve applicable [third-party notices](../THIRD_PARTY_NOTICES.md).
+Earlier published packages retain the license bundled with those versions;
+this source license change does not publish a new npm release. The scenarios
+below are potential applications, not claims of enterprise readiness or
+deployment-specific compliance.
 
 ### Executive Summary
 
@@ -207,4 +209,4 @@ The [session capture and training-data plan](session-capture-plan.md) now has an
 
 The Commander Protocol gives organizations a practical way to coordinate multiple AI agents in a shared operational environment. Its commercial value comes from clarity, control, and reliability. It makes agent communication explicit, keeps humans in the loop, reduces manual orchestration overhead, and provides the structural pieces needed for trustworthy multi-agent execution.
 
-Source `0.1.5` supports operator-supervised terminal collaboration. Its commercial applicability depends on the project's license, deployment requirements and measured results; this document does not grant commercial rights or claim enterprise certification.
+Source `0.1.5` supports operator-supervised terminal collaboration under the MIT License. Suitability for a particular commercial deployment depends on its requirements and measured results; this document does not claim enterprise certification.

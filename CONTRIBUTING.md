@@ -78,8 +78,8 @@ Do not disclose an unpatched security vulnerability or secret in a public issue.
 
 ## License
 
-Agents Commander is currently source-available under
-[CC-BY-NC-4.0](LICENSE). These contribution instructions do not change that
-license or grant commercial rights. Only submit material that you have the
-right to contribute under the project's license, and retain relevant
-third-party notices.
+Agents Commander is open source under the [MIT License](LICENSE), including
+commercial use. Only submit material that you have the right to contribute
+under that license, and retain relevant copyright and
+[third-party notices](THIRD_PARTY_NOTICES.md). Earlier published packages retain
+the license bundled with those versions; changing source does not publish npm.

@@ -20,9 +20,9 @@ published npm package.
 ## Contributing
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for development setup, verification,
-and pull-request scope. The project currently uses
-[CC-BY-NC-4.0](../LICENSE); public source access does not grant commercial-use
-permission.
+and pull-request scope. Current source is open source under the
+[MIT License](../LICENSE), including commercial use. Retain the copyright and
+permission notice and the applicable [third-party notices](../THIRD_PARTY_NOTICES.md).
 
 ## Proposals and research
 

@@ -122,7 +122,7 @@ Enterprises often reject systems that make agent behavior hard to supervise. Com
 
 ### 3.4 A clear upgrade path
 
-Opt-in semantic capture and reviewed dataset export are now available in source. Full transcripts, replay and model training are not implemented; the [session capture plan](session-capture-plan.md) retains broader proposed work. Enterprise audit systems, dashboards and alternate transports remain possible extensions. Potential commercial applications remain subject to the repository's [CC-BY-NC-4.0 license](../LICENSE), not a commercial grant from this positioning note.
+Opt-in semantic capture and reviewed dataset export are now available in source. Full transcripts, replay and model training are not implemented; the [session capture plan](session-capture-plan.md) retains broader proposed work. Enterprise audit systems, dashboards and alternate transports remain possible extensions. Current source uses the [MIT License](../LICENSE), which permits commercial use subject to retaining its copyright and permission notice; this does not establish suitability for a particular deployment.
 
 ## 4. Practical Originality Check
 

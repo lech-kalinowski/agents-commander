@@ -4,6 +4,9 @@
 > later on the same date. Statements below about missing capture/export describe
 > that baseline, not current source. Use the [dataset guide](datasets.md) for
 > implemented behavior and the [documentation index](README.md) for current guides.
+> License findings below also describe that historical baseline. Current source
+> uses the [MIT License](../LICENSE); earlier published packages retain their
+> bundled license.
 
 Scope: source `0.1.5` at `001e903`, README, CLI/help/welcome/protocol guide,
 contributor instructions, landing page and protocol research documents.

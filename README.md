@@ -718,7 +718,11 @@ privacy precautions before sharing logs or agent output.
 
 ## License
 
-Source-available under CC-BY-NC-4.0 — Creative Commons Attribution-NonCommercial 4.0 International. Commercial use is not licensed by this project.
+Open source under the [MIT License](LICENSE), including commercial use. Retain
+the copyright and permission notice when redistributing the software; see
+[third-party notices](THIRD_PARTY_NOTICES.md) for included third-party material.
+Earlier published packages retain the license bundled with those versions.
+This source license change does not publish a new npm release.
 
 ---
 

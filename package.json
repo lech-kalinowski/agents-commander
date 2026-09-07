@@ -60,7 +60,7 @@
     "orchestration"
   ],
   "author": "Lech Kalinowski",
-  "license": "CC-BY-NC-4.0",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/lech-kalinowski/agents-commander.git"

@@ -50,7 +50,7 @@ export const WELCOME_TEXT = `
     4. Press {cyan-fg}Ctrl+B{/cyan-fg} for collaboration templates
 
 
-       {bold}by Lech Kalinowski{/bold}  —  CC BY-NC 4.0
+       {bold}by Lech Kalinowski{/bold}  —  MIT License
 
                 Press any key to start...
 `.trim();

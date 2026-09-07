@@ -108,9 +108,11 @@ describe('current-source protocol documentation', () => {
       'utf8',
     );
     expect(content).toContain('[LICENSE](../LICENSE)');
-    expect(content).toContain('CC-BY-NC-4.0');
-    expect(content).toContain('explicit written permission from the author');
-    expect(content).toContain('scenarios below do not grant that permission');
+    expect(content).toContain('MIT License');
+    expect(content).toContain('permits commercial use');
+    expect(content).toContain('retaining the copyright and permission');
+    expect(content).toContain('not claims of enterprise readiness');
+    expect(content).not.toContain('CC-BY-NC-4.0');
     expect(content).not.toContain('commercially viable for controlled internal use');
   });
 });

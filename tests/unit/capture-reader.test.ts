@@ -96,6 +96,41 @@ describe('strict capture reader', () => {
 });
 
 describe('bounded literal capture redactor', () => {
+  it.each([
+    '{"api_key":"synthetic-provider-secret-1234"}',
+    "{'client-secret': 'synthetic provider secret 1234'}",
+    'password="synthetic provider secret 1234"',
+    'passwd="synthetic \\"provider\\" secret 1234"',
+    "access-token='synthetic ''provider'' secret 1234'",
+    'client_secret=synthetic\\ provider\\ secret\\ 1234',
+    'password="synthetic provider secret 1234',
+    'password="synthetic\nprovider secret 1234"',
+    'password="synthetic"provider\'secret 1234\'',
+  ])('redacts the entire credential value in structured assignment %s', (content) => {
+    const result = new CaptureRedactor().redact(content);
+    expect(result.content).not.toContain('synthetic');
+    expect(result.content).not.toContain('provider');
+    expect(result.content).not.toContain('1234');
+    expect(result.redactions.credential_assignment).toBe(1);
+  });
+
+  it('keeps structured separators and unrelated fields while replacing every credential', () => {
+    const result = new CaptureRedactor().redact('{"api_key": "fixture-one", "password": "fixture-two", "label": "keep this"}');
+    expect(JSON.parse(result.content)).toEqual({ api_key: '[REDACTED:secret]', password: '[REDACTED:secret]', label: 'keep this' });
+    expect(result.redactions.credential_assignment).toBe(2);
+    expect(new CaptureRedactor().redact('password=\nlabel=keep this').content).toBe('password=\nlabel=keep this');
+  });
+
+  it('redacts complete long credentials and scans repeated unterminated assignments linearly', () => {
+    const redactor = new CaptureRedactor();
+    const before = Date.now();
+    expect(redactor.redact(`password=${'s'.repeat(500_000)}`).content).toBe('password=[REDACTED:secret]');
+    const result = redactor.redact(`password="${'api_key='.repeat(50_000)}`);
+    expect(result.content).toBe('password=[REDACTED:secret]');
+    expect(result.redactions.credential_assignment).toBe(1);
+    expect(Date.now() - before).toBeLessThan(1500);
+  });
+
   it('handles embedded unknown capabilities and truncated private keys', () => {
     const redactor = new CaptureRedactor();
     const key = 'z'.repeat(43);

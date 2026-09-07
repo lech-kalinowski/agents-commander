@@ -59,6 +59,7 @@ function createPanelHarness() {
   panel.scanGridForProtocol = TerminalPanel.prototype['scanGridForProtocol'];
   panel.feedScannerFromVTerm = TerminalPanel.prototype['feedScannerFromVTerm'];
   panel.scanRenderedTailForReplies = TerminalPanel.prototype['scanRenderedTailForReplies'];
+  panel.protocolContentWithinLimits = TerminalPanel.prototype['protocolContentWithinLimits'];
   panel.decodePtyChunk = TerminalPanel.prototype['decodePtyChunk'];
 
   return { panel, emitted };

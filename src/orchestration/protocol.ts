@@ -60,6 +60,7 @@ const UI_PREFIX_RE = /^\s*(?:[•●◦▪▌◆▶▸▹▻➜➤│┃┆┇�
 const MARKER_HINT = 'COMMANDER';
 const MARKER_FALLBACK_HINT = '===';
 const RAW_LOOKBACK = 64;
+const MAX_PENDING_MARKER_BYTES = 5000;
 const INSTRUCTION_ECHO_HINTS = [
   '[agents commander] you are',
   'to message another agent, output a 3-line block',
@@ -239,12 +240,25 @@ export function stripAnsi(text: string): string {
 // ── Output scanner ────────────────────────────────────────────────
 export type CommandCallback = (msg: CommanderMessage) => void;
 
+/** All scanner paths count each logical body line with its terminating LF. */
+export function isWithinProtocolContentBudget(
+  lineCount: number,
+  byteCount: number,
+  maxContentLines = 500,
+  maxContentBytes = 262144,
+): boolean {
+  return lineCount <= maxContentLines && byteCount <= maxContentBytes;
+}
+
 /**
  * Stateful scanner that buffers stripped text from agent output
  * and detects COMMANDER protocol blocks.
  */
 export class ProtocolScanner {
-  private buffer = '';
+  private bufferParts: string[] = [];
+  private bufferBytes = 0;
+  private bufferEndsInHighSurrogate = false;
+  private discardingLine = false;
   private collecting = false;
   private collectType: MessageType = 'send';
   private collectCapability: string | null = null;
@@ -299,36 +313,76 @@ export class ProtocolScanner {
   /** Feed raw PTY data (may contain ANSI codes). */
   feed(raw: string): void {
     if (Date.now() < this.mutedUntil) return;
-    const rawInput = (!this.collecting && this.buffer.length === 0)
+    if (this.discardingLine) {
+      const newline = raw.indexOf('\n');
+      if (newline < 0) return;
+      raw = raw.slice(newline + 1);
+      this.discardingLine = false;
+    }
+    const rawInput = (!this.collecting && this.bufferBytes === 0)
       ? `${this.rawProbeTail}${raw}`
       : raw;
 
-    if (!this.collecting && this.buffer.length === 0 && !this.mightContainMarker(rawInput)) {
+    if (!this.collecting && this.bufferBytes === 0 && !this.mightContainMarker(rawInput)) {
       this.rawProbeTail = rawInput.slice(-RAW_LOOKBACK);
       return;
     }
 
     const clean = rawInput.includes('\x1b') ? stripAnsi(rawInput) : rawInput;
     this.rawProbeTail = '';
-    this.buffer += clean;
-
-    // Process line by line (keep incomplete last line in buffer)
-    let nlIdx: number;
-    while ((nlIdx = this.buffer.indexOf('\n')) !== -1) {
+    // Search only this chunk. Join retained fragments once per actual newline,
+    // not once per incoming character, to keep long-line processing linear.
+    let offset = 0;
+    let nlIdx = clean.indexOf('\n');
+    while (nlIdx !== -1) {
+      this.appendPendingLine(clean.slice(offset, nlIdx));
       // Strip carriage returns and other control chars that PTY output may contain
-      const line = this.buffer.slice(0, nlIdx).replace(/[\r\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
-      this.buffer = this.buffer.slice(nlIdx + 1);
+      const line = this.bufferParts.join('').replace(/[\r\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+      this.clearPendingLine();
       this.processLine(line);
+      offset = nlIdx + 1;
+      nlIdx = clean.indexOf('\n', offset);
     }
-    // Also check buffer for markers without trailing newline
-    if (this.buffer.length > 5000) {
-      this.processLine(this.buffer);
-      this.buffer = '';
+    this.appendPendingLine(clean.slice(offset));
+    // A PTY chunk boundary is not a logical newline. Preserve long wrapped
+    // content until its real newline, but bound unfinished lines so malformed
+    // output cannot retain an unbounded buffer. Reserve space for a footer even
+    // when the current body has used its entire content allowance.
+    const pendingLimit = this.collecting
+      ? Math.max(MAX_PENDING_MARKER_BYTES, this.maxContentBytes - this.contentBytes)
+      : MAX_PENDING_MARKER_BYTES;
+    if (this.bufferBytes > pendingLimit) {
+      this.collecting = false;
+      this.collectCapability = null;
+      this.target = null;
+      this.contentLines = [];
+      this.contentBytes = 0;
+      this.clearPendingLine();
+      this.rawProbeTail = '';
+      this.discardingLine = true;
+      return;
     }
 
-    if (!this.collecting && this.buffer.length === 0) {
+    if (!this.collecting && this.bufferBytes === 0) {
       this.rawProbeTail = rawInput.slice(-RAW_LOOKBACK);
     }
+  }
+
+  private appendPendingLine(fragment: string): void {
+    if (!fragment) return;
+    const firstCodeUnit = fragment.charCodeAt(0);
+    const joinsSurrogatePair = this.bufferEndsInHighSurrogate
+      && firstCodeUnit >= 0xdc00 && firstCodeUnit <= 0xdfff;
+    this.bufferBytes += Buffer.byteLength(fragment, 'utf8') - (joinsSurrogatePair ? 2 : 0);
+    const lastCodeUnit = fragment.charCodeAt(fragment.length - 1);
+    this.bufferEndsInHighSurrogate = lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff;
+    this.bufferParts.push(fragment);
+  }
+
+  private clearPendingLine(): void {
+    this.bufferParts = [];
+    this.bufferBytes = 0;
+    this.bufferEndsInHighSurrogate = false;
   }
 
   updateSource(panel: number, agent: string): void {
@@ -444,10 +498,12 @@ export class ProtocolScanner {
       this.contentLines.push(line);
       this.contentBytes += Buffer.byteLength(line, 'utf8') + 1;
       // Safety: don't collect forever or retain an unbounded payload.
-      if (
-        this.contentLines.length > this.maxContentLines
-        || this.contentBytes > this.maxContentBytes
-      ) {
+      if (!isWithinProtocolContentBudget(
+        this.contentLines.length,
+        this.contentBytes,
+        this.maxContentLines,
+        this.maxContentBytes,
+      )) {
         this.collecting = false;
         this.collectCapability = null;
         this.target = null;

@@ -84,6 +84,22 @@ describe('local capture recorder', () => {
     expect(result.events[0].redactions).toMatchObject({ capability: 2, known_secret: 1, token: 1, credential_assignment: 1, home_path: 1, terminal_control: 1 });
   });
 
+  it('never persists structured or quoted credential values in protocol capture', async () => {
+    const capture = await recorder();
+    capture.record({
+      type: 'input.submitted', actor, inputKind: 'task',
+      content: '{"api_key":"synthetic-persistence-key-1234","label":"keep"}\npassword="synthetic persistence password 5678"',
+    });
+    await capture.close();
+    const result = await readCaptureDirectory(capture.directory!);
+    expect(result.events[0].content).toContain('"label":"keep"');
+    expect(result.events[0].redactions.credential_assignment).toBe(2);
+    for (const name of await readdir(capture.directory!)) {
+      const disk = await readFile(path.join(capture.directory!, name), 'utf8');
+      for (const secret of ['synthetic-persistence-key-1234', 'synthetic persistence password 5678', 'persistence']) expect(disk).not.toContain(secret);
+    }
+  });
+
   it('isolates throwing status observers and unsupported runtime input', async () => {
     const capture = await recorder('protocol', { onStatus: () => { throw new Error('observer failed'); } });
     capture.record({ type: 'session.start', actor });

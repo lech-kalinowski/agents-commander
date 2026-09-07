@@ -148,6 +148,7 @@ export function showConfirmDialog(
     renderButtons();
 
     let resolved = false;
+    let ownerCancelled = false;
     let unregisterCancellation = () => {};
     const finish = (result: boolean) => {
       if (resolved) return;
@@ -159,16 +160,21 @@ export function showConfirmDialog(
       queueMicrotask(() => {
         try {
           unregisterCancellation();
-          leaveDialog(screen);
+          // Owner cancellation already removed this entry. Deferred cleanup
+          // must not release a newer modal opened on the same screen.
+          if (!ownerCancelled) leaveDialog(screen);
           unbindResize();
           dialog.destroy();
           screen.render();
         } finally {
-          resolve(result);
+          resolve(ownerCancelled ? false : result);
         }
       });
     };
-    unregisterCancellation = registerDialogCancellation(screen, () => finish(false));
+    unregisterCancellation = registerDialogCancellation(screen, () => {
+      ownerCancelled = true;
+      finish(false);
+    });
 
     const controller: ConfirmDialogController = {
       confirm: () => finish(true),

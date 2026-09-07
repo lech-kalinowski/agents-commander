@@ -64,5 +64,5 @@ export const themes: Record<string, Theme> = {
 };
 
 export function getTheme(name: string): Theme {
-  return themes[name] ?? classicBlue;
+  return Object.hasOwn(themes, name) ? themes[name] : classicBlue;
 }

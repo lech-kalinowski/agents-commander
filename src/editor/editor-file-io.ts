@@ -502,7 +502,7 @@ export class EditorFileIO {
     const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
     let handle: FileHandle | null = null;
     try {
-      handle = await fs.open(filePath, constants.O_RDONLY | noFollow);
+      handle = await fs.open(filePath, constants.O_RDONLY | noFollow | (constants.O_NONBLOCK ?? 0));
       const opened = await handle.stat();
       if (!opened.isFile()) {
         throw new EditorFileError('not-regular', 'Only regular files can be edited');
@@ -534,7 +534,7 @@ export class EditorFileIO {
     const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
     let handle: FileHandle | null = null;
     try {
-      handle = await fs.open(filePath, constants.O_RDONLY | noFollow);
+      handle = await fs.open(filePath, constants.O_RDONLY | noFollow | (constants.O_NONBLOCK ?? 0));
       const opened = await handle.stat();
       if (
         !opened.isFile()
@@ -624,7 +624,7 @@ export class EditorFileIO {
     const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
     let handle: FileHandle | null = null;
     try {
-      handle = await fs.open(lockPath, constants.O_RDONLY | noFollow);
+      handle = await fs.open(lockPath, constants.O_RDONLY | noFollow | (constants.O_NONBLOCK ?? 0));
       const opened = await handle.stat();
       if (!opened.isFile() || opened.size > 2048) return false;
       const bytes = await handle.readFile();

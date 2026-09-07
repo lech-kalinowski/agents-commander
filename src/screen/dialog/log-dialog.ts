@@ -75,6 +75,8 @@ export function showLogDialog(screen: blessed.Widgets.Screen, theme: Theme): voi
     screen.render();
   };
   unregisterCancellation = registerDialogCancellation(screen, close);
+  // Retain the modal until the app's named shortcut dispatch also completes.
+  const requestClose = () => { queueMicrotask(close); };
 
   // Manual scroll keys
   dialog.key(['up'], () => { dialog.scroll(-1); screen.render(); });
@@ -83,14 +85,14 @@ export function showLogDialog(screen: blessed.Widgets.Screen, theme: Theme): voi
   dialog.key(['pagedown'], () => { dialog.scroll((dialog.height as number) - 4); screen.render(); });
 
   // Close on dialog-level keys
-  dialog.key(['escape', 'q', 'C-l'], close);
+  dialog.key(['escape', 'q', 'C-l'], requestClose);
 
   // Screen-level fallback
   const onScreenKey = (_ch: any, key: any) => {
     if (!key) return;
     const name = key.full || key.name;
     if (name === 'escape' || name === 'q' || name === 'C-l') {
-      close();
+      requestClose();
     }
   };
   screen.on('keypress', onScreenKey);

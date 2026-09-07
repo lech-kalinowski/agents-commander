@@ -44,6 +44,9 @@
 
 This README describes **Agents Commander 0.1.5**, under the MIT License.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
+The [bulk-launch workflow](#launch-one-profile-in-many-new-panels-source-checkout)
+is an unreleased source-checkout addition after 0.1.5; it is not included in
+the npm 0.1.5 package.
 
 ### Install version 0.1.5
 
@@ -190,6 +193,46 @@ Supported adapters:
 - **Shell** (a generic local shell or configured command)
 
 The selector also catalogues five future presets that are not launchable yet: Aider, Cline, Goose, Kiro, and Amp.
+
+### Launch one profile in many new panels (source checkout)
+
+**Unreleased: build the current source checkout. npm 0.1.5 does not include
+this workflow.** Start it with `node dist/bin/agents-commander.js .` after
+`npm run build`.
+
+1. Focus the panel whose working directory the new sessions should use.
+2. Press **F2** and select the desired CLI/profile, such as your prepared
+   APEX/Pi profile.
+3. Press **N** for new-panel batch mode, type **16** (or **10**, **20**, or
+   another count within the displayed capacity), then press **Enter**.
+4. Review the same-profile/directory and provider-usage confirmation. **No** is
+   selected by default; approve only the intended launch.
+
+This adds the requested number of **new** terminal panels. Two existing panels
+plus a batch of 16 means 18 total panels, not 16. Existing file panels, running
+agents, idle terminals, and their stable P IDs remain unchanged. Capacity is
+bounded by the 100-active-panel limit and remaining stable IDs. Without **N**,
+F2 retains its existing single-target launch behavior.
+
+Launches are scheduled one at a time. **Esc** in the progress dialog stops the
+remaining launches; already-started sessions are kept. A launch failure stops
+the batch and leaves its terminal available for inspection. Starting a process
+does not prove that its CLI, authentication, or provider is ready; check the
+terminal output and use **F11** to inspect sessions, including hidden panels.
+Bulk launch does not send a task, bootstrap the protocol, or enable recording.
+Press **Ctrl+P in each agent** when you want to enable its protocol session.
+
+Every new session uses the **same selected profile**, arguments, environment,
+and working directory. These are independent Commander sessions/processes,
+not isolated worktrees: they can access the same files. Configured resume or
+startup arguments may reuse provider-side conversation state or perform work;
+review them first. Starting many CLIs can incur provider usage and local
+resource costs.
+
+Repeating an APEX/Pi role profile sixteen times does **not** create the
+sixteen-role review council below. Its generated profiles contain different
+missions and fixed P-number expectations; launch each intended role at the
+matching stable panel instead of cloning one role's prompt across the council.
 
 ### Sixteen-panel APEX collaboration example
 

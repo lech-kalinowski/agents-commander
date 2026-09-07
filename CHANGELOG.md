@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Source-checkout F2 batch launch: select one CLI/profile, press N, and choose
+  how many new terminal panels to create at the selected panel's directory.
+  One confirmation precedes sequential launches; Esc stops the remaining work
+  while preserving already-started sessions and existing panels.
+- Batch launches use distinct Commander session IDs and the selected profile's
+  unchanged arguments/environment. They do not create worktrees, assign
+  different roles, bootstrap the protocol, submit tasks, or enable capture.
+
+### Fixed
+
+- Keep panels created during a modal operation behind the dialog and its
+  registered mouse shield, preventing background file selection or focus
+  changes while a batch launch is awaiting directory loading.
+
+This workflow is not included in the npm 0.1.5 package. Provider usage and
+configured startup/resume behavior still apply.
+
 ## 0.1.5
 
 ### Added

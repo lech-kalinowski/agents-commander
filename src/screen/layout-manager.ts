@@ -12,6 +12,7 @@ import {
 import { FilePanel } from '../panels/file-panel.js';
 import { TerminalPanel } from '../panels/terminal-panel.js';
 import { logger } from '../utils/logger.js';
+import { placeBelowDialogs } from '../utils/dialog-state.js';
 import {
   calculateResponsiveLayout,
   type ResponsiveLayout,
@@ -196,6 +197,14 @@ export class LayoutManager {
 
   get panelCount(): number {
     return this.panels.length;
+  }
+
+  /** Capacity accounts for both live panels and never-reused stable IDs. */
+  get availablePanelCapacity(): number {
+    return Math.max(0, Math.min(
+      MAX_ACTIVE_PANELS - this.panels.length,
+      MAX_PANEL_ID - this.nextPanelId + 1,
+    ));
   }
 
   /** Callback fired when active panel changes (e.g. for status bar updates). */
@@ -425,6 +434,7 @@ export class LayoutManager {
       position,
       this.config,
     );
+    placeBelowDialogs(this.screen, terminal.box);
     this.panels[workspaceIndex] = terminal;
     this.attachPanelCallbacks(terminal);
     this.reflow(false);
@@ -468,8 +478,8 @@ export class LayoutManager {
     return panel instanceof TerminalPanel ? panel : null;
   }
 
-  /** Add and activate a file panel without changing the current density. */
-  async addPanel(initialPath?: string): Promise<boolean> {
+  /** Add a file panel; background allocation preserves modal focus and paging. */
+  async addPanel(initialPath?: string, options: { activate?: boolean } = {}): Promise<boolean> {
     if (this.panels.length >= MAX_ACTIVE_PANELS) return false;
 
     const panelId = this.allocatePanelId();
@@ -479,11 +489,12 @@ export class LayoutManager {
     const previous = this._activePanelId === null
       ? undefined
       : this.findPanel(this._activePanelId);
-    previous?.setFocus(false);
+    const activate = options.activate !== false;
+    if (activate) previous?.setFocus(false);
     this.panels.push(panel);
-    this._activePanelId = panelId;
+    if (activate) this._activePanelId = panelId;
     this.reflow(false);
-    panel.setFocus(true);
+    if (activate) panel.setFocus(true);
     await this.loadVisibleFilePanels();
     this.screen.render();
     return true;
@@ -606,6 +617,7 @@ export class LayoutManager {
       position,
       this.filePanelOptions(),
     );
+    placeBelowDialogs(this.screen, panel.box);
     this.attachPanelCallbacks(panel);
     return panel;
   }

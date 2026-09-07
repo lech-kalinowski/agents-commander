@@ -59,6 +59,15 @@ Multi-panel AI Agent Manager & File Browser
   File-only actions require a file panel (Tab to switch).
   Ctrl+C / Ctrl+D are forwarded to the running agent.
 
+  Bulk launch (source addition after npm 0.1.5):
+  F2 → select profile → N → type count → Enter → confirm.
+  Adds that many NEW panels at the selected panel's directory.
+  Existing panels/sessions stay unchanged; max 100 total panels.
+  Esc during progress stops remaining launches, keeping started ones.
+  Same profile/arguments/directory, not separate worktrees or roles.
+  Provider usage may apply; resume/startup arguments retain their effects.
+  No automatic task or bootstrap; Ctrl+P in each agent enables protocol.
+
 {bold}{yellow-fg}INTER-AGENT PROTOCOL{/yellow-fg}{/bold}
 
   Ctrl+P gives the current agent a private {cyan-fg}<session-key>{/cyan-fg}.

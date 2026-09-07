@@ -45,11 +45,14 @@ Use `node dist/bin/agents-commander.js` or `npm start --` to exercise this check
 not an older global installation. For the versioned package, the install command
 is `npm install -g agents-commander@0.1.5`. Recheck the registry before changing
 release claims. A source push is not an npm release.
+The F2/N bulk-launch workflow is an unreleased source addition after npm 0.1.5;
+do not describe it as a feature of the published 0.1.5 package.
 
 ## Key Conventions
 
 - All imports use `.js` extension (ESM)
 - F-keys: F1=Help, F2=Agent, F3=+Panel, F4=Full/Back, F5=Edit, F6=Clone, F7=Order, F8=Mkdir, F9=Close panel, F10=Quit
+- F2 then N launches one selected profile into a requested number of NEW panels at the selected source directory after confirmation; existing sessions remain untouched. Esc stops remaining launches. No automatic protocol/task/capture; shared CWD and configured resume/startup effects are preserved.
 - F4 toggles active-panel fullscreen; F4 again restores the grid without restarting sessions
 - F6 opens a new panel at the same directory and starts a fresh instance of the same agent profile, not its conversation, process state, or protocol capability; it does not copy files
 - F7 changes workspace position only; stable P IDs and routing/session identity must not change

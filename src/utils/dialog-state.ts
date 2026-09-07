@@ -75,6 +75,8 @@ export function enterDialog(screen?: blessed.Widgets.Screen): void {
     width: '100%',
     height: '100%',
     mouse: true,
+    // Blessed boxes register hit testing via clickable, not the mouse option.
+    clickable: true,
     keys: false,
     transparent: true,
     autoFocus: false,
@@ -140,3 +142,15 @@ export function closeDialogsForScreen(screen: blessed.Widgets.Screen): void {
 }
 
 export function isDialogActive(): boolean { return depth > 0; }
+
+/** New background content must not cover a modal or bypass its mouse shield. */
+export function placeBelowDialogs(
+  screen: blessed.Widgets.Screen,
+  element: blessed.Widgets.BoxElement,
+): void {
+  const firstDialog = dialogsByScreen.get(screen)?.[0];
+  if (!firstDialog || element.parent !== screen) return;
+  const shieldIndex = screen.children.indexOf(firstDialog.shield);
+  const elementIndex = screen.children.indexOf(element);
+  if (shieldIndex >= 0 && elementIndex > shieldIndex) element.setIndex(shieldIndex);
+}

@@ -43,6 +43,7 @@ afterEach(() => {
     }
   }
   liveChildren.clear();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -100,6 +101,9 @@ describe('TerminalPanel bounded shutdown', () => {
   );
 
   it('settles within the configured bound when a child never reports close', async () => {
+    // Assert the scheduled grace periods, not CI wall-clock scheduling under
+    // load from other tests (including the sixteen-process bulk launch).
+    vi.useFakeTimers();
     const fakeChild = Object.assign(new EventEmitter(), {
       exitCode: null,
       signalCode: null,
@@ -113,15 +117,40 @@ describe('TerminalPanel bounded shutdown', () => {
       sigtermGraceMs: 5,
       sigkillGraceMs: 5,
     });
-    expect(panel.shutdownAgent()).toBe(first);
-    await first;
+    try {
+      expect(panel.shutdownAgent()).toBe(first);
+      let settled = false;
+      void first.then(() => { settled = true; });
+      expect(fakeChild.kill).toHaveBeenCalledTimes(1);
 
-    expect(Date.now() - startedAt).toBeLessThan(500);
-    expect(fakeChild.kill).toHaveBeenNthCalledWith(1, 'SIGINT');
-    expect(fakeChild.kill).toHaveBeenNthCalledWith(2, 'SIGTERM');
-    expect(fakeChild.kill).toHaveBeenNthCalledWith(3, 'SIGUSR1');
-    expect(fakeChild.kill).toHaveBeenNthCalledWith(4, 'SIGKILL');
-    expect((panel as any).pendingTerminations.size).toBe(0);
+      await vi.advanceTimersByTimeAsync(4);
+      expect(fakeChild.kill).toHaveBeenCalledTimes(1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fakeChild.kill).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(5);
+      expect(fakeChild.kill).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(5);
+      expect(fakeChild.kill).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(4);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+      await first;
+
+      expect(Date.now() - startedAt).toBe(20);
+      expect(fakeChild.kill).toHaveBeenNthCalledWith(1, 'SIGINT');
+      expect(fakeChild.kill).toHaveBeenNthCalledWith(2, 'SIGTERM');
+      expect(fakeChild.kill).toHaveBeenNthCalledWith(3, 'SIGUSR1');
+      expect(fakeChild.kill).toHaveBeenNthCalledWith(4, 'SIGKILL');
+      expect((panel as any).pendingTerminations.size).toBe(0);
+      expect(fakeChild.listenerCount('close')).toBe(0);
+    } finally {
+      // A failed assertion must not strand a fake-timer termination in the
+      // global drain used by subsequent tests when real timers are restored.
+      fakeChild.emit('close', 0, null);
+      await first;
+    }
   });
 
   it('requests group signals over fd 3 and redundantly force-kills through SIGUSR1', async () => {

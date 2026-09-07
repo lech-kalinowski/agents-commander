@@ -1,11 +1,16 @@
 # Documentation audit — 2026-09-02
 
+> Historical snapshot: this audit predates the capture/dataset implementation
+> later on the same date. Statements below about missing capture/export describe
+> that baseline, not current source. Use the [dataset guide](datasets.md) for
+> implemented behavior and the [documentation index](README.md) for current guides.
+
 Scope: source `0.1.5` at `001e903`, README, CLI/help/welcome/protocol guide,
 contributor instructions, landing page and protocol research documents.
 **Initial result: not fully synchronized. Resolution: the findings below were
 addressed in this update.** The table preserves the baseline locations and
-original recommendations; line numbers may have moved. Capture/export/training
-remain proposed, not implemented. No npm release was performed.
+original recommendations; line numbers may have moved. At this checkpoint,
+capture/export/training were proposed, not implemented. No npm release was performed.
 
 ## Findings
 

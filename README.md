@@ -27,7 +27,9 @@
   <a href="#features">Features</a> &bull;
   <a href="#inter-agent-communication">Agent-to-Agent</a> &bull;
   <a href="#keyboard-shortcuts">Shortcuts</a> &bull;
-  <a href="#configuration">Config</a>
+  <a href="#configuration">Config</a> &bull;
+  <a href="docs/README.md">Docs</a> &bull;
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 ---
@@ -700,8 +702,19 @@ Agents Commander combines several local workflows in one TUI:
 - [ ] Agent memory -- persistent context across sessions
 - [ ] Plugin system for custom agents
 - [ ] Session save/restore
-- [x] [Opt-in semantic capture and reviewed LoRA/SFT dataset export](https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/datasets.md)
+- [x] [Opt-in semantic capture and reviewed LoRA/SFT dataset export](docs/datasets.md)
 - [ ] Conversation replay
+
+## Documentation and contributions
+
+The [documentation index](docs/README.md) separates current user guides from
+proposals and historical reviews. See [examples](Example/README.md) for optional
+collaboration workflows. Conference slides and speaker notes are supporting
+material, not a requirement for using or contributing to Commander.
+
+Bug reports, documentation improvements, and focused pull requests are welcome.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the verification gate, and
+privacy precautions before sharing logs or agent output.
 
 ## License
 

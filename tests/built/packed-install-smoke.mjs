@@ -116,6 +116,24 @@ try {
     false,
     'Source maps must not be published',
   );
+  const repositoryOnlyPath = /(?:^|\/)(?:(?:presentation|talks|Example|\.github|\.commander-local)\/|apex_api$)/u;
+  for (const repositoryPath of [
+    'presentation/Agents_Commander_Protocol.pptx', 'talks/code-europe-2026/README.md',
+    'Example/apex-sixteen-panel/prepare-pi.mjs', '.github/workflows/ci.yml',
+    '.commander-local/settings.json', 'apex_api',
+  ]) {
+    assert.match(repositoryPath, repositoryOnlyPath);
+    assert.match(`dist/nested/${repositoryPath}`, repositoryOnlyPath);
+  }
+  for (const runtimePath of [
+    'dist/demo/demo-agent.js', 'docs/codex-micro.md', 'dist/apex_api.js',
+  ]) {
+    assert.doesNotMatch(runtimePath, repositoryOnlyPath);
+  }
+  for (const packedPath of packedPaths) {
+    assert.doesNotMatch(packedPath, repositoryOnlyPath,
+      'Talks, source-only examples, repository configuration and credentials must not be published');
+  }
   const privateArtifactPath = /(?:^|\/)(?:capture-[^/]+|commander-reviews|commander-datasets)\/|\.jsonl$/u;
   assert.doesNotMatch('dist/capture-EXAMPLE.js', privateArtifactPath);
   for (const privatePath of [

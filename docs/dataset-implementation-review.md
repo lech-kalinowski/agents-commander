@@ -1,5 +1,9 @@
 # Dataset pipeline implementation review
 
+> Historical review record. Test counts and findings below apply to this
+> implementation checkpoint, not every subsequent release. See the
+> [dataset guide](datasets.md) for current usage and limitations.
+
 Reviewed 2026-09-02 against the source branch, before and after implementation.
 The [dataset guide](datasets.md) describes usage and limits; the
 [original plan](session-capture-plan.md) retains deferred roadmap work.

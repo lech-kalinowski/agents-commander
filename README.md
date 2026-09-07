@@ -29,7 +29,7 @@
   <a href="#keyboard-shortcuts">Shortcuts</a> &bull;
   <a href="#configuration">Config</a> &bull;
   <a href="docs/README.md">Docs</a> &bull;
-  <a href="CONTRIBUTING.md">Contributing</a>
+  <a href="https://github.com/lech-kalinowski/agents-commander/blob/main/CONTRIBUTING.md">Contributing</a>
 </p>
 
 ---
@@ -193,7 +193,7 @@ The selector also catalogues five future presets that are not launchable yet: Ai
 
 ### Sixteen-panel APEX collaboration example
 
-The [APEX review council](Example/apex-sixteen-panel/README.md) prepares sixteen
+The [APEX review council](https://github.com/lech-kalinowski/agents-commander/blob/main/Example/apex-sixteen-panel/README.md) prepares sixteen
 named Pi or OpenCode profiles: one coordinator and fifteen specialists reviewing a
 fictional booking API in seven human-gated waves. It includes an offline setup
 generator, role prompts, a runbook, and a 15-SEND/15-REPLY evidence checklist.
@@ -202,7 +202,7 @@ no provider identity or live-model compatibility is assumed. Preparation does
 not launch agents or change your saved configuration. This is a source-checkout
 example, not the two-agent scripted `--demo` or a verified APEX benchmark.
 
-The [Pi guide](Example/apex-sixteen-panel/PI.md#output-budget-and-truncation)
+The [Pi guide](https://github.com/lech-kalinowski/agents-commander/blob/main/Example/apex-sixteen-panel/PI.md#output-budget-and-truncation)
 also provides a configurable `--max-tokens` output ceiling and a separate
 three-panel broadcast test (`--scenario broadcast-test`), with one sender and
 two receivers that print local receipts. Both Pi scenarios default to a tested
@@ -210,7 +210,7 @@ two receivers that print local receipts. Both Pi scenarios default to a tested
 `--context-window` is configurable too. Run the broadcast test in a fresh Commander instance:
 broadcasts reach all connected agents, including hidden panels. Preparation and
 offline tests do not establish a successful live model run.
-The [Pi setup guide](Example/apex-sixteen-panel/PI.md) includes private credential
+The [Pi setup guide](https://github.com/lech-kalinowski/agents-commander/blob/main/Example/apex-sixteen-panel/PI.md) includes private credential
 loading, profile registration and a live model smoke command.
 
 ### Integrated File Manager
@@ -323,7 +323,7 @@ Routing is bidirectional between connected supported sessions.
 - Opt-in semantic recording and reviewed dataset export are available in this
   source checkout. Nothing is recorded by default. Full terminal transcripts,
   session restore, replay and model training are **not implemented**. The
-  [original design plan](docs/session-capture-plan.md)
+  [original design plan](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/session-capture-plan.md)
   retains the broader proposed scope and implementation boundaries.
 
 ### Create a Commander Protocol training dataset
@@ -725,12 +725,12 @@ Agents Commander combines several local workflows in one TUI:
 ## Documentation and contributions
 
 The [documentation index](docs/README.md) separates current user guides from
-proposals and historical reviews. See [examples](Example/README.md) for optional
+proposals and historical reviews. See [examples](https://github.com/lech-kalinowski/agents-commander/blob/main/Example/README.md) for optional
 collaboration workflows. Conference slides and speaker notes are supporting
 material, not a requirement for using or contributing to Commander.
 
 Bug reports, documentation improvements, and focused pull requests are welcome.
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the verification gate, and
+Read [CONTRIBUTING.md](https://github.com/lech-kalinowski/agents-commander/blob/main/CONTRIBUTING.md) for setup, the verification gate, and
 privacy precautions before sharing logs or agent output.
 
 ## License

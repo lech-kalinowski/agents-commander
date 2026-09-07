@@ -18,7 +18,7 @@ Multi-panel terminal UI for managing AI agent CLIs and routing text-based messag
 - `src/dataset/` — Offline candidate review, split-safe conversational JSONL export and validation
 - `docs/` — Protocol references, setup guides, and explicitly labelled proposals
 - `tests/` — Unit, integration, and built-package checks
-- `presentation/` — Canonical conference PowerPoint + speaker runbook
+- `talks/` — Conference material index; decks and runbooks are reviewed separately
 - `landing-page/` — GitHub Pages landing page
 - `assets/` — Shared visual assets
 - `Example/` — Sample files for exercising the file panel

@@ -102,6 +102,7 @@ try {
     'docs/datasets.md',
     'assets/logo.png',
     'assets/logo-wordmark.png',
+    'LICENSE',
     'THIRD_PARTY_NOTICES.md',
   ]) {
     assert.ok(packedPaths.has(requiredPath), `Packed package is missing ${requiredPath}`);
@@ -172,6 +173,14 @@ try {
   );
   assert.equal(installedMetadata.version, packageMetadata.version);
   assert.equal(installedMetadata.engines.node, '>=22.0.0');
+  assert.equal(installedMetadata.license, 'MIT');
+  for (const notice of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
+    assert.equal(
+      await fs.readFile(path.join(installedRoot, notice), 'utf8'),
+      await fs.readFile(path.join(repositoryRoot, notice), 'utf8'),
+      `Installed ${notice} must retain the complete source notice`,
+    );
+  }
 
   const binaryPath = path.join(
     consumerDirectory,

@@ -35,7 +35,7 @@ does not publish npm. See `AGENTS.md` and README for the current conventions.
 - `src/utils/` — Logger, events, formatting
 - `docs/` — Protocol references, setup guides, and explicitly labelled proposals
 - `tests/` — Unit, integration, hardware, and built-package checks
-- `presentation/` — Canonical conference PowerPoint + speaker runbook
+- `talks/` — Conference material index; decks and runbooks are reviewed separately
 - `landing-page/` — GitHub Pages landing page
 - `assets/` — Logo, themes
 

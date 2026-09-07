@@ -51,7 +51,7 @@ new npm package.
 Use Node.js 22+ and build the current development branch:
 
 ```bash
-git clone --branch codex/review-and-release-0.1.5 https://github.com/lech-kalinowski/agents-commander.git
+git clone --branch codex/product-0.1.5 https://github.com/lech-kalinowski/agents-commander.git
 cd agents-commander
 npm install
 npm run build
@@ -306,7 +306,7 @@ Routing is bidirectional between connected supported sessions.
 - Opt-in semantic recording and reviewed dataset export are available in this
   source checkout. Nothing is recorded by default. Full terminal transcripts,
   session restore, replay and model training are **not implemented**. The
-  [original design plan](https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/session-capture-plan.md)
+  [original design plan](docs/session-capture-plan.md)
   retains the broader proposed scope and implementation boundaries.
 
 ### Create a Commander Protocol training dataset
@@ -331,7 +331,7 @@ metadata is separate; real and synthetic examples stay separate; whole project
 families and detected duplicates stay in one split. Missing/manual-input context
 and incomplete captures are not silently promoted to training examples.
 Redaction is best-effort and human review is mandatory. No automatic training or
-uploads occur. See the [dataset guide](https://github.com/lech-kalinowski/agents-commander/blob/codex/review-and-release-0.1.5/docs/datasets.md)
+uploads occur. See the [dataset guide](docs/datasets.md)
 for schemas, review steps, limitations and the model-specific training gate.
 
 ### Manual Orchestration

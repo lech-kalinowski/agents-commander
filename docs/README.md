@@ -45,6 +45,6 @@ release status or current test count.
 
 ## Conference material
 
-The [presentation and speaker runbook](../presentation/README.md) are separate
+The [conference material index](../talks/README.md) is separate
 from product documentation. They are not runtime dependencies and are not
 included in the npm package.

@@ -11,6 +11,7 @@ const readme = read('README.md');
 const landing = read('landing-page/index.html');
 const agentGuide = read('AGENTS.md');
 const claudeGuide = read('CLAUDE.md');
+const datasetGuide = read('docs/datasets.md');
 const packageVersion = JSON.parse(read('package.json')).version as string;
 
 function visibleText(html: string): string {
@@ -21,20 +22,29 @@ function visibleText(html: string): string {
     .replaceAll('&nbsp;', ' ');
 }
 
-describe('current source documentation', () => {
-  it('identifies source version separately from the verified legacy npm snapshot', () => {
-    for (const document of [readme, landing, agentGuide, claudeGuide]) {
+describe('versioned product documentation', () => {
+  it('documents the selected version and its install command separately from the legacy baseline', () => {
+    for (const document of [readme, visibleText(landing), agentGuide, claudeGuide, datasetGuide]) {
       expect(document).toContain(packageVersion);
       expect(document).toContain('0.1.4');
-      expect(document).toContain('2026-09-02');
+      expect(document).toContain(`npm install -g agents-commander@${packageVersion}`);
+      expect(document).toContain('Node.js 22+');
+      expect(document).toContain('Python 3');
+      expect(document).not.toContain('npm install -g agents-commander@0.1.4');
     }
-    expect(readme).toContain('npm install -g agents-commander@0.1.4');
-    expect(visibleText(landing)).toContain('npm install -g agents-commander@0.1.4');
-    expect(readme).toContain('does not publish');
-    expect(landing).toContain('does not publish npm');
+    expect(readme).toContain('### Upgrading from 0.1.4');
+    expect(visibleText(landing)).toContain('Upgrading from 0.1.4?');
+    for (const document of [readme, visibleText(landing)]) {
+      expect(document).not.toMatch(/(?:public npm is|release is still|npm latest[^\n]*)[^\n]*0\.1\.4/iu);
+      expect(document).toContain('Node.js 18+');
+      expect(document).toContain('MIT License');
+      expect(document).toContain('F4 toggles fullscreen');
+      expect(document).toContain('F9 closes a panel');
+    }
   });
 
-  it('runs current-source launch examples without depending on the global npm CLI', () => {
+  it('keeps installed CLI and source-build launch instructions available', () => {
+    expect(readme).toContain('### Current source version');
     expect(readme).toContain('node dist/bin/agents-commander.js --doctor .');
     expect(readme).toContain('node dist/bin/agents-commander.js --demo');
     expect(readme).toContain('npm run build');
@@ -45,10 +55,22 @@ describe('current source documentation', () => {
     expect(visibleText(landing)).toContain('BROADCAST ACK reports queue admission');
     expect(visibleText(landing)).not.toContain('Sender gets ACK after delivery');
     for (const document of [readme, visibleText(landing)]) {
-      expect(document).not.toMatch(
-        /^(?:\$ )?agents-commander --(?:doctor|demo|conference|density|codex-micro)(?:\s|$)/m,
-      );
+      expect(document).toContain('agents-commander --version');
+      expect(document).toContain('agents-commander --doctor .');
+      expect(document).toContain('agents-commander --demo');
     }
+  });
+
+  it('makes the packaged dataset guide usable without a source checkout', () => {
+    for (const command of ['inspect', 'prepare', 'export', 'validate']) {
+      expect(datasetGuide).toContain(`agents-commander dataset ${command} `);
+      expect(datasetGuide).not.toContain(`npm start -- dataset ${command}`);
+    }
+    expect(datasetGuide).toContain('agents-commander --capture protocol --capture-project project-01');
+    expect(datasetGuide).toContain('agents-commander --demo --capture protocol');
+    expect(datasetGuide).toContain('node dist/bin/agents-commander.js');
+    expect(datasetGuide).toContain('does **not** start recording by default');
+    expect(datasetGuide).toContain('Do not bulk-approve real data without');
   });
 
   it('lists exactly the supported source adapters and keeps OpenCode out of future presets', () => {

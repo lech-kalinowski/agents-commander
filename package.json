@@ -30,6 +30,7 @@
     "assets/logo-wordmark.png",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
+    "CHANGELOG.md",
     "README.md"
   ],
   "scripts": {

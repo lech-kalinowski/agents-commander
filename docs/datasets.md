@@ -1,20 +1,26 @@
 # Commander Protocol datasets for LoRA / SFT
 
-This source checkout supports opt-in semantic capture and offline, reviewed
+Agents Commander 0.1.5 supports opt-in semantic capture and offline, reviewed
 dataset creation. It does **not** start recording by default, upload data,
-download models, or run training. These commands are not in public npm 0.1.4.
-The [design plan](session-capture-plan.md) records the broader roadmap.
+download models, or run training. Version 0.1.4 does not include these commands.
+The [design plan](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/session-capture-plan.md)
+records the broader roadmap and is maintained in the source repository.
 `dataset` is now a reserved CLI subcommand. To open a workspace literally named
 `dataset`, use `./dataset` or its absolute path.
 
 ## 1. Record a permissioned session
 
-Use Node.js 22+ and build this checkout:
+Use Node.js 22+, Python 3, and macOS, Linux, or WSL2:
 
 ```bash
-npm run build
-npm start -- --capture protocol --capture-project project-01 /path/to/project
+npm install -g agents-commander@0.1.5
+agents-commander --version
+agents-commander --capture protocol --capture-project project-01 /path/to/project
 ```
+
+For development from a source checkout, run `npm run build` and replace
+`agents-commander` in the examples below with `node dist/bin/agents-commander.js`
+or `npm start --`. This avoids accidentally running an older global install.
 
 `project-01` is an opaque project-family identifier, not a path or client name.
 Reuse it for related runs, branches and tasks. Different labels for the same
@@ -51,8 +57,8 @@ its usage permissions before export. File permissions are not encryption.
 ## 2. Inspect and prepare review candidates
 
 ```bash
-npm start -- dataset inspect /path/to/capture-uuid
-npm start -- dataset prepare /path/to/capture-uuid --out ~/commander-review-01
+agents-commander dataset inspect /path/to/capture-uuid
+agents-commander dataset prepare /path/to/capture-uuid --out ~/commander-review-01
 ```
 
 `prepare` also accepts multiple capture directories. The output parent must
@@ -102,8 +108,8 @@ review. Edited candidate content invalidates the original hash binding.
 ## 4. Export and validate
 
 ```bash
-npm start -- dataset export ~/commander-review-01 --out ~/commander-dataset-01 --seed experiment-01
-npm start -- dataset validate ~/commander-dataset-01
+agents-commander dataset export ~/commander-review-01 --out ~/commander-dataset-01 --seed experiment-01
+agents-commander dataset validate ~/commander-dataset-01
 ```
 
 Use a non-secret seed and preserve it with the manifests. Export replaces
@@ -183,7 +189,7 @@ separate decisions. No training dependencies are installed by Commander.
 ## Safe rehearsal and current limits
 
 ```bash
-npm start -- --demo --capture protocol --capture-project synthetic-demo
+agents-commander --demo --capture protocol --capture-project synthetic-demo
 ```
 
 The offline demo uses synthetic conditioning because its internal processes do
@@ -193,4 +199,4 @@ pipeline checks, not a claim about real LLM reasoning or training quality.
 No raw transcripts, private provider context, live replay, automatic review,
 automatic deletion or uploads are implemented. Scanner-suppressed echoes and
 malformed fragments are not a complete forensic record. The
-[implementation plan](session-capture-plan.md) retains these broader boundaries.
+[implementation plan](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/session-capture-plan.md) retains these broader boundaries.

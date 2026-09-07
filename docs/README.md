@@ -14,6 +14,8 @@ published npm package.
 - [Codex Micro](codex-micro.md): experimental hardware input and safety guards.
 - [Capture and datasets](datasets.md): explicit recording consent, private
   storage, human review, and offline conversational dataset export.
+- [QA coverage and validation checklist](qa.md): tested feature areas, hardening
+  findings, reproducible checks, and live-provider/device limitations.
 - [Runnable examples](https://github.com/lech-kalinowski/agents-commander/blob/main/Example/README.md): offline demo and optional live-model
   collaboration fixtures.
 

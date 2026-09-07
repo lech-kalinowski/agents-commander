@@ -45,8 +45,9 @@
 This README describes **Agents Commander 0.1.5**, under the MIT License.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
 The [bulk-launch workflow](#launch-one-profile-in-many-new-panels-source-checkout)
-is an unreleased source-checkout addition after 0.1.5; it is not included in
-the npm 0.1.5 package.
+and subsequent QA hardening are unreleased source-checkout changes after
+0.1.5; they are not included in the npm 0.1.5 package. See the
+[QA coverage and remaining manual checks](docs/qa.md) when validating a checkout.
 
 ### Install version 0.1.5
 
@@ -69,7 +70,7 @@ not shadow the selected version. Package versions are listed on
 
 ### Current source version
 
-Use Node.js 22+ and build the current `main` source checkout:
+Use Node.js 22+ and build the desired source checkout:
 
 ```bash
 git clone https://github.com/lech-kalinowski/agents-commander.git
@@ -84,10 +85,17 @@ If you already have this source checkout, skip cloning. Run the commands from
 the checkout; replace `.` with your project directory. The source examples
 below use the built entrypoint so an older global installation cannot shadow it.
 `npm start -- <options> <directory>` is an equivalent source launch command.
+Cloning checks out `main`; features in an open pull request require that PR's
+branch. Check `git branch --show-current` and rebuild after switching branches.
 
 `--doctor` checks the runtime, PTY bridge, packaged assets, and working directory
 before the TUI starts. Commander is a local terminal application; the website is
 a landing page, not a browser-hosted Commander interface.
+
+For a source QA pass, run `npm ci` followed by `npm run verify`. This includes
+synthetic multi-agent terminal tests, offline hardware fixtures, build/watch
+checks, and a packed-install smoke test. It does not call paid providers or
+prove that a physical controller or a particular model is ready.
 
 ### Upgrading from 0.1.4
 

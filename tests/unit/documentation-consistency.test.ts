@@ -135,4 +135,19 @@ describe('versioned product documentation', () => {
       expect(document).toContain('in-memory');
     }
   });
+
+  it('ships QA guidance without claiming offline checks prove live providers or hardware', () => {
+    const qa = read('docs/qa.md');
+    const metadata = JSON.parse(read('package.json'));
+    expect(metadata.files).toContain('docs/qa.md');
+    expect(metadata.files).toContain('docs/README.md');
+    expect(metadata.scripts.verify).toContain('npm run test:dev');
+    expect(readme).toContain('docs/qa.md');
+    expect(read('docs/README.md')).toContain('(qa.md)');
+    expect(qa).toContain('not in npm 0.1.5');
+    expect(qa).toContain('Manual acceptance');
+    expect(qa).toContain('not real provider credentials or private captures');
+    expect(qa).toContain('Existing captures/exports are **not**');
+    expect(qa).toContain('physical USB/Bluetooth operation');
+  });
 });

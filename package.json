@@ -22,6 +22,8 @@
     "dist/templates/*.md",
     "docs/codex-micro.md",
     "docs/datasets.md",
+    "docs/README.md",
+    "docs/qa.md",
     "!**/capture-*/**",
     "!**/*.jsonl",
     "!**/commander-reviews/**",
@@ -42,9 +44,10 @@
     "test": "vitest run",
     "test:hardware": "python3 -m unittest tests/codex_micro_bridge_test.py",
     "test:built": "node tests/built/cli-isolation.mjs",
+    "test:dev": "node tests/built/dev-watch-smoke.mjs",
     "test:pack": "node tests/built/packed-install-smoke.mjs",
     "test:watch": "vitest",
-    "verify": "npm run typecheck && npm test && npm run test:hardware && npm run build && npm run test:built && npm run test:pack",
+    "verify": "npm run typecheck && npm test && npm run test:hardware && npm run test:dev && npm run build && npm run test:built && npm run test:pack",
     "prepack": "npm run verify"
   },
   "keywords": [
@@ -89,6 +92,11 @@
     "@types/node": "^22.19.15",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "tsup": {
+      "esbuild": "^0.28.1"
+    }
   }
 }

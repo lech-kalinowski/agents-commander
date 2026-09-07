@@ -54,6 +54,15 @@ persistence. This is best-effort filtering, **not a privacy guarantee**. Source
 code, personal data and unexpected secrets can remain. Review the material and
 its usage permissions before export. File permissions are not encryption.
 
+The unreleased source checkout additionally redacts quoted credential keys and
+complete quoted values, for example `{"api_key":"example-secret"}` and
+`password="example secret with spaces"`. Escaped quotes and long values are
+consumed as one value; an unterminated quoted value is conservatively redacted
+through the end of that event. This hardening is not in npm 0.1.5 and does not
+retroactively sanitize existing captures or exports. Review older artifacts
+again before reusing them; do not treat a successful integrity check as a
+secret scan or privacy approval.
+
 ## 2. Inspect and prepare review candidates
 
 ```bash

@@ -26,11 +26,23 @@ Before submitting a change, run the complete local validation gate:
 npm run verify
 ```
 
-This checks types, application tests, hardware bridge tests, the production
-build, built CLI isolation and an installed-package smoke test. Describe any
+This checks types, application tests, hardware bridge tests, development watch
+startup and cleanup, the production build, built CLI isolation and an
+installed-package smoke test. Describe any
 unavailable checks and their reason instead of marking them as passed. Unit
 tests and offline fixtures do not prove live-model behavior or physical-device
 compatibility.
+
+Use the [QA coverage and manual checklist](docs/qa.md) to choose relevant
+regressions. Check public dependency advisories with `npm audit` as a separate,
+network-dependent check; it is intentionally not part of the offline test gate.
+
+The development-only `tsup` → `esbuild` override selects the patched 0.28 line
+for [GHSA-g7r4-m6w7-qqqr](https://github.com/advisories/GHSA-g7r4-m6w7-qqqr).
+Commander uses build/watch, not the affected Windows development-server mode.
+Keep the override covered by build/watch/package tests and remove it when
+tsup's own dependency range includes a patched version. It does not add esbuild
+to the published CLI's runtime dependencies.
 
 ## Scope and review
 

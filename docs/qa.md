@@ -1,0 +1,130 @@
+# QA coverage and validation checklist
+
+This records the source hardening pass started on **2026-09-07**, on top of the
+F2/N bulk-launch change. It is not a certification that every possible bug has
+been found. These fixes are **not in npm 0.1.5**; a source push is not an npm
+release. Use the branch and commit under review, not an older global command.
+
+## Reproduce the automated checks
+
+Use Node.js 22+, Python 3, and macOS/Linux (WSL2 runs the Linux build):
+
+```bash
+npm ci
+npm run verify
+node dist/bin/agents-commander.js --doctor .
+```
+
+`verify` runs typechecking, application unit/integration tests, offline Python
+hardware fixtures, development-watch startup/cleanup, the production build,
+built-CLI isolation, and a packed-install smoke. The watch check stops only the
+processes it owns. The suite uses synthetic tasks, temporary files and local
+PTY children, not real provider credentials or private captures. A real terminal
+is required for an interactive doctor/manual rehearsal; a non-TTY warning in a
+pipe is not a failed interactive runtime test.
+
+Run `npm audit` separately when network access is available. Advisory results
+describe the registry state when checked, not a permanent security guarantee.
+
+## Recorded local result
+
+The 2026-09-07 pass on macOS/Node.js 24 completed with **1,118 application tests
+across 92 files**, **28 Python hardware tests**, typechecking, build/watch,
+production build, built CLI isolation and packed installation all passing.
+This adds 60 application regressions above the 1,058-test starting checkpoint.
+`npm audit` reported **zero advisories**, including development dependencies,
+after a clean installation of the reviewed lockfile.
+
+Pre-change reproductions and post-change reviews covered UI/files, application
+lifecycle/configuration, protocol/PTY/adapters, and capture/datasets/hardware.
+The [CI workflow](https://github.com/lech-kalinowski/agents-commander/actions/workflows/ci.yml)
+repeats the gate on macOS and Linux with Node.js 22 and 24; consult the run for
+the exact commit being used instead of carrying this checkpoint forward.
+
+## Feature coverage
+
+| Area | Automated evidence |
+| --- | --- |
+| CLI and packaging | Help/version, doctor, launch-option validation, runtime assets, dataset commands without UI imports, clean packed installation |
+| Configuration and adapters | Saved/launch-only precedence, malformed profiles, argument/environment handling, command discovery, OpenCode and synthetic Pi/APEX fixtures |
+| Workspace and navigation | Stable IDs, 1–100 panel limits, paging, density, fullscreen/back, cloning, ordering, closing, navigator, real Blessed input and resize |
+| Bulk agent launch | 10/16/20 launch logic, 16 independent local PTYs, capacity rejection, unchanged existing sessions, cancellation, startup failures, hidden-panel geometry |
+| Dialogs and overlays | Enter/Return shielding, keyboard and mouse isolation, cancellation, owner teardown, immediate reopening, focus restoration |
+| File browser and editor | Sorting, selection, preview, regular-file/symlink checks, copy/move/delete identity checks, atomic saves, locks and metadata preservation |
+| Terminal lifecycle | UTF-8/ANSI rendering, PTY resize, restart/replacement, input forwarding, bounded termination and owned-child cleanup |
+| Commander Protocol | SEND/REPLY/BROADCAST/STATUS/QUERY, session capabilities, target identity, reply windows, deduplication, chunk boundaries, payload bounds and Activity |
+| Demo and templates | Two-agent deterministic offline collaboration, failure/retry cleanup, template catalogue and protocol preparation |
+| Capture and datasets | Explicit launch consent, private storage, redaction, crash/incomplete detection, review-gated export, conversational schema, provenance and split isolation |
+| Codex Micro | Offline native-bridge parsing, connection epochs, sole-reader ownership guards, decision leases and keyboard fallback behavior |
+| Documentation and release | Shortcut/protocol consistency, adapter/template counts, version/license claims, release versus source separation |
+
+Unit tests model edge conditions; integration tests exercise actual Blessed
+input and/or local PTYs. Neither is a live-model benchmark. macOS metadata tests
+and Linux behavior differ; unsupported platform-specific assertions are skipped
+explicitly, not counted as platform validation.
+
+## Confirmed findings addressed
+
+- **Confirmation ownership:** a queued approval could survive owner cancellation,
+  and deferred cleanup could remove the shield belonging to a newly opened
+  dialog. Cancellation now wins and cannot release a newer modal.
+- **Panel navigator:** reopening F11 could immediately close it, and the closing
+  Enter/Return pair could reach the previous terminal. Opening/closing dispatch
+  is shielded and owner cancellation overrides a queued selection.
+- **Information dialogs:** Help and Logs could reopen on their own close
+  shortcut, while Enter in Help/Protocol could reach the background terminal.
+  The shield now remains active through the complete closing key dispatch.
+- **Capture credentials:** quoted keys, spaces/escapes in quoted values, and long
+  bare values could leave credentials in recorded content. A bounded scanner
+  removes complete recognized values. Existing captures/exports are **not**
+  retroactively sanitized; review them again before use. Redaction remains
+  best-effort, not a privacy guarantee.
+- **Protocol fragmentation:** a long single-line body could acquire artificial
+  newlines at PTY chunk boundaries. Buffering preserves real line boundaries and
+  fails closed on oversized incomplete input.
+- **Protocol limits:** visible-grid and scrollback-tail scanning could bypass
+  configured body byte/line limits. All scanning paths enforce the same limits;
+  oversized blocks are not routed as truncated payloads.
+- **Final terminal output:** complete protocol output immediately before a
+  natural process close could be lost before the scheduled scan. Final output
+  is reconciled while the closing session is still current; replacement,
+  capability and target-session guards remain required.
+- **Special-file reads:** preview and editor lock checks could block opening a
+  FIFO before checking its type. Nonblocking opens retain regular-file and
+  identity checks and do not alter the rejected special file.
+- **Startup cancellation:** asynchronous directory initialization could resume
+  resource setup after disposal. A disposed application cannot restart, and
+  cancelled startup does not install new watchers or input bridges.
+- **Theme lookup:** inherited object-property names could resolve to invalid
+  themes. Only own theme entries are accepted; other names use Classic Blue.
+- **Development dependencies:** patched the test/build dependency graph,
+  retaining the runtime dependency ranges and package version. The scoped
+  esbuild override is explained in
+  [contributor guidance](https://github.com/lech-kalinowski/agents-commander/blob/main/CONTRIBUTING.md).
+
+## Manual acceptance before a presentation or release
+
+1. In the intended terminal, run doctor and resolve runtime/PTY failures. Try
+   both themes, resize, switch panels, toggle F4 twice, and cancel dialogs.
+2. Run `node dist/bin/agents-commander.js --demo`. Confirm the launch, observe
+   both roles, and inspect F12 Activity. Cancel quit once, then quit and confirm
+   that Commander restores the terminal.
+3. With authorized provider credentials, launch one intended CLI/profile and
+   verify authentication/model output. Then try F2 → profile → N → 16 → Enter
+   and confirm the actual number of ready sessions. Sixteen means sixteen new
+   terminals; existing panels remain. Shared profiles/directories are not
+   isolated worktrees or sixteen distinct orchestration roles.
+4. Enable protocol in the intended live sessions and exercise a bounded
+   SEND/REPLY/BROADCAST/QUERY scenario. ACK means admission/delivery as documented,
+   **not** model completion or correctness; inspect per-target Activity.
+5. For Codex Micro, follow [the hardware guide](codex-micro.md), including the
+   native input checklist, ChatGPT conflict/ownership checks, disconnect/reconnect
+   and decision expiry. Keyboard fallback cannot establish device identity.
+6. For real training data, separately review rights, privacy, context and quality
+   before approving export. Structural validation does not constitute human
+   approval or prove that an adapter will train well.
+
+The automated pass does not establish live APEX/provider availability, model
+reasoning quality, physical USB/Bluetooth operation, every terminal emulator,
+or a successful LoRA training run. No model training, npm publication, controller
+firmware flashing or real-data bulk approval is part of this QA workflow.

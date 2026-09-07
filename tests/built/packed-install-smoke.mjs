@@ -104,6 +104,7 @@ try {
     'assets/logo-wordmark.png',
     'LICENSE',
     'THIRD_PARTY_NOTICES.md',
+    'CHANGELOG.md',
   ]) {
     assert.ok(packedPaths.has(requiredPath), `Packed package is missing ${requiredPath}`);
   }

@@ -10,8 +10,10 @@ npm run build
 npm start
 ```
 
-Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Source is version 0.1.5;
-public npm was still 0.1.4 when checked on 2026-09-02. Run the local build with
+Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.5,
+under the MIT License. Version 0.1.4 is the legacy baseline with different
+runtime requirements, features, and bundled license. The versioned install is
+`npm install -g agents-commander@0.1.5`. Run the local build with
 `node dist/bin/agents-commander.js` or `npm start -- <options> <directory>`.
 Do not confuse an older global installation with this checkout; pushing source
 does not publish npm. See `AGENTS.md` and README for the current conventions.

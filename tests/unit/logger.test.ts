@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -160,6 +161,181 @@ describe('logger', () => {
     await expect(fs.lstat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('retries a rotation lock released between open and fstat', async () => {
+    const { LOG_DIR, LOG_FILE, logger } = await importLogger(fixtureRoot);
+    const lockPath = `${LOG_FILE}.lock`;
+    await fs.mkdir(LOG_DIR, { mode: 0o700 });
+    await fs.writeFile(lockPath, '', { mode: 0o600 });
+    const originalOpen = fsSync.openSync;
+    let releasedFd: number | null = null;
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    vi.spyOn(fsSync, 'openSync').mockImplementation((file, flags, mode) => {
+      const fd = originalOpen(file, flags, mode);
+      if (file === lockPath && typeof flags === 'number' && !(flags & fsSync.constants.O_EXCL)) {
+        releasedFd = fd;
+        fsSync.unlinkSync(lockPath);
+        expect(fsSync.fstatSync(fd).nlink).toBe(0);
+      }
+      return fd;
+    });
+    const close = vi.spyOn(fsSync, 'closeSync');
+
+    logger.info('survived concurrent lock release');
+    logger.close();
+
+    expect(releasedFd).not.toBeNull();
+    expect(close).toHaveBeenCalledWith(releasedFd);
+    expect(stderrWrite).not.toHaveBeenCalled();
+    expect(await fs.readFile(LOG_FILE, 'utf8')).toContain('survived concurrent lock release');
+    await expect(fs.lstat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('retries a lock whose inode changes between lstat and open', async () => {
+    const { LOG_DIR, LOG_FILE, logger } = await importLogger(fixtureRoot);
+    const lockPath = `${LOG_FILE}.lock`;
+    await fs.mkdir(LOG_DIR, { mode: 0o700 });
+    await fs.writeFile(lockPath, '', { mode: 0o600 });
+    const originalOpen = fsSync.openSync;
+    let replaced = false;
+    vi.spyOn(fsSync, 'openSync').mockImplementation((file, flags, mode) => {
+      if (!replaced && file === lockPath && typeof flags === 'number' && !(flags & fsSync.constants.O_EXCL)) {
+        replaced = true;
+        const previousFd = originalOpen(file, flags, mode);
+        try {
+          fsSync.unlinkSync(lockPath);
+          fsSync.writeFileSync(lockPath, '', { flag: 'wx', mode: 0o600 });
+          const staleTime = new Date(Date.now() - 60_000);
+          fsSync.utimesSync(lockPath, staleTime, staleTime);
+          expect(fsSync.lstatSync(lockPath).ino).not.toBe(fsSync.fstatSync(previousFd).ino);
+          return originalOpen(file, flags, mode);
+        } finally {
+          fsSync.closeSync(previousFd);
+        }
+      }
+      return originalOpen(file, flags, mode);
+    });
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    logger.info('survived replacement identity');
+    logger.close();
+
+    expect(replaced).toBe(true);
+    expect(stderrWrite).not.toHaveBeenCalled();
+    expect(await fs.readFile(LOG_FILE, 'utf8')).toContain('survived replacement identity');
+    await expect(fs.lstat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('refuses a symlink substituted between lock validation and open', async () => {
+    const { LOG_DIR, LOG_FILE, logger } = await importLogger(fixtureRoot);
+    const lockPath = `${LOG_FILE}.lock`;
+    const victimPath = path.join(fixtureRoot, 'victim.txt');
+    await fs.mkdir(LOG_DIR, { mode: 0o700 });
+    await fs.writeFile(lockPath, '', { mode: 0o600 });
+    await fs.writeFile(victimPath, 'unchanged', { mode: 0o600 });
+    const originalOpen = fsSync.openSync;
+    let replaced = false;
+    vi.spyOn(fsSync, 'openSync').mockImplementation((file, flags, mode) => {
+      if (!replaced && file === lockPath && typeof flags === 'number' && !(flags & fsSync.constants.O_EXCL)) {
+        replaced = true;
+        fsSync.unlinkSync(lockPath);
+        fsSync.symlinkSync(victimPath, lockPath);
+      }
+      return originalOpen(file, flags, mode);
+    });
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    logger.info('must not follow a substituted lock');
+    logger.close();
+
+    expect(replaced).toBe(true);
+    expect(stderrWrite).toHaveBeenCalledTimes(1);
+    expect(stderrWrite.mock.calls[0]?.[0]).toContain('File logging disabled');
+    expect(await fs.readFile(victimPath, 'utf8')).toBe('unchanged');
+    expect((await fs.lstat(lockPath)).isSymbolicLink()).toBe(true);
+    await expect(fs.lstat(LOG_FILE)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each(['hard-link', 'foreign-owner', 'non-regular'] as const)(
+    'does not retry an unsafe %s descriptor as a released lock',
+    async (unsafeKind) => {
+      const { LOG_DIR, LOG_FILE, logger } = await importLogger(fixtureRoot);
+      const lockPath = `${LOG_FILE}.lock`;
+      const linkedPath = path.join(fixtureRoot, 'linked-lock');
+      await fs.mkdir(LOG_DIR, { mode: 0o700 });
+      await fs.writeFile(lockPath, 'unchanged', { mode: 0o600 });
+      const originalOpen = fsSync.openSync;
+      const originalFstat = fsSync.fstatSync;
+      let observedFd: number | null = null;
+      vi.spyOn(fsSync, 'openSync').mockImplementation((file, flags, mode) => {
+        const fd = originalOpen(file, flags, mode);
+        if (file === lockPath && typeof flags === 'number' && !(flags & fsSync.constants.O_EXCL)) {
+          observedFd = fd;
+          if (unsafeKind === 'hard-link') fsSync.linkSync(lockPath, linkedPath);
+          else fsSync.unlinkSync(lockPath);
+        }
+        return fd;
+      });
+      vi.spyOn(fsSync, 'fstatSync').mockImplementation((fd, options) => {
+        const stat = originalFstat(fd, options);
+        if (fd === observedFd) {
+          if (unsafeKind === 'foreign-owner') stat.uid = Number(stat.uid) + 1;
+          if (unsafeKind === 'non-regular') stat.isFile = () => false;
+        }
+        return stat;
+      });
+      const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+      logger.info('must reject unsafe lock');
+      logger.close();
+
+      expect(observedFd).not.toBeNull();
+      expect(stderrWrite).toHaveBeenCalledTimes(1);
+      const expectedError = {
+        'hard-link': 'multiply-linked',
+        'foreign-owner': 'not owned by the current user',
+        'non-regular': 'non-regular',
+      }[unsafeKind];
+      expect(stderrWrite.mock.calls[0]?.[0]).toContain(expectedError);
+      await expect(fs.lstat(LOG_FILE)).rejects.toMatchObject({ code: 'ENOENT' });
+      if (unsafeKind === 'hard-link') {
+        expect(await fs.readFile(linkedPath, 'utf8')).toBe('unchanged');
+        expect(await fs.readFile(lockPath, 'utf8')).toBe('unchanged');
+      }
+    },
+  );
+
+  it('keeps the lock deadline bounded when each observed lock is replaced', async () => {
+    const { LOG_DIR, LOG_FILE, logger } = await importLogger(fixtureRoot);
+    const lockPath = `${LOG_FILE}.lock`;
+    await fs.mkdir(LOG_DIR, { mode: 0o700 });
+    await fs.writeFile(lockPath, '', { mode: 0o600 });
+    const originalOpen = fsSync.openSync;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    let observedLocks = 0;
+    vi.spyOn(fsSync, 'openSync').mockImplementation((file, flags, mode) => {
+      if (file === lockPath && typeof flags === 'number' && !(flags & fsSync.constants.O_EXCL)) {
+        observedLocks += 1;
+        if (observedLocks > 2) throw new Error('fixture detected an unbounded lock retry');
+        const fd = originalOpen(file, flags, mode);
+        fsSync.unlinkSync(lockPath);
+        fsSync.writeFileSync(lockPath, '', { flag: 'wx', mode: 0o600 });
+        clock.mockReturnValue(1250);
+        return fd;
+      }
+      return originalOpen(file, flags, mode);
+    });
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    logger.info('must not retry forever');
+    logger.close();
+
+    expect(observedLocks).toBe(1);
+    expect(stderrWrite).toHaveBeenCalledTimes(1);
+    expect(stderrWrite.mock.calls[0]?.[0]).toContain('Timed out waiting for the log rotation lock');
+    await expect(fs.lstat(LOG_FILE)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await fs.readFile(lockPath, 'utf8')).toBe('');
+  });
+
   it('recovers a valid rotation lock left by an exited Node process', async () => {
     const logDirectory = path.join(fixtureRoot, '.agents-commander');
     const logPath = path.join(logDirectory, 'debug.log');
@@ -271,6 +447,7 @@ describe('logger', () => {
       const [loggerUrl, role, lockPath, attemptPath] = process.argv.slice(1);
       const { logger } = await import(loggerUrl);
       let lockFd = null;
+      let reportedContention = false;
       if (role === 'holder') {
         fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
         lockFd = fs.openSync(lockPath, 'wx', 0o600);
@@ -284,6 +461,21 @@ describe('logger', () => {
         };
         fs.writeFileSync(lockFd, JSON.stringify(record) + '\\n', 'utf8');
         fs.fsyncSync(lockFd);
+      } else {
+        const originalOpen = fs.openSync;
+        fs.openSync = function(file, flags, mode) {
+          try {
+            return originalOpen(file, flags, mode);
+          } catch (error) {
+            if (file === lockPath && typeof flags === 'number'
+              && (flags & fs.constants.O_EXCL) && error.code === 'EEXIST'
+              && !reportedContention) {
+              reportedContention = true;
+              fs.writeFileSync(attemptPath, 'contended', { flag: 'wx', mode: 0o600 });
+            }
+            throw error;
+          }
+        };
       }
       process.stdout.write('ready\\n');
       await new Promise((resolve) => process.stdin.once('data', resolve));
@@ -293,17 +485,17 @@ describe('logger', () => {
           if (Date.now() >= deadline) throw new Error('contender never attempted a flush');
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
         }
-        await new Promise((resolve) => setTimeout(resolve, 60));
         if (fs.existsSync(lockPath.slice(0, -5) + '.1')) {
           throw new Error('contender rotated without holding the lock');
         }
         fs.unlinkSync(lockPath);
         fs.closeSync(lockFd);
-      } else {
-        fs.writeFileSync(attemptPath, 'attempting', { flag: 'wx', mode: 0o600 });
       }
       logger.info('worker-' + role + ' ' + 'x'.repeat(2048));
       logger.close();
+      if (role === 'contender' && !reportedContention) {
+        throw new Error('contender never observed the held lock');
+      }
     `;
     const childEnvironment = {
       ...process.env,
@@ -410,7 +602,6 @@ describe('logger', () => {
           if (Date.now() >= deadline) throw new Error('reader never started');
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
-        await new Promise((resolve) => setTimeout(resolve, 60));
         fs.renameSync(logPath, logPath + '.1');
         fs.writeFileSync(logPath, 'AFTER_ROTATION\\n', { mode: 0o600 });
         fs.chmodSync(logPath, 0o600);
@@ -429,12 +620,28 @@ describe('logger', () => {
     child.stderr.on('data', (chunk) => { childError += chunk.toString(); });
     const childExit = once(child, 'exit');
     await once(child.stdout, 'data');
-    await fs.writeFile(readerStartedPath, 'go', { mode: 0o600 });
+    const originalOpen = fsSync.openSync;
+    let observedContention = false;
+    vi.spyOn(fsSync, 'openSync').mockImplementation((file, flags, mode) => {
+      try {
+        return originalOpen(file, flags, mode);
+      } catch (error) {
+        if (file === lockPath && typeof flags === 'number'
+          && (flags & fsSync.constants.O_EXCL)
+          && (error as NodeJS.ErrnoException).code === 'EEXIST'
+          && !observedContention) {
+          observedContention = true;
+          fsSync.writeFileSync(readerStartedPath, 'contended', { flag: 'wx', mode: 0o600 });
+        }
+        throw error;
+      }
+    });
 
     const tail = readLogTail();
     const [childCode] = await childExit;
 
     expect({ childCode, childError }).toEqual({ childCode: 0, childError: '' });
+    expect(observedContention).toBe(true);
     expect(tail).toContain('AFTER_ROTATION');
     expect(tail).not.toContain('BEFORE_ROTATION');
     expect(await fs.readFile(ROTATED_LOG_FILE, 'utf8')).toBe('BEFORE_ROTATION\n');

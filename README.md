@@ -29,7 +29,7 @@
   <a href="#keyboard-shortcuts">Shortcuts</a> &bull;
   <a href="#configuration">Config</a> &bull;
   <a href="docs/README.md">Docs</a> &bull;
-  <a href="CONTRIBUTING.md">Contributing</a>
+  <a href="https://github.com/lech-kalinowski/agents-commander/blob/main/CONTRIBUTING.md">Contributing</a>
 </p>
 
 ---
@@ -42,9 +42,27 @@
 
 ## Quick Start
 
-This README describes the **source development version 0.1.5**. The public npm
-release is still **0.1.4**, verified on 2026-09-02. A git push does not publish a
-new npm package.
+This README describes **Agents Commander 0.1.5**, under the MIT License.
+Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
+
+### Install version 0.1.5
+
+```bash
+npm install -g agents-commander@0.1.5
+agents-commander --version
+agents-commander --doctor .
+agents-commander .
+```
+
+Try the deterministic offline demo without agent accounts or API credentials:
+
+```bash
+agents-commander --demo
+```
+
+Check `--version` after upgrading so an older installation on your `PATH` does
+not shadow the selected version. Package versions are listed on
+[npm](https://www.npmjs.com/package/agents-commander?activeTab=versions).
 
 ### Current source version
 
@@ -68,20 +86,19 @@ below use the built entrypoint so an older global installation cannot shadow it.
 before the TUI starts. Commander is a local terminal application; the website is
 a landing page, not a browser-hosted Commander interface.
 
-### Published npm release (legacy 0.1.4)
+### Upgrading from 0.1.4
 
-```bash
-npm install -g agents-commander@0.1.4
-agents-commander --version
-agents-commander --panels 2 .
-```
+Version 0.1.4 advertised Node.js 18+; **0.1.5 requires Node.js 22+ and Python 3**.
+Upgrade Node before installing 0.1.5. The older package supported only
+`--theme`, `--panels` (2, 3, or 4), and `--show-hidden`, plus help/version.
+The doctor, conference/demo modes, adaptive density, 100-panel workspace,
+OpenCode adapter, Codex Micro integration, and capture/dataset commands described
+here are features of 0.1.5, not 0.1.4.
 
-Published 0.1.4 advertises Node.js 18+ and supports `--theme`, `--panels` (2, 3,
-or 4), and `--show-hidden`, plus help/version. It does **not** include the source
-version's `--doctor`, `--conference`, `--demo`, `--density`, 100-panel workspace,
-OpenCode adapter, or Codex Micro integration. Use the source build for those
-features. Check the [npm package](https://www.npmjs.com/package/agents-commander)
-for later releases; this documentation update does not publish one.
+Panel controls have also changed: F4 toggles fullscreen, F6 clones a fresh agent
+panel, F7 reorders panels, and F9 closes a panel. File copy/move/delete remain
+available from file panels with Shift+F6/Shift+F7/Shift+F9. See the
+[keyboard shortcuts](#keyboard-shortcuts) before upgrading a familiar workflow.
 
 ---
 
@@ -93,7 +110,7 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 
 ## Requirements
 
-For source 0.1.5:
+For version 0.1.5:
 
 - Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
@@ -176,7 +193,7 @@ The selector also catalogues five future presets that are not launchable yet: Ai
 
 ### Sixteen-panel APEX collaboration example
 
-The [APEX review council](Example/apex-sixteen-panel/README.md) prepares sixteen
+The [APEX review council](https://github.com/lech-kalinowski/agents-commander/blob/main/Example/apex-sixteen-panel/README.md) prepares sixteen
 named Pi or OpenCode profiles: one coordinator and fifteen specialists reviewing a
 fictional booking API in seven human-gated waves. It includes an offline setup
 generator, role prompts, a runbook, and a 15-SEND/15-REPLY evidence checklist.
@@ -185,7 +202,7 @@ no provider identity or live-model compatibility is assumed. Preparation does
 not launch agents or change your saved configuration. This is a source-checkout
 example, not the two-agent scripted `--demo` or a verified APEX benchmark.
 
-The [Pi guide](Example/apex-sixteen-panel/PI.md#output-budget-and-truncation)
+The [Pi guide](https://github.com/lech-kalinowski/agents-commander/blob/main/Example/apex-sixteen-panel/PI.md#output-budget-and-truncation)
 also provides a configurable `--max-tokens` output ceiling and a separate
 three-panel broadcast test (`--scenario broadcast-test`), with one sender and
 two receivers that print local receipts. Both Pi scenarios default to a tested
@@ -193,7 +210,7 @@ two receivers that print local receipts. Both Pi scenarios default to a tested
 `--context-window` is configurable too. Run the broadcast test in a fresh Commander instance:
 broadcasts reach all connected agents, including hidden panels. Preparation and
 offline tests do not establish a successful live model run.
-The [Pi setup guide](Example/apex-sixteen-panel/PI.md) includes private credential
+The [Pi setup guide](https://github.com/lech-kalinowski/agents-commander/blob/main/Example/apex-sixteen-panel/PI.md) includes private credential
 loading, profile registration and a live model smoke command.
 
 ### Integrated File Manager
@@ -306,7 +323,7 @@ Routing is bidirectional between connected supported sessions.
 - Opt-in semantic recording and reviewed dataset export are available in this
   source checkout. Nothing is recorded by default. Full terminal transcripts,
   session restore, replay and model training are **not implemented**. The
-  [original design plan](docs/session-capture-plan.md)
+  [original design plan](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/session-capture-plan.md)
   retains the broader proposed scope and implementation boundaries.
 
 ### Create a Commander Protocol training dataset
@@ -708,12 +725,12 @@ Agents Commander combines several local workflows in one TUI:
 ## Documentation and contributions
 
 The [documentation index](docs/README.md) separates current user guides from
-proposals and historical reviews. See [examples](Example/README.md) for optional
+proposals and historical reviews. See [examples](https://github.com/lech-kalinowski/agents-commander/blob/main/Example/README.md) for optional
 collaboration workflows. Conference slides and speaker notes are supporting
 material, not a requirement for using or contributing to Commander.
 
 Bug reports, documentation improvements, and focused pull requests are welcome.
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the verification gate, and
+Read [CONTRIBUTING.md](https://github.com/lech-kalinowski/agents-commander/blob/main/CONTRIBUTING.md) for setup, the verification gate, and
 privacy precautions before sharing logs or agent output.
 
 ## License
@@ -721,8 +738,8 @@ privacy precautions before sharing logs or agent output.
 Open source under the [MIT License](LICENSE), including commercial use. Retain
 the copyright and permission notice when redistributing the software; see
 [third-party notices](THIRD_PARTY_NOTICES.md) for included third-party material.
-Earlier published packages retain the license bundled with those versions.
-This source license change does not publish a new npm release.
+Version 0.1.5 uses MIT. Earlier published packages retain the license bundled
+with those versions; updating the source does not relicense older artifacts.
 
 ---
 

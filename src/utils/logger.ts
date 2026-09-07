@@ -100,6 +100,9 @@ function assertCurrentUserOwner(stat: fs.Stats, description: string): void {
 function assertSafeRegularFile(stat: fs.Stats, filePath: string): void {
   if (!stat.isFile()) throw new Error(`Refusing non-regular log file: ${filePath}`);
   assertCurrentUserOwner(stat, `Log file ${filePath}`);
+  if (stat.nlink === 0) {
+    throw new LogPathChangedError(`Log file was unlinked while it was being opened: ${filePath}`);
+  }
   if (stat.nlink !== 1) {
     throw new Error(`Refusing multiply-linked log file: ${filePath}`);
   }
@@ -231,8 +234,9 @@ function tryRemoveAbandonedLogLock(): boolean {
   } catch (error) {
     if (isMissingFileError(error)) return true;
     // The previous owner may have released the lock and a waiter may have
-    // replaced it between lstat and open. That is normal contention: retry the
-    // exclusive acquisition instead of disabling logging.
+    // replaced it between lstat and open, or unlinked the opened descriptor
+    // before fstat. That is normal contention: retry exclusive acquisition
+    // instead of disabling logging.
     if (error instanceof LogPathChangedError) return true;
     throw error;
   }
@@ -329,13 +333,13 @@ function acquireLogLock(): OwnedLogLock {
       }
 
       if (!isNodeError(error) || error.code !== 'EEXIST') throw error;
-      if (tryRemoveAbandonedLogLock()) continue;
+      const retryImmediately = tryRemoveAbandonedLogLock();
 
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
         throw new Error('Timed out waiting for the log rotation lock');
       }
-      waitForLogLock(Math.min(LOG_LOCK_RETRY_MS, remaining));
+      if (!retryImmediately) waitForLogLock(Math.min(LOG_LOCK_RETRY_MS, remaining));
     }
   }
 }

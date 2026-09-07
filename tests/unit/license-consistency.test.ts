@@ -55,8 +55,10 @@ describe('MIT source license', () => {
   });
 
   it('distinguishes earlier releases and historical audits from current source', () => {
+    const packageVersion = JSON.parse(read('package.json')).version as string;
+    expect(read('README.md')).toContain(`Version ${packageVersion} uses MIT.`);
     expect(read('README.md')).toContain('Earlier published packages retain the license');
-    expect(read('README.md')).toContain('does not publish a new npm release');
+    expect(read('README.md')).toContain('does not relicense older artifacts');
     const audit = read('docs/documentation-audit-2026-09-02.md');
     expect(audit).toContain('License findings below also describe that historical baseline');
     expect(audit).toContain('[MIT License](../LICENSE)');

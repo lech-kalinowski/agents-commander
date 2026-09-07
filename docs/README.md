@@ -14,12 +14,12 @@ published npm package.
 - [Codex Micro](codex-micro.md): experimental hardware input and safety guards.
 - [Capture and datasets](datasets.md): explicit recording consent, private
   storage, human review, and offline conversational dataset export.
-- [Runnable examples](../Example/README.md): offline demo and optional live-model
+- [Runnable examples](https://github.com/lech-kalinowski/agents-commander/blob/main/Example/README.md): offline demo and optional live-model
   collaboration fixtures.
 
 ## Contributing
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for development setup, verification,
+See [CONTRIBUTING.md](https://github.com/lech-kalinowski/agents-commander/blob/main/CONTRIBUTING.md) for development setup, verification,
 and pull-request scope. Current source is open source under the
 [MIT License](../LICENSE), including commercial use. Retain the copyright and
 permission notice and the applicable [third-party notices](../THIRD_PARTY_NOTICES.md).
@@ -29,22 +29,22 @@ permission notice and the applicable [third-party notices](../THIRD_PARTY_NOTICE
 These documents explain design ideas and tradeoffs. They are not a promise of
 available features or a substitute for the user guides above.
 
-- [Session capture roadmap](session-capture-plan.md): implemented capture/export
+- [Session capture roadmap](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/session-capture-plan.md): implemented capture/export
   foundations and deferred work, including replay and model training.
-- [Protocol AI research](commander-protocol-ai-research.md).
-- [Protocol positioning](commander-protocol-uniqueness-and-originality.md).
-- [Potential applications and license boundaries](commander-protocol-commercial.md).
+- [Protocol AI research](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/commander-protocol-ai-research.md).
+- [Protocol positioning](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/commander-protocol-uniqueness-and-originality.md).
+- [Potential applications and license boundaries](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/commander-protocol-commercial.md).
 
 ## Historical reviews
 
 Review records describe a particular implementation checkpoint, not the current
 release status or current test count.
 
-- [Documentation audit, 2026-09-02](documentation-audit-2026-09-02.md).
-- [Dataset implementation review, 2026-09-02](dataset-implementation-review.md).
+- [Documentation audit, 2026-09-02](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/documentation-audit-2026-09-02.md).
+- [Dataset implementation review, 2026-09-02](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/dataset-implementation-review.md).
 
 ## Conference material
 
-The [conference material index](../talks/README.md) is separate
+The [conference material index](https://github.com/lech-kalinowski/agents-commander/blob/main/talks/README.md) is separate
 from product documentation. They are not runtime dependencies and are not
 included in the npm package.

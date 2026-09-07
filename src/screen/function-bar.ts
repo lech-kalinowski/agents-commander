@@ -10,12 +10,12 @@ const DEFAULT_KEYS: FunctionBarKey[] = [
   { num: 1, label: 'Help' },
   { num: 2, label: 'Agent' },
   { num: 3, label: '+Panel' },
-  { num: 4, label: 'View' },
+  { num: 4, label: 'Full' },
   { num: 5, label: 'Edit' },
-  { num: 6, label: 'Copy' },
-  { num: 7, label: 'Move' },
+  { num: 6, label: 'Clone' },
+  { num: 7, label: 'Order' },
   { num: 8, label: 'Mkdir' },
-  { num: 9, label: 'Delete' },
+  { num: 9, label: 'Close' },
   { num: 10, label: 'Quit' },
 ];
 
@@ -33,8 +33,23 @@ export function createFunctionBar(parent: blessed.Widgets.Screen, theme: Theme):
     },
   });
 
-  updateFunctionBar(bar, DEFAULT_KEYS, theme);
+  updateDefaultFunctionBar(bar, theme);
   return bar;
+}
+
+/** Keep panel controls discoverable, including the way out of fullscreen. */
+export function updateDefaultFunctionBar(
+  bar: blessed.Widgets.BoxElement,
+  theme: Theme,
+  fullscreen = false,
+): void {
+  updateFunctionBar(
+    bar,
+    DEFAULT_KEYS.map((key) => (
+      key.num === 4 ? { ...key, label: fullscreen ? 'Back' : 'Full' } : key
+    )),
+    theme,
+  );
 }
 
 export function updateFunctionBar(

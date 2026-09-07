@@ -7,20 +7,21 @@ import { logger } from '../utils/logger.js';
 
 let cachedTemplates: PromptTemplate[] | null = null;
 
-/** Locate the builtin templates directory, same multi-path strategy as findPtyHelper. */
-function findBuiltinDir(): string | null {
-  const candidates = [
-    path.join(process.cwd(), 'src', 'templates', 'builtin'),
-    path.join(process.cwd(), 'dist', 'templates'),
-  ];
+/** Locate built-ins in source checkouts and in the published dist layout. */
+export function findBuiltinDir(
+  moduleUrl = import.meta.url,
+  cwd = process.cwd(),
+): string | null {
+  const candidates: string[] = [];
   try {
-    const thisDir = path.dirname(fileURLToPath(import.meta.url));
+    const thisDir = path.dirname(fileURLToPath(moduleUrl));
     candidates.push(path.join(thisDir, 'builtin'));
-    candidates.push(path.join(thisDir, '..', 'src', 'templates', 'builtin'));
-    candidates.push(path.join(thisDir, '..', '..', 'src', 'templates', 'builtin'));
+    candidates.push(path.join(thisDir, '..', 'templates'));
   } catch { /* ignore */ }
+  candidates.push(path.join(cwd, 'src', 'templates', 'builtin'));
+  candidates.push(path.join(cwd, 'dist', 'templates'));
 
-  for (const p of candidates) {
+  for (const p of new Set(candidates)) {
     if (fs.existsSync(p)) return p;
   }
   logger.error('Builtin templates directory not found');

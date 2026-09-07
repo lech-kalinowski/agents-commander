@@ -1,4 +1,4 @@
-/* Minimal type declarations for blessed (no official @types package).
+/* Minimal type declarations for blessed.
  * Covers the subset of the API used by this project. */
 declare module 'blessed' {
   namespace blessed {

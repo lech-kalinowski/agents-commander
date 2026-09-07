@@ -4,10 +4,24 @@ import type { Theme } from '../config/types.js';
 import type { FileEntry, SortOptions } from '../file-manager/types.js';
 import { readDirectory } from '../file-manager/file-system.js';
 import { sortFiles } from '../file-manager/file-sorter.js';
+import { showErrorToast } from '../screen/toast.js';
 import { formatFileSize, formatDate, truncate } from '../utils/format.js';
 import { logger } from '../utils/logger.js';
+import { isPanelId } from '../panel-limits.js';
+import { isDialogActive } from '../utils/dialog-state.js';
+
+interface FilePanelOptions {
+  showHidden?: boolean;
+  sortBy?: SortOptions['field'];
+  sortAscending?: boolean;
+}
 
 export class FilePanel {
+  private static pendingScreenRenders = new WeakMap<
+    blessed.Widgets.Screen,
+    ReturnType<typeof setTimeout>
+  >();
+
   public box: blessed.Widgets.BoxElement;
   public list: blessed.Widgets.ListElement;
   private headerBox: blessed.Widgets.BoxElement;
@@ -23,11 +37,19 @@ export class FilePanel {
     directoriesFirst: true,
   };
   private showHidden = false;
+  private loadGeneration = 0;
+  private destroyed = false;
+  private _visible = true;
   public panelIndex: number;
+  private workspacePosition: number | null = null;
   private _focused = false;
 
   /** Called when the user clicks anywhere on this panel (for focus switching). */
   public onMouseClick: (() => void) | null = null;
+  /** Called when keyboard or mouse navigation changes the current entry. */
+  public onSelectionChange: (() => void) | null = null;
+  /** Called when Enter is pressed on a non-directory entry. */
+  public onOpenFile: ((entry: FileEntry) => void) | null = null;
 
   get currentPath(): string {
     return this._currentPath;
@@ -35,6 +57,10 @@ export class FilePanel {
 
   get focused(): boolean {
     return this._focused;
+  }
+
+  get isVisible(): boolean {
+    return this._visible;
   }
 
   get currentEntry(): FileEntry | null {
@@ -61,11 +87,18 @@ export class FilePanel {
     panelIndex: number,
     initialPath: string,
     position: { top: number | string; left: number | string; width: number | string; height: number | string },
+    options: FilePanelOptions = {},
   ) {
     this.screen = screen;
     this.theme = theme;
     this.panelIndex = panelIndex;
     this._currentPath = initialPath;
+    this.showHidden = options.showHidden ?? false;
+    this.sortOptions = {
+      ...this.sortOptions,
+      field: options.sortBy ?? this.sortOptions.field,
+      ascending: options.sortAscending ?? this.sortOptions.ascending,
+    };
 
     // Main container box with border
     this.box = blessed.box({
@@ -81,7 +114,7 @@ export class FilePanel {
         border: theme.panel.border,
       },
       tags: true,
-      label: ` ${this.shortPath(initialPath)} `,
+      label: this.panelLabel(initialPath),
     });
 
     // Column header
@@ -129,6 +162,7 @@ export class FilePanel {
 
     // Click to focus — notify parent layout
     this.box.on('click', () => {
+      if (isDialogActive()) return;
       if (this.onMouseClick) this.onMouseClick();
     });
   }
@@ -141,6 +175,27 @@ export class FilePanel {
     return p;
   }
 
+  private sanitizeDisplayText(value: string): string {
+    return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '\uFFFD');
+  }
+
+  private escapeTaggedText(value: string): string {
+    const escape = (blessed as unknown as { escape(text: string): string }).escape;
+    return escape(this.sanitizeDisplayText(value));
+  }
+
+  private panelLabel(dirPath: string): string {
+    const panelNumber = isPanelId(this.panelIndex) ? String(this.panelIndex + 1) : '?';
+    const position = this.workspacePosition === null ? '' : `#${this.workspacePosition} `;
+    return ` ${position}P${panelNumber} · ${this.escapeTaggedText(this.shortPath(dirPath))} `;
+  }
+
+  setWorkspacePosition(position: number): void {
+    if (!Number.isSafeInteger(position) || position < 1 || position === this.workspacePosition) return;
+    this.workspacePosition = position;
+    this.box.setLabel(this.panelLabel(this._currentPath));
+  }
+
   private updateHeader(): void {
     const w = (this.box.width as number) - 4;
     if (w <= 0) return;
@@ -151,15 +206,16 @@ export class FilePanel {
 
   private formatRow(entry: FileEntry): string {
     const w = (this.box.width as number) - 4;
-    if (w <= 0) return entry.name;
+    if (w <= 0) return this.escapeTaggedText(entry.name);
     const nameW = Math.max(10, w - 22);
 
     const isSelected = this.selectedFiles.has(entry.fullPath);
-    let name = entry.name;
+    let name = this.sanitizeDisplayText(entry.name);
     if (entry.isDirectory) {
       name = '/' + name;
     }
     name = truncate(name, nameW).padEnd(nameW);
+    const safeName = this.escapeTaggedText(name);
 
     const size = entry.isDirectory ? '  <DIR>' : formatFileSize(entry.size);
     const date = formatDate(entry.modified);
@@ -175,31 +231,47 @@ export class FilePanel {
       suffix = `{/bold}{/white-fg}`;
     }
 
-    return `${prefix}${name}${size}  ${date}${suffix}`;
+    return `${prefix}${safeName}${size}  ${date}${suffix}`;
   }
 
-  async loadDirectory(dirPath?: string): Promise<void> {
-    if (dirPath) {
-      this._currentPath = dirPath;
-    }
-
+  async loadDirectory(dirPath = this._currentPath): Promise<boolean> {
+    if (this.destroyed) return false;
+    const generation = ++this.loadGeneration;
+    let nextEntries: FileEntry[];
     try {
-      const raw = await readDirectory(this._currentPath, this.showHidden);
-      this.entries = sortFiles(raw, this.sortOptions);
-      this.selectedFiles.clear();
-      this.refreshList();
-      this.box.setLabel(` ${this.shortPath(this._currentPath)} `);
-
-      if (this.cursorIndex >= this.entries.length + 1) {
-        this.cursorIndex = 0;
-      }
-      this.list.select(this.cursorIndex);
+      const raw = await readDirectory(dirPath, this.showHidden);
+      if (generation !== this.loadGeneration) return false;
+      nextEntries = sortFiles(raw, this.sortOptions);
     } catch (err) {
-      logger.error(`Failed to read directory: ${this._currentPath}`, err);
+      if (generation !== this.loadGeneration) return false;
+      logger.error(`Failed to read directory: ${dirPath}`, err);
+      const detail = err instanceof Error && err.message
+        ? `: ${this.sanitizeDisplayText(err.message)}`
+        : '';
+      const displayPath = this.sanitizeDisplayText(this.shortPath(dirPath));
+      showErrorToast(this.screen, `Unable to open ${displayPath}${detail}`);
+      return false;
     }
+
+    const pathChanged = dirPath !== this._currentPath;
+    const nextCursor = pathChanged || this.cursorIndex >= nextEntries.length + 1
+      ? 0
+      : this.cursorIndex;
+
+    this._currentPath = dirPath;
+    this.entries = nextEntries;
+    this.selectedFiles.clear();
+    this.cursorIndex = nextCursor;
+    if (this._visible) {
+      this.box.setLabel(this.panelLabel(dirPath));
+      this.refreshList();
+      this.list.select(nextCursor);
+    }
+    return true;
   }
 
-  private refreshList(): void {
+  private refreshList(render = true): void {
+    if (this.destroyed || !this._visible) return;
     const items: string[] = [];
 
     // Parent directory entry
@@ -213,12 +285,51 @@ export class FilePanel {
 
     this.list.setItems(items as any);
     this.updateHeader();
-    this.screen.render();
+    if (render) this.screen.render();
+  }
+
+  private static scheduleScreenRender(screen: blessed.Widgets.Screen): void {
+    if (FilePanel.pendingScreenRenders.has(screen)) return;
+    const timer = setTimeout(() => {
+      FilePanel.pendingScreenRenders.delete(screen);
+      try {
+        screen.render();
+      } catch {
+        // The owning screen may have been destroyed while a repaint was queued.
+      }
+    }, 0);
+    FilePanel.pendingScreenRenders.set(screen, timer);
+  }
+
+  setVisible(visible: boolean): void {
+    if (this.destroyed || this._visible === visible) return;
+    this._visible = visible;
+
+    if (!visible) {
+      const focusedChild = this.screen.focused === this.list;
+      this.box.hide();
+      if (focusedChild && this.screen.focused === this.list) {
+        this.screen.rewindFocus();
+      }
+      FilePanel.scheduleScreenRender(this.screen);
+      return;
+    }
+
+    this.box.show();
+    this.box.setLabel(this.panelLabel(this._currentPath));
+    this.box.style.border = this._focused
+      ? this.theme.panel.borderFocus
+      : this.theme.panel.border;
+    this.refreshList(false);
+    this.list.select(this.cursorIndex);
+    if (this._focused) this.list.focus();
+    FilePanel.scheduleScreenRender(this.screen);
   }
 
   setFocus(focused: boolean): void {
     this._focused = focused;
     this.box.style.border = focused ? this.theme.panel.borderFocus : this.theme.panel.border;
+    if (!this._visible) return;
     if (focused) {
       this.list.focus();
     }
@@ -243,6 +354,7 @@ export class FilePanel {
   private setupKeyBindings(): void {
     this.list.on('select item', (_item: any, index: number) => {
       this.cursorIndex = index;
+      this.onSelectionChange?.();
     });
 
     // Enter key - navigate into directory or trigger file open
@@ -251,26 +363,26 @@ export class FilePanel {
         // Go up
         const parent = path.dirname(this._currentPath);
         if (parent !== this._currentPath) {
-          this.cursorIndex = 0;
-          this.loadDirectory(parent);
+          void this.loadDirectory(parent);
         }
         return;
       }
 
       const entry = this.entries[this.cursorIndex - 1];
       if (entry?.isDirectory) {
-        this.cursorIndex = 0;
-        this.loadDirectory(entry.fullPath);
+        void this.loadDirectory(entry.fullPath);
+        return;
       }
-      // File open will be handled by the app
+      if (entry) {
+        this.onOpenFile?.(entry);
+      }
     });
 
     // Backspace - go to parent
     this.list.key(['backspace'], () => {
       const parent = path.dirname(this._currentPath);
       if (parent !== this._currentPath) {
-        this.cursorIndex = 0;
-        this.loadDirectory(parent);
+        void this.loadDirectory(parent);
       }
     });
 
@@ -289,7 +401,7 @@ export class FilePanel {
       // Move cursor down
       if (this.cursorIndex < this.entries.length) {
         this.cursorIndex++;
-        this.list.select(this.cursorIndex);
+        if (this._visible) this.list.select(this.cursorIndex);
       }
 
       this.refreshList();
@@ -301,18 +413,26 @@ export class FilePanel {
     this.box.left = position.left;
     this.box.width = position.width;
     this.box.height = position.height;
-    this.refreshList();
+    if (this._visible) this.refreshList();
   }
 
   focusEntry(fullPath: string): void {
     const index = this.entries.findIndex((entry) => entry.fullPath === fullPath);
     if (index === -1) return;
     this.cursorIndex = index + 1;
+    if (!this._visible) return;
     this.list.select(this.cursorIndex);
     this.screen.render();
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this._visible = false;
+    this.loadGeneration++;
+    this.onMouseClick = null;
+    this.onSelectionChange = null;
+    this.onOpenFile = null;
     this.box.destroy();
   }
 }

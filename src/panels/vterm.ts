@@ -32,6 +32,14 @@ const DEFAULT_STYLE: CellStyle = {
 interface Cell {
   char: string;   // '' for wide-char placeholder (second column)
   style: CellStyle;
+  /** True when terminal output explicitly occupied this display cell. */
+  occupied: boolean;
+}
+
+export interface VTermPlainRow {
+  text: string;
+  /** True when DEC autowrap continues this physical row into the next row. */
+  wrapsToNext: boolean;
 }
 
 // ── Style helpers ────────────────────────────────────────────────
@@ -146,12 +154,23 @@ function isZeroWidth(cp: number): boolean {
 
 interface SavedScreen {
   grid: Cell[][];
+  gridWrapsToNext: boolean[];
   scrollback: string[];
+  scrollbackWrapsToNext: boolean[];
+  scrollbackStartIndex: number;
   cursorRow: number;
   cursorCol: number;
+  wrapPending: boolean;
   style: CellStyle;
   scrollTop: number;
   scrollBottom: number;
+}
+
+interface SavedCursor {
+  row: number;
+  col: number;
+  wrapPending: boolean;
+  style: CellStyle;
 }
 
 // ── VTerm ────────────────────────────────────────────────────────
@@ -160,13 +179,19 @@ export class VTerm {
   private cols: number;
   private rows: number;
   private grid: Cell[][];
+  private gridWrapsToNext: boolean[];
   private cursorRow = 0;
   private cursorCol = 0;
   private scrollback: string[] = [];
+  private scrollbackWrapsToNext: boolean[] = [];
+  /** Absolute index of the first retained scrollback row. */
+  private _scrollbackStartIndex = 0;
   private maxScrollback: number;
   private buf = '';
   private style: CellStyle = { ...DEFAULT_STYLE };
-  private savedCursor: { row: number; col: number; style: CellStyle } | null = null;
+  private savedCursor: SavedCursor | null = null;
+  /** Delayed autowrap flag: the next printable character starts a new line. */
+  private wrapPending = false;
 
   // ── Scroll region ─────────────────────────────────────────────
   private scrollTop = 0;
@@ -201,37 +226,127 @@ export class VTerm {
   get curCol(): number { return this.cursorCol; }
 
   constructor(cols = DEFAULT_COLS, rows = DEFAULT_ROWS, maxScrollback = 2000) {
-    this.cols = cols;
-    this.rows = rows;
-    this.scrollBottom = rows - 1;
+    this.cols = this.normalizeDimension(cols, DEFAULT_COLS);
+    this.rows = this.normalizeDimension(rows, DEFAULT_ROWS);
+    this.scrollBottom = this.rows - 1;
     this.maxScrollback = maxScrollback;
     this.grid = this.makeGrid();
+    this.gridWrapsToNext = this.makeWrapFlags(this.rows);
   }
 
-  private makeGrid(): Cell[][] {
-    return Array.from({ length: this.rows }, () => this.makeRow());
+  private normalizeDimension(value: number, fallback = 1): number {
+    return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : fallback;
   }
 
-  private makeRow(): Cell[] {
-    return Array.from({ length: this.cols }, (): Cell => ({
-      char: ' ', style: cloneStyle(DEFAULT_STYLE),
-    }));
+  private makeGrid(rows = this.rows, cols = this.cols): Cell[][] {
+    return Array.from({ length: rows }, () => this.makeRow(cols));
+  }
+
+  private makeRow(cols = this.cols): Cell[] {
+    return Array.from({ length: cols }, () => this.blankCell());
+  }
+
+  private makeWrapFlags(rows = this.rows): boolean[] {
+    return Array.from({ length: rows }, () => false);
+  }
+
+  private resizeWrapFlags(flags: readonly boolean[], rows: number): boolean[] {
+    const resized = Array.from({ length: rows }, (_, index) => flags[index] ?? false);
+    if (resized.length > 0) resized[resized.length - 1] = false;
+    return resized;
+  }
+
+  private blankCell(): Cell {
+    return {
+      char: ' ',
+      style: cloneStyle(DEFAULT_STYLE),
+      occupied: false,
+    };
+  }
+
+  private resizeGrid(grid: Cell[][], cols: number, rows: number): Cell[][] {
+    const resized = this.makeGrid(rows, cols);
+    for (let r = 0; r < Math.min(grid.length, rows); r++) {
+      for (let c = 0; c < Math.min(grid[r].length, cols); c++) {
+        resized[r][c] = grid[r][c];
+      }
+
+      // Cropping must not retain half of a wide character. Normalize any
+      // malformed continuation cells as well so rendered width never exceeds
+      // the declared terminal width.
+      for (let c = 0; c < cols; c++) {
+        const cell = resized[r][c];
+        if (cell.char === '') {
+          if (c === 0 || charWidth(resized[r][c - 1].char) !== 2) {
+            resized[r][c] = this.blankCell();
+          }
+          continue;
+        }
+        if (charWidth(cell.char) === 2) {
+          if (c + 1 >= cols) {
+            resized[r][c] = this.blankCell();
+          } else if (resized[r][c + 1].char !== '') {
+            resized[r][c + 1] = {
+              char: '',
+              style: cloneStyle(cell.style),
+              occupied: true,
+            };
+          }
+        }
+      }
+    }
+    return resized;
+  }
+
+  private clampCursor(row: number, col: number): { row: number; col: number } {
+    return {
+      row: Math.max(0, Math.min(row, this.rows - 1)),
+      col: Math.max(0, Math.min(col, this.cols - 1)),
+    };
   }
 
   resize(cols: number, rows: number): void {
-    const oldGrid = this.grid;
-    this.cols = cols;
-    this.rows = rows;
-    this.grid = this.makeGrid();
-    for (let r = 0; r < Math.min(oldGrid.length, rows); r++) {
-      for (let c = 0; c < Math.min(oldGrid[r].length, cols); c++) {
-        this.grid[r][c] = oldGrid[r][c];
-      }
+    const nextCols = this.normalizeDimension(cols);
+    const nextRows = this.normalizeDimension(rows);
+    this.cols = nextCols;
+    this.rows = nextRows;
+    this.grid = this.resizeGrid(this.grid, nextCols, nextRows);
+    this.gridWrapsToNext = this.resizeWrapFlags(this.gridWrapsToNext, nextRows);
+
+    const cursor = this.clampCursor(this.cursorRow, this.cursorCol);
+    this.cursorRow = cursor.row;
+    this.cursorCol = cursor.col;
+
+    if (this.altScreenSaved) {
+      this.altScreenSaved.grid = this.resizeGrid(this.altScreenSaved.grid, nextCols, nextRows);
+      this.altScreenSaved.gridWrapsToNext = this.resizeWrapFlags(
+        this.altScreenSaved.gridWrapsToNext,
+        nextRows,
+      );
+      const saved = this.clampCursor(
+        this.altScreenSaved.cursorRow,
+        this.altScreenSaved.cursorCol,
+      );
+      this.altScreenSaved.cursorRow = saved.row;
+      this.altScreenSaved.cursorCol = saved.col;
+      this.altScreenSaved.scrollTop = Math.max(
+        0,
+        Math.min(this.altScreenSaved.scrollTop, nextRows - 1),
+      );
+      this.altScreenSaved.scrollBottom = Math.max(
+        this.altScreenSaved.scrollTop,
+        Math.min(this.altScreenSaved.scrollBottom, nextRows - 1),
+      );
     }
-    this.cursorRow = Math.min(this.cursorRow, rows - 1);
-    this.cursorCol = Math.min(this.cursorCol, cols - 1);
+
+    if (this.savedCursor) {
+      const saved = this.clampCursor(this.savedCursor.row, this.savedCursor.col);
+      this.savedCursor.row = saved.row;
+      this.savedCursor.col = saved.col;
+    }
+
     this.scrollTop = 0;
-    this.scrollBottom = rows - 1;
+    this.scrollBottom = nextRows - 1;
   }
 
   /** Feed raw data from the PTY. */
@@ -263,26 +378,127 @@ export class VTerm {
     return all.slice(-n);
   }
 
-  /** Return visible grid rows as plain text (no SGR codes, trailing whitespace trimmed). */
+  /**
+   * Return visible grid rows as plain text.
+   * Completed rows trim trailing whitespace; soft-wrapped rows retain their
+   * full display width because those spaces are inside the logical line.
+   */
   getGridPlainLines(): string[] {
-    return this.grid.map((row) => this.renderRowPlain(row));
+    return this.getGridPlainRows().map((row) => row.text);
+  }
+
+  /** Return visible physical rows with DEC soft-wrap boundaries preserved. */
+  getGridPlainRows(): VTermPlainRow[] {
+    return this.grid.map((row, index) => {
+      const wrapsToNext = this.gridWrapsToNext[index] ?? false;
+      return {
+        text: this.renderRowPlain(row, wrapsToNext),
+        wrapsToNext,
+      };
+    });
+  }
+
+  /** Return visible logical lines, rejoining only terminal-generated soft wraps. */
+  getGridLogicalLines(): string[] {
+    return this.joinPlainRows(this.getGridPlainRows());
+  }
+
+  /** Return the newest logical lines across scrollback and the visible grid. */
+  getTailLogicalLines(n: number): string[] {
+    const count = Math.max(0, Math.trunc(n));
+    if (count === 0) return [];
+    const rows: VTermPlainRow[] = [];
+    if (!this._inAltScreen) {
+      for (let index = 0; index < this.scrollback.length; index++) {
+        rows.push(this.getScrollbackPlainRow(index));
+      }
+    }
+    rows.push(...this.getGridPlainRows());
+    return this.joinPlainRows(rows).slice(-count);
   }
 
   /** Number of lines that have scrolled off the visible grid. */
   get scrollbackLength(): number { return this.scrollback.length; }
+  /**
+   * Absolute half-open primary-buffer scrollback window. While an alternate
+   * screen is active, this still exposes primary rows that arrived in the
+   * same PTY chunk immediately before the buffer switch.
+   */
+  get primaryScrollbackStartIndex(): number {
+    return this._inAltScreen && this.altScreenSaved
+      ? this.altScreenSaved.scrollbackStartIndex
+      : this._scrollbackStartIndex;
+  }
+  get primaryScrollbackEndIndex(): number {
+    const start = this.primaryScrollbackStartIndex;
+    const rows = this._inAltScreen && this.altScreenSaved
+      ? this.altScreenSaved.scrollback
+      : this.scrollback;
+    return start + rows.length;
+  }
   get colCount(): number { return this.cols; }
 
   /** Get a scrollback line as plain text (SGR stripped). */
   getScrollbackPlain(index: number): string {
+    return this.getScrollbackPlainRow(index).text;
+  }
+
+  /** Get a scrollback physical row and its DEC soft-wrap boundary. */
+  getScrollbackPlainRow(index: number): VTermPlainRow {
     const raw = this.scrollback[index] ?? '';
     // Scrollback lines contain SGR codes only (no cursor positioning)
-    return raw.replace(/\x1b\[[0-9;]*m/g, '');
+    return {
+      text: raw.replace(/\x1b\[[0-9;]*m/g, ''),
+      wrapsToNext: this.scrollbackWrapsToNext[index] ?? false,
+    };
+  }
+
+  /** Get a retained row by its absolute scrollback index. */
+  getPrimaryScrollbackPlainRowAt(index: number): VTermPlainRow | null {
+    const start = this.primaryScrollbackStartIndex;
+    const rows = this._inAltScreen && this.altScreenSaved
+      ? this.altScreenSaved.scrollback
+      : this.scrollback;
+    const wraps = this._inAltScreen && this.altScreenSaved
+      ? this.altScreenSaved.scrollbackWrapsToNext
+      : this.scrollbackWrapsToNext;
+    const localIndex = index - start;
+    if (localIndex < 0 || localIndex >= rows.length) return null;
+    return {
+      text: rows[localIndex].replace(/\x1b\[[0-9;]*m/g, ''),
+      wrapsToNext: wraps[localIndex] ?? false,
+    };
+  }
+
+  private joinPlainRows(rows: readonly VTermPlainRow[]): string[] {
+    const logicalLines: string[] = [];
+    let current = '';
+    let collecting = false;
+
+    for (const row of rows) {
+      current += row.text;
+      collecting = true;
+      if (!row.wrapsToNext) {
+        logicalLines.push(current);
+        current = '';
+        collecting = false;
+      }
+    }
+    if (collecting) logicalLines.push(current);
+    return logicalLines;
   }
 
   /** Render a grid row as plain text (no escape codes). */
-  private renderRowPlain(row: Cell[]): string {
+  private renderRowPlain(row: Cell[], preserveTrailingSpaces = false): string {
     let last = row.length - 1;
-    while (last >= 0 && row[last].char === ' ' && row[last].style.bg === -1) last--;
+    while (
+      last >= 0
+      && row[last].char === ' '
+      && row[last].style.bg === -1
+      && (!preserveTrailingSpaces || !row[last].occupied)
+    ) {
+      last--;
+    }
     let out = '';
     for (let i = 0; i <= last; i++) {
       out += row[i].char === '' ? '' : row[i].char; // skip wide-char placeholders
@@ -293,7 +509,7 @@ export class VTerm {
   // ── Rendering ──────────────────────────────────────────────────
 
   /** Convert a row of cells to a string with embedded ANSI SGR codes. */
-  private renderRow(row: Cell[]): string {
+  private renderRow(row: Cell[], preserveTrailingSpaces = false): string {
     const parts: string[] = [];
     let cur: CellStyle = { ...DEFAULT_STYLE };
     let styled = false;
@@ -302,7 +518,13 @@ export class VTerm {
     let last = row.length - 1;
     while (last >= 0) {
       const c = row[last];
-      if (c.char !== ' ' || c.style.bg !== -1) break;
+      if (
+        c.char !== ' '
+        || c.style.bg !== -1
+        || (preserveTrailingSpaces && c.occupied)
+      ) {
+        break;
+      }
       last--;
     }
 
@@ -373,6 +595,94 @@ export class VTerm {
     return parts.join('');
   }
 
+  private saveCursor(): void {
+    this.savedCursor = {
+      row: this.cursorRow,
+      col: this.cursorCol,
+      wrapPending: this.wrapPending,
+      style: cloneStyle(this.style),
+    };
+  }
+
+  private restoreCursor(): void {
+    if (!this.savedCursor) return;
+    const cursor = this.clampCursor(this.savedCursor.row, this.savedCursor.col);
+    this.cursorRow = cursor.row;
+    this.cursorCol = cursor.col;
+    this.wrapPending = this.savedCursor.wrapPending;
+    this.style = cloneStyle(this.savedCursor.style);
+  }
+
+  /** Return the prior printable cell, skipping a wide-character continuation. */
+  private getPreviousGraphicCell(): Cell | null {
+    let col = this.wrapPending ? this.cursorCol : this.cursorCol - 1;
+    while (col >= 0 && this.grid[this.cursorRow][col].char === '') col--;
+    if (col < 0) return null;
+    const cell = this.grid[this.cursorRow][col];
+    return cell.char === ' ' ? null : cell;
+  }
+
+  private appendZeroWidth(char: string): void {
+    const cell = this.getPreviousGraphicCell();
+    if (cell) cell.char += char;
+  }
+
+  private clearCellForWrite(row: Cell[], col: number): void {
+    const cell = row[col];
+    if (!cell) return;
+
+    if (cell.char === '') {
+      if (col > 0 && charWidth(row[col - 1].char) === 2) {
+        row[col - 1] = this.blankCell();
+      }
+    } else if (charWidth(cell.char) === 2 && row[col + 1]?.char === '') {
+      row[col + 1] = this.blankCell();
+    }
+    row[col] = this.blankCell();
+  }
+
+  /** Write through the same delayed-autowrap path used by text and CSI REP. */
+  private writePrintable(char: string): void {
+    // A two-column glyph cannot be represented in a one-column grid without
+    // bleeding into adjacent Blessed UI, so use a single-cell replacement.
+    const printable = charWidth(char) > this.cols ? '\uFFFD' : char;
+    const width = charWidth(printable);
+    if (this.wrapPending || this.cursorCol + width > this.cols) {
+      this.gridWrapsToNext[this.cursorRow] = true;
+      this.cursorCol = 0;
+      this.lineFeed();
+      this.wrapPending = false;
+    }
+
+    const row = this.grid[this.cursorRow];
+    for (let col = this.cursorCol; col < Math.min(this.cols, this.cursorCol + width); col++) {
+      this.clearCellForWrite(row, col);
+    }
+
+    row[this.cursorCol] = {
+      char: printable,
+      style: cloneStyle(this.style),
+      occupied: true,
+    };
+
+    if (width === 2 && this.cursorCol + 1 < this.cols) {
+      row[this.cursorCol + 1] = {
+        char: '',
+        style: cloneStyle(this.style),
+        occupied: true,
+      };
+    }
+
+    const nextCol = this.cursorCol + width;
+    if (nextCol >= this.cols) {
+      this.cursorCol = this.cols - 1;
+      this.wrapPending = true;
+    } else {
+      this.cursorCol = nextCol;
+      this.wrapPending = false;
+    }
+  }
+
   // ── Processing ─────────────────────────────────────────────────
 
   private process(): void {
@@ -421,24 +731,21 @@ export class VTerm {
 
         // ESC 7 — save cursor
         if (remaining.length >= 2 && remaining[1] === '7') {
-          this.savedCursor = { row: this.cursorRow, col: this.cursorCol, style: cloneStyle(this.style) };
+          this.saveCursor();
           i += 2;
           continue;
         }
 
         // ESC 8 — restore cursor
         if (remaining.length >= 2 && remaining[1] === '8') {
-          if (this.savedCursor) {
-            this.cursorRow = this.savedCursor.row;
-            this.cursorCol = this.savedCursor.col;
-            this.style = cloneStyle(this.savedCursor.style);
-          }
+          this.restoreCursor();
           i += 2;
           continue;
         }
 
         // ESC M — reverse index (move cursor up, scroll if at top of region)
         if (remaining.length >= 2 && remaining[1] === 'M') {
+          this.wrapPending = false;
           if (this.cursorRow === this.scrollTop) {
             this.scrollDown();
           } else if (this.cursorRow > 0) {
@@ -451,8 +758,10 @@ export class VTerm {
         // ESC c — full reset
         if (remaining.length >= 2 && remaining[1] === 'c') {
           this.grid = this.makeGrid();
+          this.gridWrapsToNext = this.makeWrapFlags();
           this.cursorRow = 0;
           this.cursorCol = 0;
+          this.wrapPending = false;
           this.style = { ...DEFAULT_STYLE };
           this.scrollTop = 0;
           this.scrollBottom = this.rows - 1;
@@ -509,23 +818,28 @@ export class VTerm {
       // ── Control characters ─────────────────────────────────
       if (ch === '\r') {
         this.cursorCol = 0;
+        this.wrapPending = false;
         i++;
         continue;
       }
 
       if (ch === '\n') {
+        this.gridWrapsToNext[this.cursorRow] = false;
+        this.wrapPending = false;
         this.lineFeed();
         i++;
         continue;
       }
 
       if (ch === '\b') {
+        this.wrapPending = false;
         if (this.cursorCol > 0) this.cursorCol--;
         i++;
         continue;
       }
 
       if (ch === '\t') {
+        this.wrapPending = false;
         this.cursorCol = Math.min(this.cols - 1, (this.cursorCol + 8) & ~7);
         i++;
         continue;
@@ -548,33 +862,13 @@ export class VTerm {
         if (cp < 32) { j++; continue; }
 
         if (isZeroWidth(cp)) {
-          if (this.cursorCol > 0) {
-            const char = String.fromCodePoint(cp);
-            this.grid[this.cursorRow][this.cursorCol - 1].char += char;
-          }
+          this.appendZeroWidth(String.fromCodePoint(cp));
           j += cp > 0xFFFF ? 2 : 1;
           continue;
         }
 
         const printChar = cp > 0xFFFF ? String.fromCodePoint(cp) : chunk[j];
-        const w = charWidth(printChar);
-
-        if (this.cursorCol + w > this.cols) {
-          this.cursorCol = 0;
-          this.lineFeed();
-        }
-
-        this.grid[this.cursorRow][this.cursorCol] = {
-          char: printChar,
-          style: cloneStyle(this.style),
-        };
-
-        if (w === 2 && this.cursorCol + 1 < this.cols) {
-          this.grid[this.cursorRow][this.cursorCol + 1] = { char: '', style: cloneStyle(this.style) };
-        }
-
-        this.cursorCol += w;
-        if (this.cursorCol >= this.cols) this.cursorCol = this.cols - 1;
+        this.writePrintable(printChar);
         j += cp > 0xFFFF ? 2 : 1;
       }
 
@@ -590,7 +884,7 @@ export class VTerm {
     if (this.cursorRow < this.scrollBottom) {
       this.cursorRow++;
     } else if (this.cursorRow === this.scrollBottom) {
-      this.scrollUp();
+      this.scrollUp(this.gridWrapsToNext[this.cursorRow] ?? false);
     }
     // If cursor is below scroll region, just move down if possible
     else if (this.cursorRow < this.rows - 1) {
@@ -599,26 +893,53 @@ export class VTerm {
   }
 
   /** Scroll content up within the scroll region by one line. */
-  private scrollUp(): void {
+  private scrollUp(preserveBottomWrap = false): void {
     // Push top row to scrollback only for full-screen scroll in main buffer
     if (this.scrollTop === 0 && this.scrollBottom === this.rows - 1 && !this._inAltScreen) {
-      this.scrollback.push(this.renderRow(this.grid[0]));
+      const wrapsToNext = this.gridWrapsToNext[0] ?? false;
+      this.scrollback.push(this.renderRow(this.grid[0], wrapsToNext));
+      this.scrollbackWrapsToNext.push(wrapsToNext);
       if (this.scrollback.length > this.maxScrollback) {
         this.scrollback.shift();
+        this.scrollbackWrapsToNext.shift();
+        this._scrollbackStartIndex++;
       }
     }
     // Remove top row of scroll region
     this.grid.splice(this.scrollTop, 1);
+    this.gridWrapsToNext.splice(this.scrollTop, 1);
     // Insert blank row at bottom of scroll region
     this.grid.splice(this.scrollBottom, 0, this.makeRow());
+    this.gridWrapsToNext.splice(this.scrollBottom, 0, false);
+
+    // The row immediately above a partial region now points at the former
+    // second row of the region, not its original wrapped continuation.
+    if (this.scrollTop > 0) {
+      this.gridWrapsToNext[this.scrollTop - 1] = false;
+    }
+    // CSI SU leaves a blank at the region bottom, so the shifted row above it
+    // no longer has its old successor. Delayed autowrap is the exception: the
+    // next printable is written into that blank as the intended continuation.
+    if (!preserveBottomWrap && this.scrollBottom > this.scrollTop) {
+      this.gridWrapsToNext[this.scrollBottom - 1] = false;
+    }
   }
 
   /** Scroll content down within the scroll region by one line. */
   private scrollDown(): void {
     // Remove bottom row of scroll region
     this.grid.splice(this.scrollBottom, 1);
+    this.gridWrapsToNext.splice(this.scrollBottom, 1);
     // Insert blank row at top of scroll region
     this.grid.splice(this.scrollTop, 0, this.makeRow());
+    this.gridWrapsToNext.splice(this.scrollTop, 0, false);
+
+    // Rows shifted together retain their internal soft-wrap relationships.
+    // Only the two region edges now point at different physical rows.
+    if (this.scrollTop > 0) {
+      this.gridWrapsToNext[this.scrollTop - 1] = false;
+    }
+    this.gridWrapsToNext[this.scrollBottom] = false;
   }
 
   // ── Alternate screen buffer ──────────────────────────────────
@@ -627,17 +948,26 @@ export class VTerm {
     if (this._inAltScreen) return;
     this.altScreenSaved = {
       grid: this.grid,
+      gridWrapsToNext: this.gridWrapsToNext,
       scrollback: this.scrollback,
+      scrollbackWrapsToNext: this.scrollbackWrapsToNext,
+      scrollbackStartIndex: this._scrollbackStartIndex,
       cursorRow: this.cursorRow,
       cursorCol: this.cursorCol,
+      wrapPending: this.wrapPending,
       style: cloneStyle(this.style),
       scrollTop: this.scrollTop,
       scrollBottom: this.scrollBottom,
     };
     this.grid = this.makeGrid();
+    this.gridWrapsToNext = this.makeWrapFlags();
     this.scrollback = [];
+    this.scrollbackWrapsToNext = [];
+    this._scrollbackStartIndex = this.altScreenSaved.scrollbackStartIndex
+      + this.altScreenSaved.scrollback.length;
     this.cursorRow = 0;
     this.cursorCol = 0;
+    this.wrapPending = false;
     this.scrollTop = 0;
     this.scrollBottom = this.rows - 1;
     this._inAltScreen = true;
@@ -645,13 +975,30 @@ export class VTerm {
 
   private leaveAltScreen(): void {
     if (!this._inAltScreen || !this.altScreenSaved) return;
-    this.grid = this.altScreenSaved.grid;
+    this.grid = this.resizeGrid(this.altScreenSaved.grid, this.cols, this.rows);
+    this.gridWrapsToNext = this.resizeWrapFlags(
+      this.altScreenSaved.gridWrapsToNext,
+      this.rows,
+    );
     this.scrollback = this.altScreenSaved.scrollback;
-    this.cursorRow = this.altScreenSaved.cursorRow;
-    this.cursorCol = this.altScreenSaved.cursorCol;
-    this.style = this.altScreenSaved.style;
-    this.scrollTop = this.altScreenSaved.scrollTop;
-    this.scrollBottom = this.altScreenSaved.scrollBottom;
+    this.scrollbackWrapsToNext = this.altScreenSaved.scrollbackWrapsToNext;
+    this._scrollbackStartIndex = this.altScreenSaved.scrollbackStartIndex;
+    const cursor = this.clampCursor(
+      this.altScreenSaved.cursorRow,
+      this.altScreenSaved.cursorCol,
+    );
+    this.cursorRow = cursor.row;
+    this.cursorCol = cursor.col;
+    this.wrapPending = this.altScreenSaved.wrapPending;
+    this.style = cloneStyle(this.altScreenSaved.style);
+    this.scrollTop = Math.max(
+      0,
+      Math.min(this.altScreenSaved.scrollTop, this.rows - 1),
+    );
+    this.scrollBottom = Math.max(
+      this.scrollTop,
+      Math.min(this.altScreenSaved.scrollBottom, this.rows - 1),
+    );
     this.altScreenSaved = null;
     this._inAltScreen = false;
   }
@@ -662,6 +1009,12 @@ export class VTerm {
     const cmd = suffix.charAt(suffix.length - 1);
     const nums = params ? params.split(';').map((n) => parseInt(n, 10) || 0) : [];
     const n = nums[0] || 1;
+
+    // Cursor movement and editing operations cancel delayed autowrap. Style,
+    // save/restore, mode, and query operations preserve or manage it themselves.
+    if (!['m', 'b', 's', 'u', 'h', 'l', 'n', 'c', 'q', 't'].includes(cmd)) {
+      this.wrapPending = false;
+    }
 
     switch (cmd) {
       case 'A': // Cursor up
@@ -677,6 +1030,7 @@ export class VTerm {
         this.cursorCol = Math.max(0, this.cursorCol - n);
         break;
       case 'E': // Cursor next line
+        this.gridWrapsToNext[this.cursorRow] = false;
         this.cursorCol = 0;
         this.cursorRow = Math.min(this.rows - 1, this.cursorRow + n);
         break;
@@ -706,25 +1060,50 @@ export class VTerm {
           const row = this.grid[this.cursorRow];
           const end = Math.min(this.cols, this.cursorCol + n);
           for (let c = this.cursorCol; c < end; c++) {
-            row[c] = { char: ' ', style: cloneStyle(DEFAULT_STYLE) };
+            row[c] = this.blankCell();
+          }
+          if (end >= this.cols) {
+            this.gridWrapsToNext[this.cursorRow] = false;
           }
         }
         break;
       case 'L': // IL — Insert lines (within scroll region)
         {
+          if (this.cursorRow < this.scrollTop || this.cursorRow > this.scrollBottom) break;
           const count = Math.min(n, this.scrollBottom - this.cursorRow + 1);
           for (let j = 0; j < count; j++) {
             this.grid.splice(this.scrollBottom, 1);
+            this.gridWrapsToNext.splice(this.scrollBottom, 1);
             this.grid.splice(this.cursorRow, 0, this.makeRow());
+            this.gridWrapsToNext.splice(this.cursorRow, 0, false);
+
+            // The inserted blank replaces the prior successor of the row
+            // above it, while the shifted last row lost its old successor.
+            if (this.cursorRow > 0) {
+              this.gridWrapsToNext[this.cursorRow - 1] = false;
+            }
+            this.gridWrapsToNext[this.scrollBottom] = false;
           }
         }
         break;
       case 'M': // DL — Delete lines (within scroll region)
         {
+          if (this.cursorRow < this.scrollTop || this.cursorRow > this.scrollBottom) break;
           const count = Math.min(n, this.scrollBottom - this.cursorRow + 1);
           for (let j = 0; j < count; j++) {
             this.grid.splice(this.cursorRow, 1);
+            this.gridWrapsToNext.splice(this.cursorRow, 1);
             this.grid.splice(this.scrollBottom, 0, this.makeRow());
+            this.gridWrapsToNext.splice(this.scrollBottom, 0, false);
+
+            // The row above the deletion and the last shifted row both have
+            // new successors, so neither old soft-wrap boundary remains valid.
+            if (this.cursorRow > 0) {
+              this.gridWrapsToNext[this.cursorRow - 1] = false;
+            }
+            if (this.scrollBottom > 0) {
+              this.gridWrapsToNext[this.scrollBottom - 1] = false;
+            }
           }
         }
         break;
@@ -732,14 +1111,14 @@ export class VTerm {
         {
           const row = this.grid[this.cursorRow];
           row.splice(this.cursorCol, n);
-          while (row.length < this.cols) row.push({ char: ' ', style: cloneStyle(DEFAULT_STYLE) });
+          while (row.length < this.cols) row.push(this.blankCell());
         }
         break;
       case '@': // ICH — Insert characters
         {
           const row = this.grid[this.cursorRow];
           for (let j = 0; j < n; j++) {
-            row.splice(this.cursorCol, 0, { char: ' ', style: cloneStyle(DEFAULT_STYLE) });
+            row.splice(this.cursorCol, 0, this.blankCell());
           }
           row.length = this.cols;
         }
@@ -751,18 +1130,11 @@ export class VTerm {
         for (let j = 0; j < n; j++) this.scrollDown();
         break;
       case 'b': // REP — Repeat the preceding graphic character n times
-        if (this.cursorCol > 0) {
-          const prevChar = this.grid[this.cursorRow][this.cursorCol - 1].char;
-          if (prevChar && prevChar !== ' ') {
-            for (let j = 0; j < n; j++) {
-              if (this.cursorCol >= this.cols) break;
-              this.grid[this.cursorRow][this.cursorCol] = {
-                char: prevChar,
-                style: cloneStyle(this.style),
-              };
-              this.cursorCol++;
-            }
-            if (this.cursorCol >= this.cols) this.cursorCol = this.cols - 1;
+        {
+          const previous = this.getPreviousGraphicCell();
+          if (previous) {
+            const previousChar = previous.char;
+            for (let j = 0; j < n; j++) this.writePrintable(previousChar);
           }
         }
         break;
@@ -770,14 +1142,10 @@ export class VTerm {
         if (!prefix) this.handleSGR(nums);
         break;
       case 's': // Save cursor position (ANSI.SYS)
-        this.savedCursor = { row: this.cursorRow, col: this.cursorCol, style: cloneStyle(this.style) };
+        this.saveCursor();
         break;
       case 'u': // Restore cursor position (ANSI.SYS) — only unprefixed, not Kitty keyboard >u/<u
-        if (!prefix && this.savedCursor) {
-          this.cursorRow = this.savedCursor.row;
-          this.cursorCol = this.savedCursor.col;
-          this.style = cloneStyle(this.savedCursor.style);
-        }
+        if (!prefix) this.restoreCursor();
         break;
       case 'r': // DECSTBM — Set scroll region
         if (nums.length >= 2 && nums[0] > 0 && nums[1] > 0) {
@@ -905,19 +1273,28 @@ export class VTerm {
         this.eraseLine(0);
         for (let r = this.cursorRow + 1; r < this.rows; r++) {
           this.grid[r] = this.makeRow();
+          this.gridWrapsToNext[r] = false;
         }
         break;
       case 1: // From start to cursor
         for (let r = 0; r < this.cursorRow; r++) {
           this.grid[r] = this.makeRow();
+          this.gridWrapsToNext[r] = false;
         }
         for (let c = 0; c <= this.cursorCol; c++) {
-          this.grid[this.cursorRow][c] = { char: ' ', style: cloneStyle(DEFAULT_STYLE) };
+          this.grid[this.cursorRow][c] = this.blankCell();
         }
         break;
       case 2: // Entire display
+        this.grid = this.makeGrid();
+        this.gridWrapsToNext = this.makeWrapFlags();
+        break;
       case 3: // Entire display + scrollback (xterm)
         this.grid = this.makeGrid();
+        this.gridWrapsToNext = this.makeWrapFlags();
+        this._scrollbackStartIndex += this.scrollback.length;
+        this.scrollback = [];
+        this.scrollbackWrapsToNext = [];
         break;
     }
   }
@@ -927,16 +1304,21 @@ export class VTerm {
     switch (mode) {
       case 0: // From cursor to end
         for (let c = this.cursorCol; c < this.cols; c++) {
-          row[c] = { char: ' ', style: cloneStyle(DEFAULT_STYLE) };
+          row[c] = this.blankCell();
         }
+        this.gridWrapsToNext[this.cursorRow] = false;
         break;
       case 1: // From start to cursor
         for (let c = 0; c <= this.cursorCol; c++) {
-          row[c] = { char: ' ', style: cloneStyle(DEFAULT_STYLE) };
+          row[c] = this.blankCell();
+        }
+        if (this.cursorCol >= this.cols - 1) {
+          this.gridWrapsToNext[this.cursorRow] = false;
         }
         break;
       case 2: // Entire line
         this.grid[this.cursorRow] = this.makeRow();
+        this.gridWrapsToNext[this.cursorRow] = false;
         break;
     }
   }

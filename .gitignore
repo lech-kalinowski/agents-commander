@@ -4,4 +4,12 @@ dist/
 .DS_Store
 .env
 .env.local
+/apex_api
+/.commander-local/
 .pytest_cache/
+__pycache__/
+*.py[cod]
+# Local research artifacts are private; never commit recordings or reviewed data.
+capture-*/
+commander-reviews/
+commander-datasets/

@@ -3,12 +3,16 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: ['src/index.ts', 'bin/agents-commander.ts'],
   format: ['esm'],
-  target: 'node18',
+  target: 'node22',
   outDir: 'dist',
   clean: true,
   sourcemap: true,
-  dts: false,
-  splitting: false,
+  dts: {
+    entry: 'src/index.ts',
+  },
+  // Keep the interactive UI behind the CLI's dynamic import so lightweight
+  // commands can run even when optional terminal UI modules cannot load.
+  splitting: true,
   shims: true,
   noExternal: [],
   external: [

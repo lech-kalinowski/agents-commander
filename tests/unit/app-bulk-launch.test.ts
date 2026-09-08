@@ -242,7 +242,7 @@ describe('new-panel batch launch', () => {
     const h = harness();
     vi.mocked(showAgentDialog).mockResolvedValue(h.choice(1) as any);
     await h.app.actionLaunchAgent();
-    expect(showAgentDialog).toHaveBeenCalledWith(h.app.screen, h.app.theme, [7, 2, 4], 7, {}, [], { maxNewPanels: 97 });
+    expect(showAgentDialog).toHaveBeenCalledWith(h.app.screen, h.app.theme, [7, 2, 4], 7, {}, [], { maxNewPanels: 97, enableProtocolBatch: true });
     expect(h.manager.launchProfile).toHaveBeenCalledOnce();
   });
 });

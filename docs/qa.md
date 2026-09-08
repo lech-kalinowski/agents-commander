@@ -1,7 +1,8 @@
 # QA coverage and validation checklist
 
 This records the source hardening pass started on **2026-09-07**, on top of the
-F2/N bulk-launch change. It is not a certification that every possible bug has
+F2/N bulk-launch change, followed by F2/P bulk protocol setup on **2026-09-08**.
+It is not a certification that every possible bug has
 been found. These fixes are **not in npm 0.1.5**; a source push is not an npm
 release. Use the branch and commit under review, not an older global command.
 
@@ -41,6 +42,31 @@ The [CI workflow](https://github.com/lech-kalinowski/agents-commander/actions/wo
 repeats the gate on macOS and Linux with Node.js 22 and 24; consult the run for
 the exact commit being used instead of carrying this checkpoint forward.
 
+### Bulk protocol checkpoint — 2026-09-08
+
+The F2/P addition passed `npm run verify` on macOS/Node.js 24 with **1,193
+application tests across 96 files**, **28 Python hardware tests**, typechecking,
+build/watch, production build, built CLI isolation and packed installation.
+Pre-change and independent post-change reviews covered session consent,
+input-lane races, key rotation, modal ownership and capture boundaries. A
+progress-label P-number offset found in review was fixed and regression-tested.
+
+The real Blessed/PTY test launches sixteen local synthetic agents alongside an
+unchanged original session, selects only the new agents, verifies default-No
+cancellation, then confirms one bulk injection. Every child acknowledges a
+complete prompt containing its own key; all sixteen keys differ, hidden panels
+receive input, and selection/confirmation keys never reach the child processes.
+All test-owned processes terminate afterward. This is transport/UI evidence,
+not a live APEX/model-compliance test or physical Codex Micro acceptance.
+
+For manual acceptance, finish login/approvals and leave empty ready CLI prompts.
+Use F2 → P, select a subset with Space or A for all unarmed agents, confirm once,
+and inspect responses before sending a task. Repeat to verify armed sessions
+are disabled/skipped. Esc during progress keeps completed submissions and stops
+remaining work after the current paste/submit settles. Do not retry until any
+partially failed input has been inspected. Capture must remain off unless it
+was explicitly enabled at launch.
+
 ## Feature coverage
 
 | Area | Automated evidence |
@@ -49,6 +75,7 @@ the exact commit being used instead of carrying this checkpoint forward.
 | Configuration and adapters | Saved/launch-only precedence, malformed profiles, argument/environment handling, command discovery, OpenCode and synthetic Pi/APEX fixtures |
 | Workspace and navigation | Stable IDs, 1–100 panel limits, paging, density, fullscreen/back, cloning, ordering, closing, navigator, real Blessed input and resize |
 | Bulk agent launch | 10/16/20 launch logic, 16 independent local PTYs, capacity rejection, unchanged existing sessions, cancellation, startup failures, hidden-panel geometry |
+| Bulk protocol setup | F2/P explicit subset/all selection, default-No confirmation, 16 real local PTYs receiving complete distinct-key instructions, no modal-key leakage, hidden stable IDs, stale-session/input-lane races, skip-already-armed, cancellation and shutdown |
 | Dialogs and overlays | Enter/Return shielding, keyboard and mouse isolation, cancellation, owner teardown, immediate reopening, focus restoration |
 | File browser and editor | Sorting, selection, preview, regular-file/symlink checks, copy/move/delete identity checks, atomic saves, locks and metadata preservation |
 | Terminal lifecycle | UTF-8/ANSI rendering, PTY resize, restart/replacement, input forwarding, bounded termination and owned-child cleanup |

@@ -17,8 +17,8 @@ runtime requirements, features, and bundled license. The versioned install is
 `node dist/bin/agents-commander.js` or `npm start -- <options> <directory>`.
 Do not confuse an older global installation with this checkout; pushing source
 does not publish npm. See `AGENTS.md` and README for the current conventions.
-F2/N bulk launch is an unreleased source addition after npm 0.1.5, not a feature
-of the published 0.1.5 package.
+F2/N bulk launch and F2/P bulk protocol setup are unreleased source additions
+after npm 0.1.5, not features of the published 0.1.5 package.
 
 ## Project Structure
 
@@ -58,6 +58,7 @@ TypeScript + blessed + chokidar + marked + tsup
 - Enter previews files; Shift+F6/Shift+F7/Shift+F9 copy/move/delete files from file panels; Ctrl+W remains the close-panel alias
 - Ctrl+B opens the prompt template browser dialog
 - Ctrl+P sends session-bound Commander Protocol instructions to the active running agent
+- F2 then P explicitly injects protocol into selected/all running agent profiles after confirmation. Each exact session gets its own key; already-armed sessions are skipped, replacements are never followed. Esc stops remaining work after an in-flight paste/submit settles. Built-in Shell/internal demos are excluded. Verify empty ready CLI prompts first; no automatic task/capture.
 - F11 opens the panel navigator
 - F12 opens routed-message Activity; Shift+F12 opens the protocol guide
 - Up to 100 active panels use stable numbers in a paged workspace; hidden sessions keep running

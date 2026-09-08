@@ -97,6 +97,20 @@ interface ManagedTaskTarget {
   profileId: string;
 }
 
+/** Frozen consent target; never contains a protocol capability. */
+export interface ProtocolInjectionTarget {
+  readonly panelIndex: number;
+  readonly terminal: TerminalPanel;
+  readonly sessionId: string;
+  readonly agentType: AgentType;
+  readonly profileId: string;
+  readonly name: string;
+  readonly armed: boolean;
+}
+
+export type ProtocolInjectionOutcome =
+  | 'submitted' | 'already-armed' | 'stale' | 'cancelled' | 'failed';
+
 /**
  * Immutable snapshot of a task target at routing/confirmation time. Queued
  * work may act only on this exact live session, or on a panel that was idle
@@ -1297,27 +1311,75 @@ export class Orchestrator {
 
     const targetGeneration = this.captureManagedTaskTarget(panelIndex, tp, myAgent);
     if (!targetGeneration) return false;
-    const targetIsCurrent = () => this.isManagedTaskTargetCurrent(targetGeneration);
-
     const myInfo = this.agentManager.getRunningAgents().find(
       (a) => a.panelIndex === panelIndex,
     );
+    return await this.injectProtocolTarget({
+      ...targetGeneration, name: myInfo?.name ?? myAgent,
+      armed: this.isProtocolArmed(targetGeneration),
+    }) === 'submitted';
+  }
 
-    const others = this.agentManager.getRunningAgents()
-      .filter((a) => a.panelIndex !== panelIndex)
-      .map((a) => ({ name: a.name, type: a.type, panel: a.panelIndex }));
+  /**
+   * Snapshot selectable sessions before showing a picker/confirmation. Hidden
+   * panels are included; a restarting process is not a running agent. Internal
+   * demo roles and the built-in generic Shell are not batch prompt targets.
+   * Custom generic CLI profiles (e.g. Pi/APEX) remain explicitly selectable.
+   */
+  getProtocolInjectionTargets(): ProtocolInjectionTarget[] {
+    if (this.sealed) return [];
+    const targets: ProtocolInjectionTarget[] = [];
+    for (const agent of this.agentManager.getRunningAgents()) {
+      const terminal = this.layout.getTerminalPanel(agent.panelIndex);
+      if (!terminal?.isRunning) continue;
+      const target = this.captureManagedTaskTarget(agent.panelIndex, terminal, agent.type);
+      if (!target || target.sessionId !== agent.sessionId
+        || target.profileId === 'internal'
+        || (target.agentType === 'generic' && target.profileId === 'generic')) continue;
+      targets.push(Object.freeze({
+        ...target, name: agent.name, armed: this.isProtocolArmed(target),
+      }));
+    }
+    return targets.sort((a, b) => a.panelIndex - b.panelIndex);
+  }
 
-    const capability = generateProtocolCapability();
-    const instructions = buildProtocolInstructions(
-      panelIndex,
-      myInfo?.name ?? myAgent,
-      others,
-      capability,
-    );
+  /** Query current arming without exposing the private session key. */
+  isProtocolArmed(target: Pick<ProtocolInjectionTarget,
+    'panelIndex' | 'terminal' | 'sessionId' | 'agentType' | 'profileId'>): boolean {
+    return target.terminal.isRunning && this.isManagedTaskTargetCurrent(target)
+      && this.protocolInjected.has(target.panelIndex)
+      && this.protocolCapabilities.has(target.sessionId);
+  }
+
+  /**
+   * Inject only into the exact session selected by the operator. Cancellation
+   * is checked before entering the lane operation; a started paste/submit is
+   * allowed to settle so Esc cannot leave a partial prompt in the agent.
+   * Bulk callers skip armed sessions; Ctrl+P retains deliberate key rotation.
+   */
+  async injectProtocolTarget(
+    targetGeneration: ProtocolInjectionTarget,
+    options: { skipIfArmed?: boolean; shouldCancel?: () => boolean } = {},
+  ): Promise<ProtocolInjectionOutcome> {
+    const tp = targetGeneration.terminal;
+    const panelIndex = targetGeneration.panelIndex;
+    const targetIsCurrent = () => tp.isRunning && this.isManagedTaskTargetCurrent(targetGeneration);
+    if (this.sealed || options.shouldCancel?.()) return 'cancelled';
+    if (!targetIsCurrent()) return 'stale';
+    let capability: string | null = null;
 
     try {
-      await this.withSessionInputLane(targetGeneration, async () => {
-        if (!targetIsCurrent()) throw new Error('Managed session changed before protocol injection');
+      const outcome = await this.withSessionInputLane<ProtocolInjectionOutcome>(targetGeneration, async () => {
+        if (this.sealed || options.shouldCancel?.()) return 'cancelled';
+        if (!targetIsCurrent()) return 'stale';
+        if (options.skipIfArmed && this.isProtocolArmed(targetGeneration)) return 'already-armed';
+        const others = this.agentManager.getRunningAgents()
+          .filter((a) => a.panelIndex !== panelIndex)
+          .map((a) => ({ name: a.name, type: a.type, panel: a.panelIndex }));
+        capability = generateProtocolCapability();
+        const instructions = buildProtocolInstructions(
+          panelIndex, targetGeneration.name, others, capability,
+        );
         // Rotation happens before the first byte is sent, invalidating every
         // capability previously issued to this session.
         this.armProtocolTarget(targetGeneration, capability, false);
@@ -1339,14 +1401,17 @@ export class Orchestrator {
         await this.delay(this.orchConfig.gridScanDelay);
         if (!targetIsCurrent()) throw new Error('Managed session changed during protocol injection');
         tp.snapshotVisibleProtocolAsProcessed();
+        return 'submitted';
       });
-      logger.info(`Orchestrator: injected protocol instructions to panel ${panelIndex}`);
-      return true;
+      if (outcome === 'submitted') logger.info(`Orchestrator: injected protocol instructions to panel ${panelIndex}`);
+      return outcome;
     } catch (err) {
-      this.captureUnknownInput(this.captureActor(targetGeneration), 'protocol_injection_failed', 'truncated');
-      this.disarmProtocolTarget(targetGeneration, capability);
+      if (capability) {
+        this.captureUnknownInput(this.captureActor(targetGeneration), 'protocol_injection_failed', 'truncated');
+        this.disarmProtocolTarget(targetGeneration, capability);
+      }
       logger.error(`Orchestrator: protocol injection failed for panel ${panelIndex}`, err);
-      return false;
+      return targetIsCurrent() ? 'failed' : 'stale';
     }
   }
 

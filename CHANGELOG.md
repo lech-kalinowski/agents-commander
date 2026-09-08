@@ -4,6 +4,11 @@
 
 ### Added
 
+- Explicit F2/P bulk protocol setup for selected or all running agent profiles,
+  including hidden panels. One confirmation precedes sequential submissions;
+  each session gets a private key. Already-enabled sessions are skipped and
+  exact-session checks prevent injection into replacements. Esc stops remaining
+  work after any started paste/submit settles. No automatic task or recording.
 - Source-checkout F2 batch launch: select one CLI/profile, press N, and choose
   how many new terminal panels to create at the selected panel's directory.
   One confirmation precedes sequential launches; Esc stops the remaining work

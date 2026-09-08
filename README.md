@@ -44,7 +44,8 @@
 
 This README describes **Agents Commander 0.1.5**, under the MIT License.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
-The [bulk-launch workflow](#launch-one-profile-in-many-new-panels-source-checkout)
+The [bulk-launch workflow](#launch-one-profile-in-many-new-panels-source-checkout),
+[bulk protocol setup](#enable-protocol-in-many-agents-source-checkout),
 and subsequent QA hardening are unreleased source-checkout changes after
 0.1.5; they are not included in the npm 0.1.5 package. See the
 [QA coverage and remaining manual checks](docs/qa.md) when validating a checkout.
@@ -228,7 +229,8 @@ the batch and leaves its terminal available for inspection. Starting a process
 does not prove that its CLI, authentication, or provider is ready; check the
 terminal output and use **F11** to inspect sessions, including hidden panels.
 Bulk launch does not send a task, bootstrap the protocol, or enable recording.
-Press **Ctrl+P in each agent** when you want to enable its protocol session.
+Use **F2 → P** for explicit bulk protocol setup after checking the agents are
+ready, or **Ctrl+P** for the active agent only.
 
 Every new session uses the **same selected profile**, arguments, environment,
 and working directory. These are independent Commander sessions/processes,
@@ -241,6 +243,38 @@ Repeating an APEX/Pi role profile sixteen times does **not** create the
 sixteen-role review council below. Its generated profiles contain different
 missions and fixed P-number expectations; launch each intended role at the
 matching stable panel instead of cloning one role's prompt across the council.
+
+### Enable protocol in many agents (source checkout)
+
+**Unreleased: F2 → P is a source addition after npm 0.1.5.** Build this checkout
+with `npm run build` and run `node dist/bin/agents-commander.js .`.
+
+1. Launch your agents (for example, 16 copies of an APEX/Pi profile with F2/N).
+   Finish login and permission prompts in each, and leave every selected CLI
+   at an **empty, ready input prompt**. A running process does not prove readiness.
+2. Press **F2**, then **P** for protocol setup. No launch profile is selected.
+3. Use **Up/Down** and **Space** to select panels, or **A** for all eligible
+   sessions. **N** clears selection; mouse clicks toggle rows. Hidden panels
+   are included using their stable P numbers. Nothing is selected initially.
+4. Press **Enter**, review the selection, then explicitly confirm **Yes**.
+   The confirmation defaults to No; model usage may incur provider charges.
+5. Watch submitted/already-enabled/failed counts. **Esc** stops remaining
+   injections; a started paste/submit settles, and completed injections stay.
+6. Inspect the agents' responses, then send your collaboration task separately
+   through **Ctrl+O** or a template. Submission does not prove model compliance.
+
+Each session receives its **own private capability**, never a shared broadcast
+key. Already-enabled sessions are skipped without rotating their keys. A
+stopped, removed, or replaced session fails its original selection; its new
+process is never silently armed. Other selected sessions can still complete.
+Reopen F2/P to retry after inspecting failed panels. The built-in generic Shell,
+unmanaged commands and internal demo roles are excluded. For Pi/APEX use a
+configured named agent profile; do not select a shell wrapper unless it is
+actually at the agent's input prompt.
+
+This action does not launch/replace agents, assign roles, submit a collaboration
+task, or enable recording. **Ctrl+P remains active-only** and deliberately
+reinjects with a fresh key; use it if you need to refresh an armed session.
 
 ### Sixteen-panel APEX collaboration example
 
@@ -287,7 +321,7 @@ This is what makes Agents Commander different from running `tmux` with multiple 
 ### How it works
 
 1. **Launch agents** in different panels (`F2`)
-2. **Send protocol instructions** to each running agent (`Ctrl+P`) -- the instructions are written directly to that agent's terminal session
+2. **Send protocol instructions** to each running agent (`Ctrl+P`), or use **F2 → P** for selected/all agents in this source checkout -- each session receives its own instructions and key
 3. **Give a task** that requires collaboration:
 
 ```
@@ -541,6 +575,7 @@ These shortcuts work everywhere, including on terminal panels with running agent
 | `Ctrl+B` | Browse prompt template library |
 | `Ctrl+O` | Orchestrate -- send task to any agent |
 | `Ctrl+P` | Send protocol instructions to the active agent |
+| `F2` then `P` | Select/all running agents for bulk protocol setup (source addition after npm 0.1.5) |
 | `Ctrl+T` | Toggle panel: file <-> terminal |
 | `Ctrl+K` | Kill running session on active panel |
 | `Ctrl+W` | Close active panel (same as `F9`) |

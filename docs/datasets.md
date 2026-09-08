@@ -38,7 +38,11 @@ explicit external `--capture-dir`.
 
 For usable candidate context:
 
-1. Launch the required agents and press **Ctrl+P** in each to arm the protocol.
+1. Launch the required agents, finish login/approvals and leave empty ready
+   prompts. Press **Ctrl+P** in each to arm the protocol, or use **F2 → P** for
+   selected/all agents in the current source (unreleased after npm 0.1.5).
+   Bulk setup uses the same recorded semantic injection path and never enables
+   capture itself; capture still requires the explicit launch flag.
 2. Submit the initial task through **Ctrl+O** or a Commander template.
 3. Let agents use SEND, REPLY, BROADCAST, STATUS and QUERY normally.
 4. Exit with **F10** so routing settles and the capture can be sealed.

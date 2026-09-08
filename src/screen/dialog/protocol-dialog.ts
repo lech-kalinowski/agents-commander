@@ -24,7 +24,12 @@ with another agent running in a different panel.
      Focus a terminal panel and press {cyan-fg}Ctrl+P{/cyan-fg}.
      This teaches the agent how to talk to other agents and
      gives this one session a private routing capability.
-     Do this for each agent you want to participate.
+     Or use {cyan-fg}F2 → P{/cyan-fg} for selected/all running profiles.
+     Space selects, A selects all, N clears; Enter then confirm.
+     Finish login/approvals; leave every CLI prompt empty and ready.
+     Each session gets its own key; already-enabled sessions skip.
+     Esc stops remaining work after the started paste/submit settles.
+     Built-in Shell/demo roles excluded. No task or capture starts.
 
   {bold}3.{/bold} Give a collaborative task
      Type a prompt like:
@@ -175,6 +180,7 @@ with another agent running in a different panel.
   {cyan-fg}F2{/cyan-fg}          Launch agent in a panel
   {cyan-fg}Ctrl+O{/cyan-fg}      Orchestrate (send task to agent)
   {cyan-fg}Ctrl+P{/cyan-fg}      Inject protocol into active agent
+  {cyan-fg}F2 then P{/cyan-fg}   Bulk protocol (source addition after npm 0.1.5)
   {cyan-fg}F12{/cyan-fg}         Routed-message activity
   {cyan-fg}Shift+F12{/cyan-fg}   This guide
   {cyan-fg}Ctrl+K{/cyan-fg}      Kill running session on active panel
@@ -185,8 +191,8 @@ with another agent running in a different panel.
 
 {bold}{yellow-fg}TIPS{/yellow-fg}{/bold}
 
-  - Press Ctrl+P on each agent after launch. You only
-    need to inject once per agent per session.
+  - Use Ctrl+P per agent, or F2 then P for selected/all sessions.
+    Bulk skips armed sessions; Ctrl+P deliberately rotates the key.
   - Use REPLY for the newest open reply window. Use SEND
     for an explicit target when no suitable window is open.
   - Use BROADCAST for coordinator patterns where one

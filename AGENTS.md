@@ -45,8 +45,8 @@ Use `node dist/bin/agents-commander.js` or `npm start --` to exercise this check
 not an older global installation. For the versioned package, the install command
 is `npm install -g agents-commander@0.1.5`. Recheck the registry before changing
 release claims. A source push is not an npm release.
-The F2/N bulk-launch workflow is an unreleased source addition after npm 0.1.5;
-do not describe it as a feature of the published 0.1.5 package.
+The F2/N bulk-launch and F2/P bulk-protocol workflows are unreleased source
+additions after npm 0.1.5; do not describe them as published 0.1.5 features.
 
 ## Key Conventions
 
@@ -59,6 +59,7 @@ do not describe it as a feature of the published 0.1.5 package.
 - Enter previews files; Shift+F6/Shift+F7/Shift+F9 copy/move/delete files from file panels; Ctrl+W remains the close-panel alias
 - Ctrl+B opens the prompt template browser dialog
 - Ctrl+P sends Commander Protocol instructions to the active running agent
+- F2 then P explicitly injects protocol into selected/all running agent profiles after confirmation. Each exact session gets its own key; already-armed sessions are skipped, replacements are never followed. Esc stops remaining work after an in-flight paste/submit settles. Built-in Shell/internal demos are excluded. Verify empty ready CLI prompts first; no automatic task/capture.
 - F11 opens the panel navigator
 - F12 opens routed-message Activity; Shift+F12 opens the protocol guide
 - Up to 100 active panels use stable numbers in a paged workspace; hidden sessions keep running

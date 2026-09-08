@@ -46,6 +46,7 @@ Multi-panel AI Agent Manager & File Browser
   F2          Launch agent in panel
   Ctrl+O      Orchestrate — send task to agent
   Ctrl+P      Send protocol instructions to active agent
+  F2 then P   Bulk protocol setup: select agents or A=All
   F12         Routed-message activity
   Shift+F12   Inter-agent protocol guide
   Ctrl+B      Browse 121 prompt templates
@@ -66,7 +67,17 @@ Multi-panel AI Agent Manager & File Browser
   Esc during progress stops remaining launches, keeping started ones.
   Same profile/arguments/directory, not separate worktrees or roles.
   Provider usage may apply; resume/startup arguments retain their effects.
-  No automatic task or bootstrap; Ctrl+P in each agent enables protocol.
+  No automatic task or bootstrap; F2 then P enables selected agents.
+
+  Bulk protocol (source addition after npm 0.1.5):
+  F2 → P → Space=select / A=All → Enter → confirm Yes.
+  N clears selection. Hidden panels are included. Default is none.
+  Finish login/approvals; each selected CLI needs an empty ready prompt.
+  One private key per session; already-enabled sessions are skipped.
+  Changed/stopped sessions fail; their replacements are never armed.
+  Esc stops remaining work after a started paste/submit settles.
+  Built-in Shell and internal demo roles are excluded; named Pi profiles work.
+  No task or recording starts. Check responses; then send a task separately.
 
 {bold}{yellow-fg}INTER-AGENT PROTOCOL{/yellow-fg}{/bold}
 

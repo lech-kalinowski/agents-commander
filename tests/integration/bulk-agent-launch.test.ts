@@ -23,6 +23,15 @@ vi.mock('../../src/config/loader.js', async () => {
       id: 'synthetic-bulk-profile', adapter: 'generic', label: 'Synthetic bulk profile',
       command: process.execPath,
       args: ['-e', [
+        'process.stdin.setRawMode(true); process.stdin.setEncoding("utf8");',
+        'let pending = ""; let submitted = 0;',
+        'process.stdin.on("data", chunk => { pending += chunk; let end;',
+        'while ((end = pending.indexOf("\\r")) >= 0) {',
+        'const frame = pending.slice(0, end); pending = pending.slice(end + 1);',
+        'const match = /^\\x1b\\[200~([\\s\\S]+)\\x1b\\[201~$/.exec(frame);',
+        'const key = match && /Protocol capability: ([A-Za-z0-9_-]{43})\\./.exec(match[1]);',
+        'console.log(key ? "BULK_PROTOCOL_OK:" + key[1] + ":" + (++submitted) : "BULK_INPUT_BAD");',
+        '}});',
         "console.log(process.argv[1] === 'bulk-argument' ? 'ARG_OK' : 'ARG_BAD');",
         "console.log(process.env.BULK_FIXTURE_VALUE === 'bulk-environment' ? 'ENV_OK' : 'ENV_BAD');",
         "console.log(process.cwd() === process.env.BULK_FIXTURE_CWD ? 'CWD_OK' : 'CWD_BAD');",
@@ -90,14 +99,48 @@ async function chooseBatch(
   });
 }
 
+/** Select every running session except the original P1 through actual keys. */
+async function chooseProtocolBatch(harness: Awaited<ReturnType<typeof createHarness>>): Promise<void> {
+  harness.input.write('\x1bOQ');
+  await vi.waitFor(() => {
+    expect(isDialogActive()).toBe(true);
+    expect(harness.screen.focused?.type).toBe('list');
+  });
+  const agentPicker = harness.screen.focused;
+  harness.input.write('p');
+  await vi.waitFor(() => {
+    expect(harness.screen.focused).not.toBe(agentPicker);
+    expect(harness.screen.focused?.type).toBe('box');
+    expect(harness.screen.focused?.children.some(child => child.type === 'list')).toBe(true);
+  });
+  const protocolPicker = harness.screen.focused!;
+  const sessions = protocolPicker.children.find(child => child.type === 'list') as blessed.Widgets.ListElement;
+  expect(sessions.getItem(0).getContent()).toMatch(/^\[ \] P1 /u);
+  harness.input.write('a '); // Select all 17, then toggle the current first row (P1) off.
+  await vi.waitFor(() => {
+    expect(sessions.getItem(0).getContent()).toMatch(/^\[ \] P1 /u);
+    for (let index = 1; index <= 16; index++) {
+      expect(sessions.getItem(index).getContent()).toMatch(/^\[x\] P\d+ /u);
+    }
+  });
+  harness.input.write('\r');
+  await vi.waitFor(() => {
+    expect(isDialogActive()).toBe(true);
+    expect(harness.screen.focused).not.toBe(protocolPicker);
+    expect(harness.screen.focused?.children.map(child => child.getContent()).join('\n'))
+      .toContain('Inject into 16 selected agents');
+  });
+}
+
 describe('real Blessed bulk launch with synthetic local PTYs', () => {
   it.skipIf(process.platform === 'win32')(
-    'adds sixteen independent profile sessions without replacing existing panels or forwarding dialog keys',
+    'launches sixteen profiles without protocol, then explicitly injects unique keys into only those selected sessions',
     async () => {
       const harness = await createHarness();
       const { app, input, cwd } = harness;
       const ownedPanels: TerminalPanel[] = [];
       let ownedProcesses: ChildProcess[] = [];
+      const restoreInputSpies: Array<() => void> = [];
       try {
         const source = app.layout.convertToTerminal(0) as TerminalPanel;
         ownedPanels.push(source);
@@ -164,7 +207,71 @@ describe('real Blessed bulk launch with synthetic local PTYs', () => {
         expect(app.orchestrator.connectedPanels.size).toBe(17);
         expect(app.orchestrator.protocolCapabilities.size).toBe(0);
         expect(app.orchestrator.protocolInjected.size).toBe(0);
+
+        const inputSpies = new Map(ownedPanels.map(terminal => {
+          const spy = vi.spyOn(terminal, 'sendInput'); // Observe actual writes, without replacing the real PTY path.
+          restoreInputSpies.push(() => spy.mockRestore());
+          return [terminal.panelIndex, spy];
+        }));
+        const launch = vi.spyOn(app.agentManager, 'launchProfile');
+        const task = vi.spyOn(app.orchestrator, 'sendTask');
+        restoreInputSpies.push(() => launch.mockRestore(), () => task.mockRestore());
+        const activePanelBeforeProtocol = app.layout.activePanelId;
+        const initialSessionIds = ownedPanels.map(terminal => app.agentManager.getAgentSessionId(terminal.panelIndex));
+
+        await chooseProtocolBatch(harness);
+        input.write('\r'); // Untouched default No: selection and Enter must not arm any session.
+        await vi.waitFor(() => expect(isDialogActive()).toBe(false));
+        expect(app.orchestrator.protocolCapabilities.size).toBe(0);
+        for (const spy of inputSpies.values()) expect(spy).not.toHaveBeenCalled();
+
+        await chooseProtocolBatch(harness);
+        input.write('y');
+        await vi.waitFor(() => {
+          expect(isDialogActive()).toBe(false);
+          expect(app.orchestrator.protocolCapabilities.size).toBe(16);
+          expect(app.orchestrator.protocolInjected.size).toBe(16);
+        }, { timeout: 15000 });
+        const keys = sessionIds.map(sessionId => app.orchestrator.protocolCapabilities.get(sessionId) as string);
+        expect(new Set(keys).size).toBe(16);
+        expect(app.orchestrator.protocolCapabilities.has(sourceSession)).toBe(false);
+        expect(inputSpies.get(0)).not.toHaveBeenCalled();
+        expect(source.inputGeneration).toBe(0n);
+        for (const [index, terminal] of terminals.entries()) {
+          const key = keys[index];
+          expect(key).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+          const writes = inputSpies.get(terminal.panelIndex)!.mock.calls.map(([value]) => value);
+          expect(writes[0]).toBe('\x1b[200~');
+          expect(writes.at(-2)).toBe('\x1b[201~');
+          expect(writes.at(-1)).toBe('\r');
+          expect(writes.filter(value => value === '\r')).toHaveLength(1);
+          expect(writes.filter(value => value === '\x1b[200~')).toHaveLength(1);
+          expect(writes.filter(value => value === '\x1b[201~')).toHaveLength(1);
+          expect(writes.slice(1, -2).join('')).toContain(`Protocol capability: ${key}.`);
+          for (const modalKey of ['p', 'a', ' ', 'y']) expect(writes).not.toContain(modalKey);
+        }
+        await vi.waitFor(() => {
+          for (const [index, terminal] of terminals.entries()) {
+            const grid = terminal.getVisibleGridLines().join('\n');
+            // The child acknowledges only a complete bracketed prompt followed by one real submit.
+            expect(grid).toContain(`BULK_PROTOCOL_OK:${keys[index]}:1`);
+            expect(grid).not.toContain('BULK_INPUT_BAD');
+          }
+        }, { timeout: 5000 });
+        expect(app.layout.panelCount).toBe(18);
+        expect(app.layout.getPanel(0)).toBe(source);
+        expect(app.layout.getPanel(1)).toBe(unchangedFilePanel);
+        expect(app.layout.activePanelId).toBe(activePanelBeforeProtocol);
+        expect(source.sessionGeneration).toBe(sourceGeneration);
+        expect(ownedPanels.map(terminal => app.agentManager.getAgentSessionId(terminal.panelIndex)))
+          .toEqual(initialSessionIds);
+        expect(app.agentManager.getRunningAgents()).toHaveLength(17);
+        expect(launch).not.toHaveBeenCalled();
+        expect(task).not.toHaveBeenCalled();
+        expect(app.orchestrator.getRecentActivity()).toEqual([]);
+        expect(app.capture.mode).toBe('off');
       } finally {
+        for (const restore of restoreInputSpies) restore();
         await harness.dispose();
       }
       expect(ownedPanels.every((terminal) => !terminal.isRunning)).toBe(true);
@@ -172,7 +279,7 @@ describe('real Blessed bulk launch with synthetic local PTYs', () => {
       expect(app.agentManager.getRunningAgents()).toHaveLength(0);
       expect(isDialogActive()).toBe(false);
     },
-    30000,
+    45000,
   );
 
   it.skipIf(process.platform === 'win32')(

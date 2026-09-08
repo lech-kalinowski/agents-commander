@@ -19,6 +19,8 @@ import {
 import { showInputDialog } from './screen/dialog/input-dialog.js';
 import { showAgentDialog, type AgentLaunchChoice } from './screen/dialog/agent-dialog.js';
 import { showBulkLaunchProgress } from './screen/dialog/bulk-launch-progress.js';
+import { showProtocolBatchDialog } from './screen/dialog/protocol-batch-dialog.js';
+import { showProtocolBatchProgress } from './screen/dialog/protocol-batch-progress.js';
 import { showLogDialog } from './screen/dialog/log-dialog.js';
 import { showOrchestrateDialog } from './screen/dialog/orchestrate-dialog.js';
 import { showTemplateDialog } from './screen/dialog/template-dialog.js';
@@ -1503,10 +1505,14 @@ export class App {
       this.layout.activePanel.panelIndex,
       this.config.agents,
       this.config.agentProfiles,
-      { maxNewPanels: this.layout.availablePanelCapacity },
+      { maxNewPanels: this.layout.availablePanelCapacity, enableProtocolBatch: true },
     );
 
     if (this.disposalStarted) return;
+    if (choice && 'action' in choice) {
+      await this.actionInjectProtocolBatch();
+      return;
+    }
     if (choice?.newPanelCount !== undefined) {
       await this.actionLaunchAgentBatch(choice);
       return;
@@ -1542,6 +1548,85 @@ export class App {
       }
       screen.render();
     }
+  }
+
+  /** Explicit opt-in for a frozen selection of existing managed sessions. */
+  private async actionInjectProtocolBatch(): Promise<void> {
+    await this.runDestructiveTransition(async () => {
+      if (this.disposalStarted) return;
+      const targets = this.orchestrator.getProtocolInjectionTargets();
+      if (targets.length === 0) {
+        showErrorToast(this.screen, 'No running agent profiles for protocol setup. Built-in Shell and demo roles are excluded.');
+        return;
+      }
+      const selected = await showProtocolBatchDialog(this.screen, this.theme, targets.map(target => ({
+        panelIndex: target.panelIndex, name: target.name,
+        profileId: target.profileId, armed: target.armed,
+      })));
+      if (this.disposalStarted || selected === null) return;
+      const selectedIds = new Set(selected);
+      // Only the pre-dialog snapshots can be authorized. Do not resolve a
+      // replacement process by P-number after selection or confirmation.
+      if (selectedIds.size === 0 || [...selectedIds].some(id => !targets.some(t => t.panelIndex === id))) {
+        showErrorToast(this.screen, 'Protocol setup cancelled: select valid running agent panels');
+        return;
+      }
+      const chosen = targets.filter(target => selectedIds.has(target.panelIndex));
+      const panelNames = chosen.slice(0, 10).map(target => `P${target.panelIndex + 1}`).join(', ')
+        + (chosen.length > 10 ? ` +${chosen.length - 10} more` : '');
+      const confirmed = await showConfirmDialog(
+        this.screen, this.theme, 'Enable Commander Protocol',
+        `Inject into ${chosen.length} selected agents (${panelNames})?\n`
+          + 'First finish login/approvals and leave every selected CLI at an empty, ready prompt. '
+          + 'Each gets its own key. Already enabled sessions are skipped. '
+          + 'No task or recording is started; model usage may incur charges.',
+      );
+      if (!confirmed || this.disposalStarted) return;
+      const progress = showProtocolBatchProgress(this.screen, this.theme, chosen.length);
+      let completed = 0;
+      let submitted = 0;
+      let skipped = 0;
+      const failed: number[] = [];
+      let interrupted = false;
+      try {
+        for (const target of chosen) {
+          if (this.disposalStarted || progress.cancelled) break;
+          progress.update(completed, submitted, skipped, failed.length, target.panelIndex);
+          const outcome = await this.orchestrator.injectProtocolTarget(target, {
+            skipIfArmed: true,
+            shouldCancel: () => this.disposalStarted || progress.cancelled,
+          });
+          if (outcome === 'cancelled') break;
+          completed++;
+          if (outcome === 'submitted') submitted++;
+          else if (outcome === 'already-armed') skipped++;
+          else failed.push(target.panelIndex + 1);
+          progress.update(completed, submitted, skipped, failed.length);
+          // Let Esc, lifecycle exits and screen disposal run between targets,
+          // including a batch where every target has become stale or armed.
+          await new Promise<void>(resolve => setTimeout(resolve, 0));
+        }
+      } catch (error) {
+        interrupted = true;
+        logger.error('Bulk protocol injection failed', error);
+      } finally {
+        progress.close();
+      }
+      if (this.disposalStarted) return;
+      const remaining = chosen.length - completed;
+      const summary = `Protocol: ${submitted} submitted, ${skipped} already enabled, ${failed.length} failed/changed, ${remaining} not started. `;
+      if (failed.length || interrupted) {
+        const failedNames = failed.slice(0, 8).map(id => `P${id}`).join(', ')
+          + (failed.length > 8 ? ', …' : '');
+        showErrorToast(this.screen, summary + (interrupted ? 'Batch interrupted. ' : '')
+          + (failedNames ? `Inspect ${failedNames}. ` : '') + 'Reopen F2 → P to retry after checking prompts.', 8000);
+      } else {
+        showToast(this.screen, summary + (remaining ? 'Remaining injections cancelled; submitted instructions kept.'
+          : 'Check agent responses before sending a collaboration task.'), 8000);
+      }
+      this.updateStatus();
+      this.screen.render();
+    });
   }
 
   /** Repeats one profile in new panels only; no worktree, task or protocol copying. */
@@ -1639,7 +1724,7 @@ export class App {
       if (failure) showErrorToast(this.screen, summary + failure, 6000);
       else showToast(this.screen, summary + (progress.cancelled
         ? 'Remaining launches cancelled; started sessions kept.'
-        : 'Check agent output/login. F11: panels; Ctrl+P: protocol per panel.'), 6000);
+        : 'Check agent output/login. F2 → P: bulk protocol; Ctrl+P: active agent.'), 6000);
       this.screen.render();
     });
   }
@@ -1707,7 +1792,7 @@ export class App {
         this.config.agentProfiles,
       );
       if (this.disposalStarted) return;
-      if (agentChoice) {
+      if (agentChoice && !('action' in agentChoice)) {
         const targetPanel = agentChoice.panelIndex;
         if (!this.layout.hasPanel(targetPanel)) {
           showErrorToast(screen, `Panel ${targetPanel + 1} is no longer available`);

@@ -293,7 +293,7 @@ describe('App destructive layout actions', () => {
       99,
       app.config.agents,
       app.config.agentProfiles,
-      { maxNewPanels: 96 },
+      { maxNewPanels: 96, enableProtocolBatch: true },
     );
     expect(showTemplateDialog).toHaveBeenCalledWith(
       app.screen,

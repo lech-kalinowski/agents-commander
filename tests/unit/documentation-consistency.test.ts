@@ -23,6 +23,20 @@ function visibleText(html: string): string {
 }
 
 describe('versioned product documentation', () => {
+  it('documents explicit source-only batch protocol setup separately from launch and active Ctrl+P', () => {
+    expect(readme).toContain('### Enable protocol in many agents (source checkout)');
+    expect(readme).toContain('F2 → P is a source addition after npm 0.1.5');
+    expect(readme).toContain('Ctrl+P remains active-only');
+    expect(readme).toContain('Already-enabled sessions are skipped without rotating their keys');
+    expect(readme).toContain('empty, ready input prompt');
+    expect(readme).toContain('Bulk launch does not send a task, bootstrap the protocol, or enable recording.');
+    for (const guide of [agentGuide, claudeGuide, read('src/screen/dialog/help-dialog.ts'), read('src/screen/dialog/protocol-dialog.ts')]) {
+      expect(guide).toContain('F2 then P');
+      expect(guide).toContain('Ctrl+P');
+    }
+    expect(datasetGuide).toContain('never enables\n   capture itself');
+  });
+
   it('documents the selected version and its install command separately from the legacy baseline', () => {
     for (const document of [readme, visibleText(landing), agentGuide, claudeGuide, datasetGuide]) {
       expect(document).toContain(packageVersion);

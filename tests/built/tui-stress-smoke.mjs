@@ -49,16 +49,35 @@ async function launch(args, exercise) {
     child.stdin.write(bytes);
     await waitFor(predicate, label);
   }
+  function navigatorReady(view = screen()) {
+    return view.includes('Panel Navigator (F11)') && view.includes('Search')
+      && view.includes('Enter Go') && view.includes('Esc Cancel');
+  }
   async function navigate(number) {
-    await key('\x1b[23~', () => screen().includes('Panel Navigator (F11)'), 'navigator opens');
-    await key(`P${number}\r`, () => !screen().includes('Panel Navigator (F11)')
+    await key('\x1b[23~', () => navigatorReady(), 'navigator opens');
+    // A full filtered result acknowledges the query before Enter. A leftover
+    // title from a previous modal is not proof this new input was received.
+    await key(`P${number}`, () => {
+      const view = screen();
+      return navigatorReady(view) && /Panel Navigator \(F11\)[^\n]*\s1\/\d+(?:\s|$)/u.test(view)
+        && new RegExp(`#\\d+ P${number}\\s`).test(view);
+    }, `navigator filters P${number}`);
+    await key('\r', () => !screen().includes('Panel Navigator (F11)')
       && new RegExp(`P${number}\\s+\\|`).test(screen()), `jump to P${number}`);
   }
   async function resize(cols, rows) {
     term.resize(cols, rows);
     child.stdio[3].write(`resize ${cols} ${rows}\n`);
-    // Round trip through a modal proves input and repaint both survived resize.
-    await key('\x1b[23~', () => screen().includes('Panel Navigator (F11)'), 'navigator after resize');
+    // Input and resize travel over different fds. The helper can process F11
+    // before SIGWINCH, so wait for chrome at the new height before any keys.
+    // These fixture transitions change height; old geometry cannot place both
+    // status and function bars on these newly selected bottom rows.
+    await waitFor(() => {
+      const lines = term.getGridPlainLines();
+      return /1Help\s+2Agent/u.test(lines.at(-1) ?? '')
+        && /P\d+\s+\|.*Position #\d+.*100 panels/u.test(lines.at(-2) ?? '');
+    }, `application redraw at ${cols}x${rows}`);
+    await key('\x1b[23~', () => navigatorReady(), 'navigator after resize');
     await key('\x1b', () => !screen().includes('Panel Navigator (F11)'), 'close resized navigator');
   }
   try {
@@ -173,6 +192,9 @@ try {
     }, 'twenty real local children ready', 20000);
     ownedPids = (await readReceipts()).map(row => row.pid);
     assert.equal(new Set(ownedPids).size, 20);
+    // The final child can be ready during the launcher's last 50 ms yield.
+    // Its receipt does not mean the guarded batch workflow has released input.
+    await waitFor(() => /20\/20 CLI processes started/u.test(screen()), 'bulk launch workflow completed');
     await navigate(22);
     await key('\x1bOQ', () => screen().includes('Launch Agent (F2)'), 'protocol picker entry');
     await key('p', () => /Commander Protocol.*0 selected/u.test(screen()), 'open bulk protocol setup');

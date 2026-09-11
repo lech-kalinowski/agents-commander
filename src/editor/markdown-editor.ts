@@ -218,6 +218,15 @@ export class MarkdownEditor {
       screen,
       () => this.destroyAndRestoreFocus(),
     );
+    // A network/cloud-backed file may take time to load. Own input immediately
+    // so navigation cannot leak to the file panel and cancellation stays usable
+    // before the editable document and its normal handlers are installed.
+    this.container.key(['C-q', 'escape'], () => {
+      if (!this.keyHandlerInstalled) this.close();
+    });
+    this.statusLine.setContent(` Loading ${safeBaseName(filePath)}…\n ^Q/Esc Cancel`);
+    this.container.focus();
+    this.screen.render();
   }
 
   async open(): Promise<boolean> {

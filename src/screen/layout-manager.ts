@@ -12,7 +12,11 @@ import {
 import { FilePanel } from '../panels/file-panel.js';
 import { TerminalPanel } from '../panels/terminal-panel.js';
 import { logger } from '../utils/logger.js';
-import { placeBelowDialogs } from '../utils/dialog-state.js';
+import {
+  placeBelowDialogs,
+  preserveDialogFocus,
+  replaceDialogReturnFocus,
+} from '../utils/dialog-state.js';
 import {
   calculateResponsiveLayout,
   type ResponsiveLayout,
@@ -462,9 +466,14 @@ export class LayoutManager {
       position,
     );
     this.panels[workspaceIndex] = filePanel;
-    this.reflow(false);
-
-    if (this._activePanelId === panelId) filePanel.setFocus(true);
+    // Vim can exit while a launch/confirmation dialog is open. Restore its
+    // background panel without stealing modal input, and return to the new
+    // list (not the destroyed terminal) when that dialog is later dismissed.
+    replaceDialogReturnFocus(this.screen, old.box, filePanel.list);
+    preserveDialogFocus(this.screen, () => {
+      this.reflow(false);
+      if (this._activePanelId === panelId) filePanel.setFocus(true);
+    });
     if (this.currentViewport.visiblePanelIds.includes(panelId)) {
       await this.loadFilePanel(filePanel);
     }

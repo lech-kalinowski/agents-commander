@@ -335,6 +335,13 @@ try {
   ], { cwd: homeDirectory, label: 'packed normal-startup keyboard smoke' });
   process.stdout.write(tui.stdout);
 
+  const stress = run(process.execPath, [
+    path.join(repositoryRoot, 'tests', 'built', 'tui-stress-smoke.mjs'),
+    installedRoot,
+    homeDirectory,
+  ], { cwd: homeDirectory, label: 'packed hundred-panel and twenty-agent stress', timeout: 180_000 });
+  process.stdout.write(stress.stdout);
+
   process.stdout.write('Packed install smoke checks passed.\n');
 } finally {
   await fs.rm(fixtureRoot, { recursive: true, force: true });

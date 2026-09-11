@@ -39,16 +39,21 @@ npm run verify
 
 The current UI uses TypeScript, blessed, and tsup, with native shallow filesystem watches. Runtime support is Node.js 22+, Python 3, and macOS/Linux/WSL2.
 
-Package version is 0.1.7, under the MIT License. Version 0.1.4 is the legacy
+Package version is 0.1.8, under the MIT License. Version 0.1.4 is the legacy
 baseline; its runtime requirements, features, and bundled license differ.
 Use `node dist/bin/agents-commander.js` or `npm start --` to exercise this checkout,
 not an older global installation. For the versioned package, the install command
-is `npm install -g agents-commander@0.1.7`. Recheck the registry before changing
+is `npm install -g agents-commander@0.1.8`. Recheck the registry before changing
 release claims. A source push is not an npm release.
 F2/N bulk launch, F2/P bulk protocol setup and sequenced replay protection are
 included in 0.1.6, not 0.1.5. Package metadata describes that version's contents;
 do not claim registry publication until it has been verified.
 Version 0.1.7 fixes bounded file-panel watching and installed template lookup.
+Version 0.1.8 preserves navigation during refresh and modal focus during slow
+editor loads or background Vim exit; the packed gate stress-tests 100 panels
+and twenty local synthetic agent sessions without providers or hardware.
+It also clears obsolete wrap links on whole-row terminal erases so complete
+protocol frames do not require another repaint before detection.
 Restart Commander after upgrading; Node.js 20 is unsupported, not the proven
 cause of the reproduced watcher freeze.
 
@@ -63,6 +68,7 @@ cause of the reproduced watcher freeze.
 - Enter previews files; Shift+F6/Shift+F7/Shift+F9 copy/move/delete files from file panels; Ctrl+W remains the close-panel alias
 - Ctrl+B opens the prompt template browser dialog
 - File auto-refresh uses at most 100 shallow native watches, one per distinct file-panel directory. Navigation reconciles roots; failures stop without retry/log storms, with Ctrl+R available from a file panel. Never log successful watch notifications or fall back to workspace-controlled built-in templates.
+- Background refresh must not supersede explicit directory navigation. Slow editor loads own input immediately and remain cancellable; background panel replacement must preserve modal focus and update the return-focus target.
 - Ctrl+P sends Commander Protocol instructions to the active running agent
 - F2 then P explicitly injects protocol into selected/all running agent profiles after confirmation. Each exact session gets its own key; already-armed sessions are skipped, replacements are never followed. Esc stops remaining work after an in-flight paste/submit settles. Built-in Shell/internal demos are excluded. Verify empty ready CLI prompts first; no automatic task/capture.
 - F11 opens the panel navigator

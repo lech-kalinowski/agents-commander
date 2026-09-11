@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.8
+
+### Fixed
+
+- Break obsolete soft-wrap links when a TUI erases an entire terminal row.
+  A freshly painted Commander header is no longer joined to unrelated old
+  text, which could delay routing until another redraw or panel resize.
+  Preserve genuine wraps, partial edits, capability checks and replay guards.
+- Keep automatic file refresh from superseding an in-flight explicit directory
+  navigation. Later navigation still wins; hidden-file toggles follow the
+  intended destination, and closed panels cannot commit late reads.
+- Own keyboard focus immediately while the Markdown editor loads a file.
+  Esc/Ctrl+Q can cancel a slow load, and its late result cannot reopen the
+  editor or steal focus from a newer dialog.
+- Preserve dialog focus when a background Vim process exits and its terminal
+  becomes a file panel. Dismissing the dialog returns to the new file list,
+  not the destroyed terminal.
+
+### Release QA
+
+- Add real Blessed regressions for all F1–F12 controls, delayed file reads,
+  modal lifecycle, refresh bursts and background panel replacement.
+- Extend the mandatory packed-install gate with 100-panel navigation/resize
+  checks in both themes, stable P IDs after close/add, and twenty local PTYs
+  receiving explicit bulk protocol setup, default-No quit and child cleanup.
+  These are synthetic local fixtures, not live-provider or hardware acceptance.
+- Runtime support remains Node.js 22+, Python 3 and macOS/Linux/WSL2. Restart
+  existing Commander processes after upgrading.
+
+This section describes version contents; verify npm publication separately.
+
 ## 0.1.7
 
 ### Fixed

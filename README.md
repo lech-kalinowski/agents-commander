@@ -42,7 +42,7 @@
 
 ## Quick Start
 
-This README describes **Agents Commander 0.1.7**, under the MIT License.
+This README describes **Agents Commander 0.1.8**, under the MIT License.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
 The [bulk-launch workflow](#launch-one-profile-in-many-new-panels),
 [bulk protocol setup](#enable-protocol-in-many-agents),
@@ -51,13 +51,16 @@ in 0.1.6, not 0.1.5. See the
 [QA coverage and remaining manual checks](docs/qa.md) when validating a checkout.
 Version 0.1.7 fixes unresponsive startup from large directory trees and missing
 installed prompt templates; the 0.1.6 collaboration features remain unchanged.
+Version 0.1.8 fixes folder-navigation and modal-focus races found by deeper
+release QA, repairs delayed protocol detection after terminal-row redraws,
+and adds packaged 100-panel / 20-agent stress checks.
 Registry publication is a separate step; check the npm version listing before
 installing, or build the current source below.
 
-### Install version 0.1.7
+### Install version 0.1.8
 
 ```bash
-npm install -g agents-commander@0.1.7
+npm install -g agents-commander@0.1.8
 agents-commander --version
 agents-commander --doctor .
 agents-commander .
@@ -96,6 +99,18 @@ refer to function keys, not the number row. Node.js 22+ and Python 3 remain
 required. Node.js 20 is unsupported, but was not established as the cause of
 the reproduced watcher freeze. See [QA evidence](docs/qa.md#017-startup-hotfix).
 
+Version 0.1.8 also keeps automatic refresh from cancelling an in-flight folder
+change. While the Markdown editor loads a slow file, **Esc** or **Ctrl+Q**
+cancels without sending keys to the underlying panel. A background Vim exit
+no longer steals keyboard focus from an open dialog; closing that dialog
+returns focus to the replacement file panel.
+
+If a complete protocol block becomes deliverable only after adding panels or
+resizing, update to 0.1.8: it repairs stale soft-wrap boundaries after full-row
+terminal erases. A matching synthetic redraw now reaches the first scheduled
+scan (50 ms with default settings), without additional user input. This is
+local detection latency, not a guarantee of provider response time.
+
 ### Current source version
 
 Use Node.js 22+ and build the desired source checkout:
@@ -127,12 +142,12 @@ prove that a physical controller or a particular model is ready.
 
 ### Upgrading from 0.1.4
 
-Version 0.1.4 advertised Node.js 18+; **0.1.7 requires Node.js 22+ and Python 3**,
-as did 0.1.5 and 0.1.6. Upgrade Node before installing 0.1.7. The older package supported only
+Version 0.1.4 advertised Node.js 18+; **0.1.8 requires Node.js 22+ and Python 3**,
+as did 0.1.5–0.1.7. Upgrade Node before installing 0.1.8. The older package supported only
 `--theme`, `--panels` (2, 3, or 4), and `--show-hidden`, plus help/version.
 The doctor, conference/demo modes, adaptive density, 100-panel workspace,
 OpenCode adapter, Codex Micro integration, and capture/dataset commands described
-here arrived in 0.1.5 and remain in 0.1.7, not 0.1.4. Bulk launch, bulk protocol
+here arrived in 0.1.5 and remain in 0.1.8, not 0.1.4. Bulk launch, bulk protocol
 setup and sequenced replay protection were added in 0.1.6.
 
 Panel controls have also changed: F4 toggles fullscreen, F6 clones a fresh agent
@@ -150,7 +165,7 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 
 ## Requirements
 
-For version 0.1.7:
+For version 0.1.8:
 
 - Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
@@ -890,7 +905,7 @@ privacy precautions before sharing logs or agent output.
 Open source under the [MIT License](LICENSE), including commercial use. Retain
 the copyright and permission notice when redistributing the software; see
 [third-party notices](THIRD_PARTY_NOTICES.md) for included third-party material.
-Version 0.1.7 uses MIT. Versions 0.1.5 and 0.1.6 also used MIT.
+Version 0.1.8 uses MIT. Versions 0.1.5–0.1.7 also used MIT.
 Earlier published packages retain the license bundled with those versions;
 updating the source does not relicense older artifacts.
 

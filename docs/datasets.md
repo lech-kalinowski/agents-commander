@@ -1,12 +1,12 @@
 # Commander Protocol datasets for LoRA / SFT
 
-Agents Commander 0.1.7 supports opt-in semantic capture and offline, reviewed
+Agents Commander 0.1.8 supports opt-in semantic capture and offline, reviewed
 dataset creation. It does **not** start recording by default, upload data,
 download models, or run training. Version 0.1.4 does not include these commands.
 Capture and export were introduced in 0.1.5; 0.1.6 adds bulk protocol setup,
 stronger credential redaction and wire-sequence preservation. Check registry
 availability separately before installing a selected package version.
-The 0.1.7 startup/template hotfix does not change capture consent, review rules,
+The 0.1.7 startup/template and 0.1.8 navigation/modal fixes do not change capture consent, review rules,
 dataset schemas or the 0.1.6 wire-sequence behavior. Restart after upgrading.
 The [design plan](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/session-capture-plan.md)
 records the broader roadmap and is maintained in the source repository.
@@ -18,7 +18,7 @@ records the broader roadmap and is maintained in the source repository.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2:
 
 ```bash
-npm install -g agents-commander@0.1.7
+npm install -g agents-commander@0.1.8
 agents-commander --version
 agents-commander --capture protocol --capture-project project-01 /path/to/project
 ```

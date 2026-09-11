@@ -38,6 +38,7 @@ export class FilePanel {
   };
   private showHidden = false;
   private loadGeneration = 0;
+  private pendingNavigation: { path: string; promise: Promise<boolean> } | null = null;
   private destroyed = false;
   private _visible = true;
   public panelIndex: number;
@@ -236,8 +237,24 @@ export class FilePanel {
     return `${prefix}${safeName}${size}  ${date}${suffix}`;
   }
 
-  async loadDirectory(dirPath = this._currentPath): Promise<boolean> {
-    if (this.destroyed) return false;
+  loadDirectory(dirPath?: string): Promise<boolean> {
+    if (this.destroyed) return Promise.resolve(false);
+    // Watcher/layout refreshes omit a path. They must not supersede an
+    // explicit navigation by reloading its still-current (old) directory.
+    // Share the navigation read; a later explicit path still wins normally.
+    if (dirPath === undefined && this.pendingNavigation) return this.pendingNavigation.promise;
+    const loading = this.readAndCommitDirectory(dirPath ?? this._currentPath);
+    if (dirPath === undefined) return loading;
+
+    let navigation!: Promise<boolean>;
+    navigation = loading.finally(() => {
+      if (this.pendingNavigation?.promise === navigation) this.pendingNavigation = null;
+    });
+    this.pendingNavigation = { path: dirPath, promise: navigation };
+    return navigation;
+  }
+
+  private async readAndCommitDirectory(dirPath: string): Promise<boolean> {
     const generation = ++this.loadGeneration;
     let nextEntries: FileEntry[];
     try {
@@ -341,7 +358,9 @@ export class FilePanel {
 
   toggleHidden(): void {
     this.showHidden = !this.showHidden;
-    this.loadDirectory();
+    // This is an explicit filter change, not a watcher refresh. Re-read the
+    // intended destination with the new filter if navigation is still pending.
+    this.loadDirectory(this.pendingNavigation?.path ?? this._currentPath);
   }
 
   setSortField(field: 'name' | 'size' | 'date' | 'ext'): void {
@@ -433,6 +452,7 @@ export class FilePanel {
     this.destroyed = true;
     this._visible = false;
     this.loadGeneration++;
+    this.pendingNavigation = null;
     this.onMouseClick = null;
     this.onSelectionChange = null;
     this.onDirectoryChanged = null;

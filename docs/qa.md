@@ -127,6 +127,60 @@ Restart after upgrading and repeat the key sequence in the intended terminal.
 Do not claim 0.1.7 is published until the registry has been checked; previous
 automated test counts above remain historical checkpoints.
 
+### 0.1.8 deep release QA
+
+The local final-source gate passed **1,318 application tests across 104 files**,
+**28 Python bridge fixtures**, typechecking, development-watch cleanup,
+production build and built/packed CLI checks. A current `npm audit` returned
+zero advisories. Consult CI and registry evidence for the exact release; these
+counts are not proof of hardware or live-provider acceptance.
+
+Three reproduced races have dedicated regressions:
+
+- A watcher/layout refresh during a slow explicit folder change could reload
+  the old path and cancel navigation. Refresh now shares the active navigation;
+  newer explicit navigation wins, hidden-file toggles keep the intended target,
+  and late reads cannot commit into a destroyed panel.
+- A slow Markdown-editor load left the file list focused while a modal was
+  active. The loading editor now owns input immediately and accepts Esc/Ctrl+Q;
+  a late successful or failed read cannot replace a newer dialog.
+- Vim exiting in the background could restore a file panel over an open agent
+  picker, leaving the picker visible but unable to receive keys. Panel
+  replacement preserves modal focus and updates its return-focus destination.
+
+`tests/integration/deep-keyboard-qa.test.ts` exercises all F1–F12 actions,
+dialog resize/cancellation, repeated shortcut bursts, delayed editor reads and
+the exact Vim-exit restoration callback. `deep-lifecycle-qa.test.ts` covers
+navigation/refresh ordering, filters, failure, destruction and refresh bursts.
+
+The packed gate now also runs `tests/built/tui-stress-smoke.mjs`: 100 panels in
+both themes; P100 navigation and fullscreen; 80×24 and 200×60 resizing; closing
+P50 without renumbering P100; allocating fresh P101; and default-No quit. A
+separate normal launch starts twenty synthetic local Node agents through F2/N,
+then uses F2/P to inject into all twenty, including hidden panels. Receipts
+verify all children are ready, no automatic protocol was sent, and each receives
+one complete explicit injection. Confirmed quit must terminate every child and
+leave saved configuration unchanged. No conference/demo mode is used.
+
+### Required gate before another npm publication
+
+1. Reproduce a reported failure before fixing it; add a regression and complete
+   independent code review before and after material changes.
+2. Run `npm run verify` on the final source, including the packed actual-PTY
+   keyboard and stress tests. Run a current dependency advisory check.
+3. Require all macOS/Linux, Node 22/24 CI checks on the exact reviewed head.
+   Do not treat a source-only test or a passing `--version` as TUI acceptance.
+4. Inspect the final tarball, its runtime assets and exclusions; record its
+   checksum. Keep presentations, credentials and private capture/dataset rows
+   out of both the product commit and the package.
+5. Publish only the reviewed candidate, then verify the registry version,
+   `latest` tag and integrity against that tarball. Reinstall the public package
+   and repeat normal keyboard startup from the intended working directory.
+
+Live model availability, model compliance and physical Codex Micro controls
+remain separate acceptance checks. Passing local synthetic transports or the
+offline bridge suite is not evidence that those external systems were tested.
+
 ## Feature coverage
 
 | Area | Automated evidence |

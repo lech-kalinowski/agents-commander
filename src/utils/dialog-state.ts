@@ -11,6 +11,7 @@ interface FocusTarget {
   destroyed?: boolean;
   detached?: boolean;
   focus?: () => void;
+  parent?: FocusTarget | null;
 }
 
 interface DialogEntry {
@@ -142,6 +143,33 @@ export function closeDialogsForScreen(screen: blessed.Widgets.Screen): void {
 }
 
 export function isDialogActive(): boolean { return depth > 0; }
+
+/** Replace a modal's return destination when its background panel is replaced. */
+export function replaceDialogReturnFocus(
+  screen: blessed.Widgets.Screen,
+  previousRoot: FocusTarget,
+  replacement: FocusTarget,
+): void {
+  for (const entry of dialogsByScreen.get(screen) ?? []) {
+    let target = entry.previousFocus;
+    while (target) {
+      if (target === previousRoot) {
+        entry.previousFocus = replacement;
+        break;
+      }
+      target = target.parent ?? null;
+    }
+  }
+}
+
+/** A synchronous background layout update must not take input from its modal. */
+export function preserveDialogFocus(screen: blessed.Widgets.Screen, update: () => void): void {
+  const focused = dialogsByScreen.get(screen)?.length
+    ? screen.focused as FocusTarget | null
+    : null;
+  try { update(); }
+  finally { restoreFocus(focused); }
+}
 
 /** New background content must not cover a modal or bypass its mouse shield. */
 export function placeBelowDialogs(

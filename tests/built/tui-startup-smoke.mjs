@@ -87,7 +87,15 @@ try {
   await key('\x02', () => screen().includes('Prompt Templates (Ctrl+B)'), 'Ctrl+B opens installed templates');
   assert.doesNotMatch(screen(), /No templates found/u);
   await key('\x1b', normalPanels, 'Esc closes template browser');
-  await key('\x1bOR', () => /3 panels/u.test(screen()), 'F3 creates a panel');
+  // Focusing a newly allocated panel renders its count before its async
+  // directory read completes. Wait for that panel's real listing, not the
+  // intermediate layout frame while destructive actions are still guarded.
+  await key('\x1bOR', () => {
+    const view = screen();
+    const thirdPanel = view.indexOf('#3 P3');
+    return /3 panels/u.test(view) && thirdPanel !== -1
+      && view.slice(thirdPanel).includes('/large-tree');
+  }, 'F3 creates and loads a panel');
   await key('\x1bOS', () => /F4 Back/u.test(screen()), 'F4 fullscreen');
   await key('\x1bOS', () => !/F4 Back/u.test(screen()), 'F4 restores the grid');
   await key('\x1b[23~', () => screen().includes('Panel Navigator (F11)'), 'F11 opens navigator');

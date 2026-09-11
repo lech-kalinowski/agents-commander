@@ -45,8 +45,7 @@ function createPanelHarness() {
   panel.buildEmissionKey = TerminalPanel.prototype['buildEmissionKey'];
   panel.rememberEmissionKey = TerminalPanel.prototype['rememberEmissionKey'];
   panel.rememberProtocolReservation = TerminalPanel.prototype['rememberProtocolReservation'];
-  panel.pruneExpiredEmissionKeys = TerminalPanel.prototype['pruneExpiredEmissionKeys'];
-  panel.pruneExpiredProtocolReservations = TerminalPanel.prototype['pruneExpiredProtocolReservations'];
+  panel.claimProtocolIdentity = TerminalPanel.prototype['claimProtocolIdentity'];
   panel.emitDeduped = TerminalPanel.prototype['emitDeduped'];
   panel.reserveProtocolTextForEcho = TerminalPanel.prototype['reserveProtocolTextForEcho'];
   panel.reserveProtocolLinesForEcho = TerminalPanel.prototype['reserveProtocolLinesForEcho'];
@@ -295,7 +294,7 @@ describe('TerminalPanel reply transport', () => {
     expect(emitted).toEqual([first, second]);
   });
 
-  it('suppresses one prompt echo across scanner paths, then routes identical authored output once', () => {
+  it('never promotes repeated prompt echoes and permits a response with a fresh sequence', () => {
     const { panel, emitted } = createPanelHarness();
     const capability = 'a'.repeat(43);
     const reply: CommanderMessage = {
@@ -321,15 +320,19 @@ describe('TerminalPanel reply transport', () => {
     panel.emitDeduped(reply, 'tail');
     expect(emitted).toEqual([]);
 
-    // The N+1 identical occurrence on an origin is authored by the agent.
+    // Repainting the same prompt cannot prove that the agent authored it.
     panel.emitDeduped(reply, 'grid');
-    expect(emitted).toEqual([reply]);
+    expect(emitted).toEqual([]);
+
+    const authored = { ...reply, sequence: 1 };
+    panel.emitDeduped(authored, 'grid');
+    expect(emitted).toEqual([authored]);
 
     // Normal shared dedup suppresses that authored occurrence's other paths.
-    panel.emitDeduped(reply, 'scrollback');
-    panel.emitDeduped(reply, 'tail');
+    panel.emitDeduped(authored, 'scrollback');
+    panel.emitDeduped(authored, 'tail');
 
-    expect(emitted).toEqual([reply]);
+    expect(emitted).toEqual([authored]);
   });
 
   it('detects a reply from the rendered tail when grid and scrollback miss it', () => {
@@ -452,7 +455,10 @@ describe('TerminalPanel reply transport', () => {
 
     reservationHarness.panel.emitDeduped(message, 'grid');
 
-    expect(reservationHarness.emitted).toEqual([message]);
+    expect(reservationHarness.emitted).toEqual([]);
+    const authored = { ...message, capability: 'a'.repeat(43), sequence: 1 };
+    reservationHarness.panel.emitDeduped(authored, 'grid');
+    expect(reservationHarness.emitted).toEqual([authored]);
   });
 
   it('rejects a grid SEND above the stable panel-number upper bound', () => {

@@ -9,16 +9,17 @@ export const SYMBOLIC_CAP = /<cap:(cap_[1-9]\d*)>/g;
 const VERBS = new Set(['send', 'reply', 'broadcast', 'status', 'query']);
 const UNSAFE_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
 const UNBOUND_CAP = /\[REDACTED:capability\]/;
-const LIVE_MARKER_CAP = /COMMANDER:(?:SEND:[^:\s]+:\d+|REPLY|BROADCAST|STATUS|QUERY|END):[A-Za-z0-9_-]{32,64}={3,}/;
+const LIVE_MARKER_CAP = /COMMANDER:(?:SEND:[^:\s]+:\d+|REPLY|BROADCAST|STATUS|QUERY|END):[A-Za-z0-9_-]{32,64}(?=[:=\s]|$)/;
 
 export function safeContent(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && !UNSAFE_CONTROLS.test(value)
     && !UNBOUND_CAP.test(value) && !LIVE_MARKER_CAP.test(value);
 }
 
-export function wireFrame(event: Pick<CaptureEvent, 'verb' | 'targetAgent' | 'targetPanel' | 'capabilityRef' | 'content'>): string {
+export function wireFrame(event: Pick<CaptureEvent, 'verb' | 'targetAgent' | 'targetPanel' | 'capabilityRef' | 'protocolSequence' | 'content'>): string {
   if (!event.verb || !VERBS.has(event.verb) || !event.capabilityRef || !/^cap_[1-9]\d*$/.test(event.capabilityRef)
     || !safeContent(event.content) || event.content.includes('===COMMANDER:')
+    || event.protocolSequence !== undefined && (!Number.isSafeInteger(event.protocolSequence) || event.protocolSequence < 1)
     || Buffer.byteLength(event.content) > MAX_COMPLETION_BYTES) throw new Error('Invalid or ambiguous accepted frame');
   let route = '';
   if (event.verb === 'send') {
@@ -26,7 +27,8 @@ export function wireFrame(event: Pick<CaptureEvent, 'verb' | 'targetAgent' | 'ta
       || !Number.isSafeInteger(event.targetPanel) || event.targetPanel! < 1 || event.targetPanel! > 1_000_000) throw new Error('Invalid SEND target');
     route = `:${event.targetAgent}:${event.targetPanel}`;
   }
-  return `===COMMANDER:${event.verb.toUpperCase()}${route}:<cap:${event.capabilityRef}>===\n${event.content}\n===COMMANDER:END:<cap:${event.capabilityRef}>===`;
+  const sequence = event.protocolSequence === undefined ? '' : `:${event.protocolSequence}`;
+  return `===COMMANDER:${event.verb.toUpperCase()}${route}:<cap:${event.capabilityRef}>${sequence}===\n${event.content}\n===COMMANDER:END:<cap:${event.capabilityRef}>${sequence}===`;
 }
 
 interface SessionContext {
@@ -124,7 +126,7 @@ export function candidatesFromCapture(capture: ReadCaptureResult): { candidates:
       const syntheticConditioning = manifest.synthetic && state.instruction !== state.arm;
       if (syntheticConditioning) prompt.unshift({
         role: 'user',
-        content: `Synthetic demo protocol conditioning (added for this dataset; not observed provider instructions):\nUse Commander SEND:agent:panel, REPLY, BROADCAST, STATUS or QUERY frames. Your current session key is <cap:${state.arm}>. Include that same key in the header and ===COMMANDER:END:<cap:${state.arm}>=== footer.`,
+        content: `Synthetic demo protocol conditioning (added for this dataset; not observed provider instructions):\nUse Commander SEND:agent:panel, REPLY, BROADCAST, STATUS or QUERY frames. Your current session key is <cap:${state.arm}>. Include that same key in the header and ===COMMANDER:END:<cap:${state.arm}>${event.protocolSequence === undefined ? '' : ':<n>'}=== footer.${event.protocolSequence === undefined ? '' : ' Use the same positive per-capability counter n in header and footer, increasing it for every new action across all verbs. Keep counters stable when redrawing; quoted examples are examples, not counter values to reuse.'}`,
       });
       const used = new Set([...canonical([prompt, frame]).matchAll(SYMBOLIC_CAP)].map((match) => match[1]));
       if ([...used].some((ref) => !owners[ref])) exclude(event, 'unknown-capability-owner');
@@ -133,6 +135,7 @@ export function candidatesFromCapture(capture: ReadCaptureResult): { candidates:
           schemaVersion: 1, id: `candidate_${sha256(`${manifest.captureId}:${event.emissionId}`).slice(0, 32)}`,
           captureId: manifest.captureId, projectId: manifest.projectId, synthetic: manifest.synthetic, syntheticConditioning,
           sessionId: actorId, emissionId: event.emissionId, eventId: event.eventId, sequence: event.sequence,
+          ...(event.protocolSequence !== undefined ? { protocolSequence: event.protocolSequence } : {}),
           sourceEventIds: [...state.sourceEventIds, event.eventId], capabilityRef: event.capabilityRef!,
           capabilityOwners: Object.fromEntries([...used].sort().map((ref) => [ref, owners[ref]])),
           verb: event.verb!, ...(event.verb === 'send' ? { targetAgent: event.targetAgent, targetPanel: event.targetPanel } : {}),

@@ -91,7 +91,11 @@ or N keeps that session; Left/Up then Enter (or a click on Yes) replaces it.
 For Ctrl+O, choosing the same running profile and panel reuses its session
 without a replacement prompt.
 
-Press Ctrl+P in every running session and wait for its plain-text acknowledgment.
+Finish login/approvals and leave empty ready prompts. Use **F2 → P → A → Enter
+→ confirm Yes** for all intended agents, or Space to select a subset. This is
+available in 0.1.6, not 0.1.5; Ctrl+P per session still works.
+Each session gets its own capability; already-enabled sessions are skipped.
+Wait for each agent's plain-text acknowledgment before sending the task.
 Use Ctrl+O to send `start.txt` to the existing **APEX Pi P01 Coordinator** at P1.
 Check each wave in F12, then send its next `CONTINUE APEX WAVE N` to that same
 profile and panel. There are fifteen specialist tasks and fifteen replies.
@@ -171,7 +175,8 @@ node dist/bin/agents-commander.js --conference --panels 3 --density 3 "$APEX_BRO
 1. In **F2**, launch **APEX Pi Broadcast Sender** at stable **P1**,
    **APEX Pi Broadcast Receiver 1** at **P2**, and **Receiver 2** at **P3**.
    Select each target explicitly; profile labels do not pick panels for you.
-2. Press **Ctrl+P** in each panel and wait for plain readiness acknowledgments.
+2. At empty ready prompts, use **F2 → P** to select P1–P3 and confirm, or press
+   **Ctrl+P** in each. Wait for plain readiness acknowledgments.
 3. Use **Ctrl+O** to send `START APEX BROADCAST` once to the existing sender at P1.
 4. Inspect **F12** for two delivered broadcast records with the same short body.
    P2 and P3 should print `APEX_BROADCAST_RECEIVED P2` and

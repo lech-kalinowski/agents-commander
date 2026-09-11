@@ -33,6 +33,8 @@ export interface AgentLaunchChoice {
   newPanelCount?: number;
 }
 
+export type AgentDialogChoice = AgentLaunchChoice | { action: 'protocol-batch' } | null;
+
 let agentDialogOpen = false;
 
 export function showAgentDialog(
@@ -42,13 +44,14 @@ export function showAgentDialog(
   activePanelIndex: number,
   agentOverrides?: Record<string, AgentCommandConfig>,
   agentProfiles?: readonly AgentProfile[],
-  options: { maxNewPanels?: number } = {},
-): Promise<AgentLaunchChoice | null> {
+  options: { maxNewPanels?: number; enableProtocolBatch?: boolean } = {},
+): Promise<AgentDialogChoice> {
   if (agentDialogOpen) return Promise.resolve(null);
   const panelIds = normalizePanelIds(panelSource);
   const firstPanelId = initialPanelId(panelIds, activePanelIndex);
   if (firstPanelId === null) return Promise.resolve(null);
   const batchEnabled = options.maxNewPanels !== undefined;
+  const protocolBatchEnabled = options.enableProtocolBatch === true;
   const availableNewPanels = Number.isSafeInteger(options.maxNewPanels)
     && (options.maxNewPanels ?? -1) >= 0
     ? Math.min(options.maxNewPanels!, MAX_ACTIVE_PANELS - panelIds.length)
@@ -185,15 +188,28 @@ export function showAgentDialog(
     }
     updatePanelDisplay();
 
+    function footerContent(): string {
+      if (protocolBatchEnabled) {
+        return batchMode
+          ? ' Enter=Create N=Single P=Protocol 0-9=Count Esc=Cancel '
+          : batchEnabled
+            ? ' Enter=Launch N=New panels P=Protocol Esc=Cancel '
+            : ' Enter=Launch P=Protocol Left/Right=Panel Esc=Cancel ';
+      }
+      return batchMode
+        ? ' Enter=Create  N=Single  0-9=Count  Backspace=Edit  Esc=Cancel '
+        : batchEnabled
+          ? ' Enter=Launch  N=New panels  Left/Right=Panel  Esc=Cancel '
+          : ' Enter=Launch  Left/Right=Panel  0-9=Type P#  Esc=Cancel ';
+    }
+
     const footer = blessed.text({
       parent: dialog,
       bottom: 0,
       left: 1,
       width: '100%-4',
       height: 1,
-      content: batchEnabled
-        ? ' Enter=Launch  N=New panels  Left/Right=Panel  Esc=Cancel '
-        : ' Enter=Launch  Left/Right=Panel  0-9=Type P#  Esc=Cancel ',
+      content: footerContent(),
       style: { bg: theme.dialog.bg, fg: theme.dialog.fg },
     });
 
@@ -239,7 +255,7 @@ export function showAgentDialog(
       }
     });
 
-    const finish = (choice: AgentLaunchChoice | null) => {
+    const finish = (choice: AgentDialogChoice) => {
       if (resolved || pending) return;
       pending = true;
       // Keep the modal shield until Blessed dispatches both enter and return.
@@ -254,6 +270,27 @@ export function showAgentDialog(
       });
     };
     const finishNotice = () => finish(null);
+
+    if (protocolBatchEnabled) {
+      const protocolButton = blessed.box({
+        parent: dialog,
+        top: 1,
+        right: 1,
+        width: 13,
+        height: 1,
+        tags: false,
+        mouse: true,
+        clickable: true,
+        autoFocus: false,
+        content: ' P=Protocol ',
+        style: { bg: 'cyan', fg: 'black' },
+      });
+      const chooseProtocol = () => finish({ action: 'protocol-batch' });
+      list.key(['p', 'S-p'], chooseProtocol);
+      protocolButton.on('click', (event: { button?: string }) => {
+        if (event.button === 'left') chooseProtocol();
+      });
+    }
 
     const showNotice = (
       content: string,
@@ -306,9 +343,7 @@ export function showAgentDialog(
         batchMode = !batchMode;
         replaceBatchDigits = true;
         numberInput.reset();
-        footer.setContent(batchMode
-          ? ' Enter=Create  N=Single  0-9=Count  Backspace=Edit  Esc=Cancel '
-          : ' Enter=Launch  N=New panels  Left/Right=Panel  Esc=Cancel ');
+        footer.setContent(footerContent());
         updatePanelDisplay();
         screen.render();
       });
@@ -324,6 +359,7 @@ export function showAgentDialog(
       list.on('keypress', (character, key) => {
         if (resolved || pending || !batchMode || !character || key.ctrl || key.meta) return;
         if (!/^[ -~]$/u.test(character) || /^[0-9nN]$/u.test(character)) return;
+        if (protocolBatchEnabled && /^[pP]$/u.test(character)) return;
         appendBatchDigit(character);
       });
     }

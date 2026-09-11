@@ -1,9 +1,13 @@
 # QA coverage and validation checklist
 
 This records the source hardening pass started on **2026-09-07**, on top of the
-F2/N bulk-launch change. It is not a certification that every possible bug has
-been found. These fixes are **not in npm 0.1.5**; a source push is not an npm
-release. Use the branch and commit under review, not an older global command.
+F2/N bulk-launch change, followed by F2/P bulk protocol setup on **2026-09-08**.
+The **2026-09-11** protocol replay hardening adds sequence-aware regression
+fixtures and the manual redraw acceptance procedure below.
+It is not a certification that every possible bug has
+been found. These fixes are **included in 0.1.6, not 0.1.5**; a source push is
+not an npm release, and publication must be checked separately. Use the branch
+and commit under review, not an older global command.
 
 ## Reproduce the automated checks
 
@@ -41,6 +45,53 @@ The [CI workflow](https://github.com/lech-kalinowski/agents-commander/actions/wo
 repeats the gate on macOS and Linux with Node.js 22 and 24; consult the run for
 the exact commit being used instead of carrying this checkpoint forward.
 
+### Bulk protocol checkpoint — 2026-09-08
+
+The F2/P addition passed `npm run verify` on macOS/Node.js 24 with **1,193
+application tests across 96 files**, **28 Python hardware tests**, typechecking,
+build/watch, production build, built CLI isolation and packed installation.
+Pre-change and independent post-change reviews covered session consent,
+input-lane races, key rotation, modal ownership and capture boundaries. A
+progress-label P-number offset found in review was fixed and regression-tested.
+
+The real Blessed/PTY test launches sixteen local synthetic agents alongside an
+unchanged original session, selects only the new agents, verifies default-No
+cancellation, then confirms one bulk injection. Every child acknowledges a
+complete prompt containing its own key; all sixteen keys differ, hidden panels
+receive input, and selection/confirmation keys never reach the child processes.
+All test-owned processes terminate afterward. This is transport/UI evidence,
+not a live APEX/model-compliance test or physical Codex Micro acceptance.
+
+For manual acceptance, finish login/approvals and leave empty ready CLI prompts.
+Use F2 → P, select a subset with Space or A for all unarmed agents, confirm once,
+and inspect responses before sending a task. Repeat to verify armed sessions
+are disabled/skipped. Esc during progress keeps completed submissions and stops
+remaining work after the current paste/submit settles. Do not retry until any
+partially failed input has been inspected. Capture must remain off unless it
+was explicitly enabled at launch.
+
+### Replay hardening checkpoint — 2026-09-11
+
+The replay hardening passed `npm run verify` on macOS/Node.js 24 with **1,283
+application tests across 100 files**, **28 Python hardware tests**, typechecking,
+build/watch, production build, built CLI isolation and packed installation.
+Independent review covered capability rotation, parser state, replay limits and
+echo suppression. Capture/dataset regressions verify sequence preservation,
+redaction and compatibility with previously prepared reviews.
+
+Vitest discovery is restricted to `tests/` so ignored, private rehearsal helpers
+cannot be executed as part of the public product gate. These counts are software
+evidence; physical hardware and live-provider acceptance are separate checks.
+
+A bounded live acceptance on source commit `bbdd7c8` used literal `npm start`
+from its normal welcome screen, then two Shell-managed terminals executing real
+Pi/APEX sessions. One sequenced SEND and one sequenced REPLY shared one thread.
+F12 retained those same two delivered records after F4 fullscreen/back and an
+18-second settling period. Both processes stopped cleanly and saved settings
+stayed unchanged. This read-only, two-agent run validates that observed exchange,
+not every model, terminal, sixteen-agent workflow or physical controller. Its
+private media is excluded from the repository and npm package.
+
 ## Feature coverage
 
 | Area | Automated evidence |
@@ -49,10 +100,11 @@ the exact commit being used instead of carrying this checkpoint forward.
 | Configuration and adapters | Saved/launch-only precedence, malformed profiles, argument/environment handling, command discovery, OpenCode and synthetic Pi/APEX fixtures |
 | Workspace and navigation | Stable IDs, 1–100 panel limits, paging, density, fullscreen/back, cloning, ordering, closing, navigator, real Blessed input and resize |
 | Bulk agent launch | 10/16/20 launch logic, 16 independent local PTYs, capacity rejection, unchanged existing sessions, cancellation, startup failures, hidden-panel geometry |
+| Bulk protocol setup | F2/P explicit subset/all selection, default-No confirmation, 16 real local PTYs receiving complete distinct-key instructions, no modal-key leakage, hidden stable IDs, stale-session/input-lane races, skip-already-armed, cancellation and shutdown |
 | Dialogs and overlays | Enter/Return shielding, keyboard and mouse isolation, cancellation, owner teardown, immediate reopening, focus restoration |
 | File browser and editor | Sorting, selection, preview, regular-file/symlink checks, copy/move/delete identity checks, atomic saves, locks and metadata preservation |
 | Terminal lifecycle | UTF-8/ANSI rendering, PTY resize, restart/replacement, input forwarding, bounded termination and owned-child cleanup |
-| Commander Protocol | SEND/REPLY/BROADCAST/STATUS/QUERY, session capabilities, target identity, reply windows, deduplication, chunk boundaries, payload bounds and Activity |
+| Commander Protocol | SEND/REPLY/BROADCAST/STATUS/QUERY, session capabilities, target identity, reply windows, sequence/footer parsing, redraw and resize replay fixtures, chunk boundaries, payload bounds and Activity |
 | Demo and templates | Two-agent deterministic offline collaboration, failure/retry cleanup, template catalogue and protocol preparation |
 | Capture and datasets | Explicit launch consent, private storage, redaction, crash/incomplete detection, review-gated export, conversational schema, provenance and split isolation |
 | Codex Micro | Offline native-bridge parsing, connection epochs, sole-reader ownership guards, decision leases and keyboard fallback behavior |
@@ -117,6 +169,8 @@ explicitly, not counted as platform validation.
 4. Enable protocol in the intended live sessions and exercise a bounded
    SEND/REPLY/BROADCAST/QUERY scenario. ACK means admission/delivery as documented,
    **not** model completion or correctness; inspect per-target Activity.
+   Use the current injected sequence format, and complete the redraw checks
+   below before treating a recording as a reliable backup.
 5. For Codex Micro, follow [the hardware guide](codex-micro.md), including the
    native input checklist, ChatGPT conflict/ownership checks, disconnect/reconnect
    and decision expiry. Keyboard fallback cannot establish device identity.
@@ -128,3 +182,44 @@ The automated pass does not establish live APEX/provider availability, model
 reasoning quality, physical USB/Bluetooth operation, every terminal emulator,
 or a successful LoRA training run. No model training, npm publication, controller
 firmware flashing or real-data bulk approval is part of this QA workflow.
+
+### Protocol replay acceptance — added in 0.1.6, not 0.1.5
+
+Start the ordinary application with `npm start` from the source checkout after
+building. Use synthetic agents first, then an authorized bounded live task; do
+not ask a model to execute destructive work just to test replay suppression.
+Inject a fresh protocol into each intended running session. New instructions
+use a counter starting at 1, incremented across all five verbs with identical
+key/number suffixes on the header and END footer.
+
+1. Send one directed message and record the Activity count and route identity.
+   Let the message leave the visible viewport, wait longer than the configured
+   short deduplication interval, and bring that history back into view. The old
+   command must not create another delivery.
+2. Toggle F4 fullscreen/back and change terminal dimensions after the exchange.
+   Redraw the same sequenced command with different wrapping. Its original
+   sequence must still be rejected, with no extra Activity route.
+3. Send an intentionally identical new message with the next sequence. It must
+   remain a distinct action; reusing an old sequence with a changed body, verb,
+   or target must not create another action. Check STATUS/QUERY feedback too,
+   because those commands are not stored in Activity.
+4. Verify repeated known input/instruction echoes never route. A mismatched
+   footer must not complete a sequenced command. Reject zero, leading-zero,
+   negative, fractional, non-decimal and unsafe integer sequence forms.
+5. With local fixtures, check unseen out-of-order numbers inside the 4,096-number
+   window, rejection below the window floor, legacy once-per-session behavior,
+   and fail-closed replay-storage saturation with its panel-header warning.
+   Verify an actual new process starts fresh and stale-process output remains
+   ignored. Explicit fresh-capability injection must reset the counter while
+   rejecting old-key output; F2 → P must still skip already-armed sessions.
+   Merely resizing must not reset history.
+
+Targeted fixtures are `tests/unit/protocol-sequence.test.ts` and
+`tests/unit/terminal-protocol-replay.test.ts`, alongside the existing protocol,
+stream-boundary and orchestration tests. Run `npm run verify` for the exact
+source revision; previous checkpoint counts above do not certify this change.
+Live acceptance additionally requires inspecting actual model output and every
+route, not merely a successful recording script exit. Legacy markers without a
+sequence cannot disambiguate hard-reflowed text or intentional identical
+repeats; document that limitation rather than treating it as exactly-once
+delivery. No synthetic pass proves compliance by every CLI or model.

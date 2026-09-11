@@ -179,6 +179,13 @@ Commercial adoption depends on operational reliability, not just feature complet
 
 These mechanisms address handoff, rendering, timing and state-continuity risks. They do not prove task correctness or provide a service-level guarantee.
 
+Version 0.1.6 adds per-capability sequence numbers and bounded replay suppression
+across terminal redraws and resize; these are absent from 0.1.5. This describes
+version contents, not verified registry publication. See the
+[protocol reliability notes](commander-protocol-ai-research.md#54-deduplication-and-echo-control)
+for storage limits, legacy hard-reflow ambiguity and explicit recovery. This
+does not establish durable exactly-once delivery or automatic safe retries.
+
 Current observability is bounded: the in-memory ledger retains up to 1,000 records / 8 MiB by default, with 256 KiB per-record content; F12 shows the latest 100 summaries. Ctrl+L opens a rotating diagnostic log, not a full conversation archive. STATUS/QUERY are absent from Activity but included in opt-in semantic capture. [Reviewed dataset export](datasets.md) is available in source; full transcripts, replay and model training are not implemented. See the broader [capture plan](session-capture-plan.md).
 
 ## 9. Governance and Risk Perspective

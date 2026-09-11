@@ -6,6 +6,9 @@ Baseline: source `0.1.5` at commit `001e903`, reviewed 2026-09-02.
 This is a source implementation description, not a claim about the published
 npm package. The current source now adds [opt-in capture and reviewed dataset
 export](datasets.md); broader research extensions below remain proposals.
+The sequence and replay-protection notes were updated on 2026-09-11 for
+version 0.1.6, which includes the extension absent from 0.1.5. This version scope
+describes implementation contents, not verified npm publication.
 
 ### Abstract
 
@@ -45,7 +48,12 @@ This matters for research because it shifts the protocol from a text trick to a 
 
 ## 3. Core Message Types
 
-The Commander Protocol exposes five primary commands.
+The Commander Protocol exposes five primary commands. The examples below use
+version 0.1.6's recommended sequence suffix: `<N>` is one increasing
+counter shared by all five verbs from one armed session, starting at `1` for a
+fresh capability. Both markers use the same number. Original redraws retain
+their number; an intentional new action, including identical text, gets the
+next number. Capability-only markers remain compatible as described in §5.4.
 
 ### 3.1 SEND
 
@@ -54,9 +62,9 @@ The Commander Protocol exposes five primary commands.
 Example:
 
 ```text
-===COMMANDER:SEND:codex:2:<session-key>===
+===COMMANDER:SEND:codex:2:<session-key>:<N>===
 Please review the API design and propose a simpler interface.
-===COMMANDER:END:<session-key>===
+===COMMANDER:END:<session-key>:<N>===
 ```
 
 Semantically, `SEND` creates a thread and queues a message for the addressed running session. Commander records the delivery outcome and attempts to return a structured acknowledgement to the still-active sender. A successful delivery opens a reply window; rejected or failed delivery does not establish that the target acted on the task.
@@ -66,9 +74,9 @@ Semantically, `SEND` creates a thread and queues a message for the addressed run
 `REPLY` continues the latest open thread for the current session.
 
 ```text
-===COMMANDER:REPLY:<session-key>===
+===COMMANDER:REPLY:<session-key>:<N>===
 I agree with the refactor direction, but the caching layer still leaks concerns.
-===COMMANDER:END:<session-key>===
+===COMMANDER:END:<session-key>:<N>===
 ```
 
 In source `0.1.5`, `REPLY` claims the newest open reply window for the current session and resolves its return session, thread and prior message. Claiming consumes that window; failed delivery restores it only if both sessions remain active. With no open window, the reply is dropped. The route is explicit runtime state, not a model-selected thread ID or a reconstruction from the last visible sender.
@@ -78,9 +86,9 @@ In source `0.1.5`, `REPLY` claims the newest open reply window for the current s
 `BROADCAST` queues one message for each other connected running agent. Targets are checked independently; it does not launch missing agents or send to file panels.
 
 ```text
-===COMMANDER:BROADCAST:<session-key>===
+===COMMANDER:BROADCAST:<session-key>:<N>===
 Standup: I am starting test hardening. Report blockers in one short reply.
-===COMMANDER:END:<session-key>===
+===COMMANDER:END:<session-key>:<N>===
 ```
 
 Broadcast is useful for coordination experiments, synchronization prompts, and shared-state announcements.
@@ -90,9 +98,9 @@ Broadcast is useful for coordination experiments, synchronization prompts, and s
 `STATUS` reports progress to Commander rather than to another agent.
 
 ```text
-===COMMANDER:STATUS:<session-key>===
+===COMMANDER:STATUS:<session-key>:<N>===
 Profiling complete. I am now investigating the slow query path.
-===COMMANDER:END:<session-key>===
+===COMMANDER:END:<session-key>:<N>===
 ```
 
 Commander displays the status in the UI and returns a local acknowledgement so the sender knows the update was accepted.
@@ -102,9 +110,9 @@ Commander displays the status in the UI and returns a local acknowledgement so t
 `QUERY` asks Commander for environment information such as active agents, panel layout, or protocol help.
 
 ```text
-===COMMANDER:QUERY:<session-key>===
+===COMMANDER:QUERY:<session-key>:<N>===
 agents
-===COMMANDER:END:<session-key>===
+===COMMANDER:END:<session-key>:<N>===
 ```
 
 This gives agents a controlled way to inspect coordination state without inventing their own discovery logic.
@@ -125,6 +133,13 @@ Each routed message gets a `messageId`. This allows Commander to:
 - track acknowledgements
 - open reply windows against a concrete prior message
 - support logging and future persistence
+
+The optional wire `sequence` is different from this controller-generated
+`messageId`. A sequence identifies an agent-authored command before routing,
+including STATUS and QUERY; it is not a target address, thread selector, or
+completion acknowledgement. It must be a canonical positive decimal integer
+no greater than `9007199254740991`. Header and footer capability and sequence
+must match; a missing or different footer sequence cannot complete that frame.
 
 ### 4.3 Thread Identity
 
@@ -148,7 +163,7 @@ For example:
 
 `delivered` means input submitted to the target PTY, not model acceptance or task completion. Failed SEND/REPLY delivery uses `status=failed` and an error. BROADCAST produces one combined queue-admission ACK, not per-target delivery ACKs; STATUS uses `kind=status status=accepted`. QUERY returns controller information. Unarmed, suppressed or orphaned frames may have no ACK. These are distinct observation points, not interchangeable quality labels.
 
-## 5. Execution Model in Source `0.1.5`
+## 5. Execution Model in Source
 
 The source implementation combines several mechanisms intended to improve reliability beyond an untracked text relay.
 
@@ -166,7 +181,35 @@ The transport layer operates through terminal I/O rather than a hidden service b
 
 ### 5.4 Deduplication and echo control
 
-Because terminal UIs can re-render visible content, Commander performs deduplication across scrollback scanning and grid scanning. It also suppresses instruction echoes and prompt replays that would otherwise be mistaken for real protocol actions.
+Terminal UIs can repaint historical output long after it was first visible.
+Version 0.1.6 replay protection retains identities across visible-grid and
+scrollback scans, elapsed time, fullscreen changes and PTY resize. Sequenced
+frames are identified by capability and number, not by the rendered body: a
+changed verb, target, body or hard line wrapping cannot reuse the same sequence.
+Recognized outgoing instruction and prompt examples are premarked so repeated
+echoes cannot later become authored protocol actions.
+
+Each capability uses a bounded 4,096-number sliding replay window. A previously
+unseen number may arrive out of order within the window; duplicates and numbers
+below its advancing floor are rejected. Legacy unsequenced frames instead use
+conservative, non-evicting command fingerprints: an identical frame can be
+accepted only once until process or explicitly armed capability replacement.
+This cannot reliably infer
+identity when a CLI changes hard line breaks in legacy text, nor distinguish
+an intentional identical legacy command from a redraw. New workflows should
+use sequences rather than attempting to recover meaning from whitespace.
+
+Storage is limited to 4,096 legacy fingerprints and eight sequence-capability
+scopes. Exhaustion fails closed and is indicated in the panel header. Starting
+a new agent process or explicitly arming a fresh capability resets the guard;
+old-capability output is then rejected before replay processing. `Ctrl+P`
+rotates the key; F2 → P skips already-armed sessions. Reinject only into an empty,
+ready prompt and inspect prior deliveries before retrying uncertain work.
+No replay state is reset by resize or fullscreen. These are process-local
+protections, not durable exactly-once delivery, model-task
+completion guarantees, or an automatic retry protocol. A suppressed frame may
+receive no ACK; investigate the actual delivery before intentionally retrying
+with a new number.
 
 ### 5.5 UTF-8 safe decoding
 

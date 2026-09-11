@@ -20,6 +20,8 @@ export interface CaptureInput {
   verb?: CaptureVerb;
   content?: string;
   capabilityRef?: string;
+  /** Agent-emitted wire identity, separate from CaptureEvent.sequence's event serial. */
+  protocolSequence?: number;
   targetAgent?: string;
   targetPanel?: number;
   emissionId?: string;

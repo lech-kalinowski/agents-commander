@@ -10,15 +10,16 @@ npm run build
 npm start
 ```
 
-Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.5,
+Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.6,
 under the MIT License. Version 0.1.4 is the legacy baseline with different
 runtime requirements, features, and bundled license. The versioned install is
-`npm install -g agents-commander@0.1.5`. Run the local build with
+`npm install -g agents-commander@0.1.6`. Run the local build with
 `node dist/bin/agents-commander.js` or `npm start -- <options> <directory>`.
 Do not confuse an older global installation with this checkout; pushing source
 does not publish npm. See `AGENTS.md` and README for the current conventions.
-F2/N bulk launch is an unreleased source addition after npm 0.1.5, not a feature
-of the published 0.1.5 package.
+F2/N bulk launch, F2/P bulk protocol setup and sequenced replay protection are
+included in 0.1.6, not 0.1.5. Check registry publication separately before
+claiming that this version has been published.
 
 ## Project Structure
 
@@ -58,11 +59,13 @@ TypeScript + blessed + chokidar + marked + tsup
 - Enter previews files; Shift+F6/Shift+F7/Shift+F9 copy/move/delete files from file panels; Ctrl+W remains the close-panel alias
 - Ctrl+B opens the prompt template browser dialog
 - Ctrl+P sends session-bound Commander Protocol instructions to the active running agent
+- F2 then P explicitly injects protocol into selected/all running agent profiles after confirmation. Each exact session gets its own key; already-armed sessions are skipped, replacements are never followed. Esc stops remaining work after an in-flight paste/submit settles. Built-in Shell/internal demos are excluded. Verify empty ready CLI prompts first; no automatic task/capture.
 - F11 opens the panel navigator
 - F12 opens routed-message Activity; Shift+F12 opens the protocol guide
 - Up to 100 active panels use stable numbers in a paged workspace; hidden sessions keep running
 - Shift+F4 cycles auto/2/3/4 visible density independently of active panel count; Ctrl+0/2/3/4 are terminal-dependent aliases
 - REPLY claims the latest open reply window, not a permanent last-sender address
+- Protocol 0.1.6 instructions use one positive per-capability counter across all five verbs, matching header and END footer. New actions increment it; redraws retain it. Bounded local replay protection survives scrolling/resize; legacy hard-reflow remains ambiguous. Explicit Ctrl+P rotates the key, while F2/P skips already-armed sessions.
 - Activity is bounded and in-memory; diagnostic logs are not session recordings. Capture/export require explicit launch consent and human review; see `docs/datasets.md` and the broader proposed roadmap in `docs/session-capture-plan.md`
 - Dataset commands stay UI-independent. Do not enable recording from config, export unapproved data, keep live capability keys, or commit/package private research artifacts
 - marked-terminal renderer methods must be extracted and bound to avoid marked v15 compat issues

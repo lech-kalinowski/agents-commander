@@ -34,9 +34,12 @@ function createFixture() {
   terminal.focus();
   return {
     input, output, screen, terminal, leakedKeys, programKeys,
-    open(maxNewPanels?: number, panelIds = [0, 5]) {
+    open(maxNewPanels?: number, panelIds = [0, 5], enableProtocolBatch = false) {
       return showAgentDialog(screen, getTheme('midnight'), panelIds, 0,
-        undefined, undefined, maxNewPanels === undefined ? {} : { maxNewPanels });
+        undefined, undefined, {
+          ...(maxNewPanels === undefined ? {} : { maxNewPanels }),
+          ...(enableProtocolBatch ? { enableProtocolBatch } : {}),
+        });
     },
     content() {
       const parent = screen.focused.parent as blessed.Widgets.BoxElement;
@@ -52,6 +55,65 @@ function createFixture() {
 }
 
 describe('F2 new-terminal batch picker', () => {
+  it.each(['p', 'P', 'n20p', 'n1.5P'])('opens the explicit protocol action using %j', async (keys) => {
+    const fixture = createFixture();
+    try {
+      const decision = fixture.open(40, [0, 5], true);
+      expect(fixture.content()).toContain('P=Protocol');
+      fixture.input.write(keys);
+      // A queued handoff must remain modal throughout this input dispatch.
+      expect(isDialogActive()).toBe(true);
+      fixture.input.write('\rN30\r');
+      await expect(decision).resolves.toEqual({ action: 'protocol-batch' });
+      expect(fixture.leakedKeys).toEqual([]);
+      expect(fixture.screen.focused).toBe(fixture.terminal);
+    } finally { fixture.dispose(); }
+  });
+
+  it('does not reinterpret Ctrl+P as the new P action or change a batch count', async () => {
+    const fixture = createFixture();
+    try {
+      const decision = fixture.open(40, [0, 5], true);
+      fixture.input.write('n20\u0010');
+      expect(fixture.content()).toContain('NEW terminals: [20]');
+      expect(isDialogActive()).toBe(true);
+      fixture.input.write('\r');
+      await expect(decision).resolves.toMatchObject({ newPanelCount: 20 });
+    } finally { fixture.dispose(); }
+  });
+
+  it('keeps P inert for callers that have not enabled the protocol action', async () => {
+    const fixture = createFixture();
+    try {
+      const decision = fixture.open(40);
+      expect(fixture.content()).not.toContain('P=Protocol');
+      fixture.input.write('p\r');
+      await expect(decision).resolves.toEqual({
+        agentType: 'generic', profileId: 'profile-1', panelIndex: 0,
+      });
+    } finally { fixture.dispose(); }
+  });
+
+  it('exposes the protocol action as a left-click-only mouse target', async () => {
+    const fixture = createFixture();
+    try {
+      const decision = fixture.open(40, [0, 5], true);
+      const dialog = fixture.screen.focused.parent as blessed.Widgets.BoxElement;
+      const button = dialog.children.find((child) => (
+        (child as blessed.Widgets.BoxElement).getText().trim() === 'P=Protocol'
+      )) as blessed.Widgets.BoxElement;
+      const x = Number(button.aleft) + 3;
+      const y = Number(button.atop) + 1;
+      fixture.input.write(`\u001b[<2;${x};${y}M`);
+      fixture.input.write(`\u001b[<2;${x};${y}m`);
+      expect(isDialogActive()).toBe(true);
+      fixture.input.write(`\u001b[<0;${x};${y}M`);
+      fixture.input.write(`\u001b[<0;${x};${y}m`);
+      await expect(decision).resolves.toEqual({ action: 'protocol-batch' });
+      expect(fixture.leakedKeys).toEqual([]);
+    } finally { fixture.dispose(); }
+  });
+
   it.each([10, 16, 20])('selects %i NEW terminals with the same profile and source directory', async (count) => {
     const fixture = createFixture();
     try {

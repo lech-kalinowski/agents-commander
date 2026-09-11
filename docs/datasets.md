@@ -1,8 +1,11 @@
 # Commander Protocol datasets for LoRA / SFT
 
-Agents Commander 0.1.5 supports opt-in semantic capture and offline, reviewed
+Agents Commander 0.1.6 supports opt-in semantic capture and offline, reviewed
 dataset creation. It does **not** start recording by default, upload data,
 download models, or run training. Version 0.1.4 does not include these commands.
+Capture and export were introduced in 0.1.5; 0.1.6 adds bulk protocol setup,
+stronger credential redaction and wire-sequence preservation. Check registry
+availability separately before installing a selected package version.
 The [design plan](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/session-capture-plan.md)
 records the broader roadmap and is maintained in the source repository.
 `dataset` is now a reserved CLI subcommand. To open a workspace literally named
@@ -13,7 +16,7 @@ records the broader roadmap and is maintained in the source repository.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2:
 
 ```bash
-npm install -g agents-commander@0.1.5
+npm install -g agents-commander@0.1.6
 agents-commander --version
 agents-commander --capture protocol --capture-project project-01 /path/to/project
 ```
@@ -38,7 +41,11 @@ explicit external `--capture-dir`.
 
 For usable candidate context:
 
-1. Launch the required agents and press **Ctrl+P** in each to arm the protocol.
+1. Launch the required agents, finish login/approvals and leave empty ready
+   prompts. Press **Ctrl+P** in each to arm the protocol, or use **F2 → P** for
+   selected/all agents in 0.1.6 (not available in 0.1.5).
+   Bulk setup uses the same recorded semantic injection path and never enables
+   capture itself; capture still requires the explicit launch flag.
 2. Submit the initial task through **Ctrl+O** or a Commander template.
 3. Let agents use SEND, REPLY, BROADCAST, STATUS and QUERY normally.
 4. Exit with **F10** so routing settles and the capture can be sealed.
@@ -54,11 +61,11 @@ persistence. This is best-effort filtering, **not a privacy guarantee**. Source
 code, personal data and unexpected secrets can remain. Review the material and
 its usage permissions before export. File permissions are not encryption.
 
-The unreleased source checkout additionally redacts quoted credential keys and
+Version 0.1.6 additionally redacts quoted credential keys and
 complete quoted values, for example `{"api_key":"example-secret"}` and
 `password="example secret with spaces"`. Escaped quotes and long values are
 consumed as one value; an unterminated quoted value is conservatively redacted
-through the end of that event. This hardening is not in npm 0.1.5 and does not
+through the end of that event. This hardening is not in 0.1.5 and does not
 retroactively sanitize existing captures or exports. Review older artifacts
 again before reusing them; do not treat a successful integrity check as a
 secret scan or privacy approval.
@@ -86,6 +93,15 @@ JSON Schemas and guidance. Candidate records contain source-event references,
 the focal agent, capability bindings and coverage. An accepted emission creates
 at most one candidate: broadcast fan-out does not multiply assistant responses.
 Transport success is not a quality label.
+
+Version 0.1.6 also retains an optional `protocolSequence`:
+the agent's actual wire counter, distinct from `sequence`, the capture event's
+serial number. Preparation and export preserve that counter in the matching
+command header and END footer; synthetic key substitution changes the capability,
+not the counter. Existing unsequenced captures and exact legacy review schemas
+remain supported. They keep unsequenced completions: Commander does not infer a
+wire counter from an event number or automatically upgrade old examples to the
+new protocol format. Review which format an experiment is intended to teach.
 
 Initial safety limits are explicit: recorder content is at most 512 KiB before
 redaction, serialized events at most 1 MiB, pending writes 4 MiB, segments 16 MiB,
@@ -152,7 +168,9 @@ tool calls. Earlier focal-agent frames may appear as assistant context.
 This is the conversational prompt/completion format supported by
 [TRL SFTTrainer](https://huggingface.co/docs/trl/sft_trainer). It keeps loss on
 the target response separate from context and audit metadata. The example above
-is illustrative synthetic data, not a captured agent response.
+is illustrative synthetic data in the legacy unsequenced format, not a captured
+agent response. A sequenced completion additionally retains its observed
+`:<N>` suffix after the synthetic key in both markers.
 
 Recommended starting configuration for a separately approved LoRA experiment:
 

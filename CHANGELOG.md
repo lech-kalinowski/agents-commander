@@ -1,19 +1,40 @@
 # Changelog
 
-## Unreleased
+## 0.1.6
 
 ### Added
 
-- Source-checkout F2 batch launch: select one CLI/profile, press N, and choose
+- Protocol sequence suffixes on all five command headers and their
+  END footer. Newly injected instructions use one increasing per-capability
+  counter, allowing intentional identical actions without treating old terminal
+  history as new output. Capability-only markers remain compatible.
+- Explicit F2/P bulk protocol setup for selected or all running agent profiles,
+  including hidden panels. One confirmation precedes sequential submissions;
+  each session gets a private key. Already-enabled sessions are skipped and
+  exact-session checks prevent injection into replacements. Esc stops remaining
+  work after any started paste/submit settles. No automatic task or recording.
+- F2 batch launch: select one CLI/profile, press N, and choose
   how many new terminal panels to create at the selected panel's directory.
   One confirmation precedes sequential launches; Esc stops the remaining work
   while preserving already-started sessions and existing panels.
 - Batch launches use distinct Commander session IDs and the selected profile's
   unchanged arguments/environment. They do not create worktrees, assign
   different roles, bootstrap the protocol, submit tasks, or enable capture.
+- Capture and reviewed dataset export preserve the optional wire message counter
+  separately from capture-event numbering. Previously prepared legacy reviews
+  remain supported without fabricating counters or upgrading old completions.
 
 ### Fixed
 
+- Keep bounded, process-session replay protection across terminal redraws,
+  scrollback scans and fullscreen/resize changes instead of allowing old frames
+  to route again after the short deduplication interval. Sequenced frames retain
+  their identity even when a CLI changes hard line wrapping. Repeated recognized
+  input echoes remain suppressed. Legacy identical frames are conservative
+  once-per-armed-session; ambiguous hard-reflow cases require sequenced output.
+  Exhausting replay storage fails closed with a panel-header warning and
+  requires an agent restart or explicit fresh-capability injection; this is not
+  an exactly-once delivery guarantee.
 - Preserve confirmation ownership across cancellation and immediate reopening;
   an owner-cancelled dialog cannot commit a queued approval or release a newer
   dialog's input shield.
@@ -38,13 +59,18 @@
 
 ### Maintenance
 
-- Update development test/build dependencies to patched versions; retain
-  runtime dependency ranges and the published package version.
+- Restrict application test discovery to `tests/`, excluding private rehearsal
+  helpers and other non-product scripts from the public verification gate.
+- Update development test/build dependencies to patched versions while retaining
+  runtime dependency ranges.
 - Add build/watch startup and owned-process cleanup to the verification gate,
   plus a QA coverage and manual acceptance guide.
 
-These unreleased changes are not included in the npm 0.1.5 package. Provider usage and
-configured startup/resume behavior still apply.
+These changes are new in 0.1.6 and are not included in npm 0.1.5. Node.js 22+
+and Python 3 remain required. Restart existing sessions and inject fresh protocol
+instructions to use sequenced replay protection. Provider usage and configured
+startup/resume behavior still apply. Presentations, private recordings and
+training datasets are excluded from the package.
 
 ## 0.1.5
 

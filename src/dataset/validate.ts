@@ -4,7 +4,7 @@ import type { Candidate, ChatMessage, ReviewDecision, ReviewFile } from './types
 
 const HASH = /^[a-f0-9]{64}$/;
 const ID = /^[A-Za-z0-9_:-]{1,200}$/;
-const CANDIDATE_KEYS = ['schemaVersion', 'id', 'captureId', 'projectId', 'synthetic', 'syntheticConditioning', 'sessionId', 'emissionId', 'eventId', 'sequence', 'sourceEventIds', 'capabilityRef', 'capabilityOwners', 'verb', 'targetAgent', 'targetPanel', 'coverage', 'prompt', 'completion'];
+const CANDIDATE_KEYS = ['schemaVersion', 'id', 'captureId', 'projectId', 'synthetic', 'syntheticConditioning', 'sessionId', 'emissionId', 'eventId', 'sequence', 'protocolSequence', 'sourceEventIds', 'capabilityRef', 'capabilityOwners', 'verb', 'targetAgent', 'targetPanel', 'coverage', 'prompt', 'completion'];
 const REVIEW_KEYS = ['candidateId', 'candidateSha256', 'approved', 'quality', 'context', 'privacy', 'rights', 'reviewer', 'reviewedAt', 'notes'];
 export function isHash(value: unknown): value is string { return typeof value === 'string' && HASH.test(value); }
 function identifier(value: unknown): value is string { return typeof value === 'string' && ID.test(value); }
@@ -26,6 +26,7 @@ export function validateCandidate(value: unknown): asserts value is Candidate {
     || !identifier(value.id) || !identifier(value.captureId) || !identifier(value.projectId)
     || !identifier(value.sessionId) || !identifier(value.emissionId) || !identifier(value.eventId)
     || !Number.isSafeInteger(value.sequence) || Number(value.sequence) < 1
+    || value.protocolSequence !== undefined && (!Number.isSafeInteger(value.protocolSequence) || Number(value.protocolSequence) < 1)
     || typeof value.capabilityRef !== 'string' || !/^cap_[1-9]\d*$/.test(value.capabilityRef)) throw new Error('Invalid candidate identity');
   if (!Array.isArray(value.sourceEventIds) || value.sourceEventIds.length < 1 || value.sourceEventIds.length > 512
     || value.sourceEventIds.some((id) => !identifier(id)) || new Set(value.sourceEventIds).size !== value.sourceEventIds.length

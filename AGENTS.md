@@ -39,14 +39,15 @@ npm run verify
 
 The current UI uses TypeScript, blessed, chokidar, and tsup. Runtime support is Node.js 22+, Python 3, and macOS/Linux/WSL2.
 
-Package version is 0.1.5, under the MIT License. Version 0.1.4 is the legacy
+Package version is 0.1.6, under the MIT License. Version 0.1.4 is the legacy
 baseline; its runtime requirements, features, and bundled license differ.
 Use `node dist/bin/agents-commander.js` or `npm start --` to exercise this checkout,
 not an older global installation. For the versioned package, the install command
-is `npm install -g agents-commander@0.1.5`. Recheck the registry before changing
+is `npm install -g agents-commander@0.1.6`. Recheck the registry before changing
 release claims. A source push is not an npm release.
-The F2/N bulk-launch workflow is an unreleased source addition after npm 0.1.5;
-do not describe it as a feature of the published 0.1.5 package.
+F2/N bulk launch, F2/P bulk protocol setup and sequenced replay protection are
+included in 0.1.6, not 0.1.5. Package metadata describes that version's contents;
+do not claim registry publication until it has been verified.
 
 ## Key Conventions
 
@@ -59,11 +60,13 @@ do not describe it as a feature of the published 0.1.5 package.
 - Enter previews files; Shift+F6/Shift+F7/Shift+F9 copy/move/delete files from file panels; Ctrl+W remains the close-panel alias
 - Ctrl+B opens the prompt template browser dialog
 - Ctrl+P sends Commander Protocol instructions to the active running agent
+- F2 then P explicitly injects protocol into selected/all running agent profiles after confirmation. Each exact session gets its own key; already-armed sessions are skipped, replacements are never followed. Esc stops remaining work after an in-flight paste/submit settles. Built-in Shell/internal demos are excluded. Verify empty ready CLI prompts first; no automatic task/capture.
 - F11 opens the panel navigator
 - F12 opens routed-message Activity; Shift+F12 opens the protocol guide
 - Up to 100 active panels use stable numbers in a paged workspace; hidden sessions keep running
 - Shift+F4 cycles auto/2/3/4 visible density independently of active panel count; Ctrl+0/2/3/4 are terminal-dependent aliases
 - REPLY claims the latest open reply window, not a permanent last-sender address
+- New protocol injections teach a per-capability positive sequence on every header and matching END footer. Fresh actions use a fresh counter; redraws/retries keep their identity. Replay suppression survives scrolling and resize. Legacy frames remain accepted with conservative session-lifetime exact-content suppression; hard reflow requires sequenced identity. Replay storage is bounded and fails closed, never evicting history into execution eligibility. See the protocol reference for limits and explicit capability rotation.
 - Activity is bounded and in-memory; diagnostic logs are not session recordings. Capture/export require explicit launch consent and human review; see `docs/datasets.md` and the broader proposed roadmap in `docs/session-capture-plan.md`
 - Dataset commands must remain UI-independent; never enable recording from saved config, export unapproved data, retain live capability keys, or include private research artifacts in git/npm
 - marked-terminal renderer methods must be extracted and bound to avoid marked v15 compat issues

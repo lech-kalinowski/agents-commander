@@ -13,6 +13,8 @@ export interface Candidate extends TrainingRow {
   emissionId: string;
   eventId: string;
   sequence: number;
+  /** Original wire identity, not the capture event serial above. */
+  protocolSequence?: number;
   sourceEventIds: string[];
   capabilityRef: string;
   capabilityOwners: Record<string, string>;

@@ -46,6 +46,7 @@ Multi-panel AI Agent Manager & File Browser
   F2          Launch agent in panel
   Ctrl+O      Orchestrate — send task to agent
   Ctrl+P      Send protocol instructions to active agent
+  F2 then P   Bulk protocol setup: select agents or A=All
   F12         Routed-message activity
   Shift+F12   Inter-agent protocol guide
   Ctrl+B      Browse 121 prompt templates
@@ -59,26 +60,42 @@ Multi-panel AI Agent Manager & File Browser
   File-only actions require a file panel (Tab to switch).
   Ctrl+C / Ctrl+D are forwarded to the running agent.
 
-  Bulk launch (source addition after npm 0.1.5):
+  Bulk launch (available in 0.1.6):
   F2 → select profile → N → type count → Enter → confirm.
   Adds that many NEW panels at the selected panel's directory.
   Existing panels/sessions stay unchanged; max 100 total panels.
   Esc during progress stops remaining launches, keeping started ones.
   Same profile/arguments/directory, not separate worktrees or roles.
   Provider usage may apply; resume/startup arguments retain their effects.
-  No automatic task or bootstrap; Ctrl+P in each agent enables protocol.
+  No automatic task or bootstrap; F2 then P enables selected agents.
+
+  Bulk protocol (available in 0.1.6):
+  F2 → P → Space=select / A=All → Enter → confirm Yes.
+  N clears selection. Hidden panels are included. Default is none.
+  Finish login/approvals; each selected CLI needs an empty ready prompt.
+  One private key per session; already-enabled sessions are skipped.
+  Changed/stopped sessions fail; their replacements are never armed.
+  Esc stops remaining work after a started paste/submit settles.
+  Built-in Shell and internal demo roles are excluded; named Pi profiles work.
+  No task or recording starts. Check responses; then send a task separately.
 
 {bold}{yellow-fg}INTER-AGENT PROTOCOL{/yellow-fg}{/bold}
 
   Ctrl+P gives the current agent a private {cyan-fg}<session-key>{/cyan-fg}.
-  Every header and footer must include that same key:
+  Every header and footer includes that same key and counter N:
 
-  {cyan-fg}SEND:agent:panel:<session-key>{/cyan-fg}  Direct message
-  {cyan-fg}REPLY:<session-key>{/cyan-fg}             Latest open reply window
-  {cyan-fg}BROADCAST:<session-key>{/cyan-fg}         Message all other agents
-  {cyan-fg}STATUS:<session-key>{/cyan-fg}            Progress toast + local ACK
-  {cyan-fg}QUERY:<session-key>{/cyan-fg}             Ask who's running
-  Footer: {cyan-fg}===COMMANDER:END:<session-key>==={/cyan-fg}
+  {cyan-fg}SEND:agent:panel:<session-key>:<N>{/cyan-fg}  Direct message
+  {cyan-fg}REPLY:<session-key>:<N>{/cyan-fg}             Latest open reply window
+  {cyan-fg}BROADCAST:<session-key>:<N>{/cyan-fg}         Message all other agents
+  {cyan-fg}STATUS:<session-key>:<N>{/cyan-fg}            Progress toast + local ACK
+  {cyan-fg}QUERY:<session-key>:<N>{/cyan-fg}             Ask who's running
+  Footer: {cyan-fg}===COMMANDER:END:<session-key>:<N>==={/cyan-fg}
+
+  N starts at 1 and increases for each new command across all verbs.
+  Redraws/retransmissions keep N and do not send again.
+  A new action needs a new N; inspect delivery before retrying intentionally.
+  Restart and inject fresh instructions to use the 0.1.6 sequence format.
+  Legacy key-only frames remain accepted with limited reflow protection.
 
   REPLY claims the newest open window for this session.
   A failed delivery restores it if both sessions remain active.

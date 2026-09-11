@@ -9,6 +9,7 @@ import { VTerm } from './vterm.js';
 import {
   ProtocolScanner,
   isAgentType,
+  isProtocolCapability,
   matchSendStart,
   matchReplyMarker,
   matchBroadcastMarker,
@@ -31,6 +32,7 @@ import { sanitizeUserText } from '../utils/user-facing-errors.js';
 import { isPanelNumber } from '../panel-limits.js';
 import { isDialogActive } from '../utils/dialog-state.js';
 import { isCodexMicroKey } from '../hardware/codex-micro.js';
+import { ProtocolReplayGuard } from '../orchestration/replay-guard.js';
 
 /**
  * Keys reserved for the UI — never forwarded to the agent process.
@@ -86,14 +88,6 @@ interface PendingReplyEmission {
 }
 
 type ProtocolScannerOrigin = 'scrollback' | 'grid' | 'tail';
-
-interface ProtocolReservation {
-  /** Number of identical outgoing occurrences Commander wrote into the prompt. */
-  expectedOccurrences: number;
-  /** Echoes are independently observed by the streaming, grid, and tail paths. */
-  suppressedByOrigin: Map<ProtocolScannerOrigin, number>;
-  expiresAt: number;
-}
 
 interface ChildCloseObserver {
   closed: boolean;
@@ -217,10 +211,10 @@ export class TerminalPanel {
   private gridScanTimer: ReturnType<typeof setTimeout> | null = null;
   private activeGridProtocolKeys = new Set<string>();
   private activeTailReplyKeys = new Set<string>();
-  /** Recent emission keys — shared dedup between grid scan and scrollback scanner. Maps key → expiry time. */
-  private recentEmissions = new Map<string, number>();
-  /** Exact outgoing prompt blocks whose terminal echoes must not become commands. */
-  private protocolReservations = new Map<string, ProtocolReservation>();
+  /** Shared by grid, scrollback, tail and prompt-echo observation. Never TTL-based. */
+  private replayGuard = new ProtocolReplayGuard();
+  private protocolCapability: string | null = null;
+  private protocolReplayWarningShown = false;
   /** Scrollback-detected replies wait briefly so grid scan can win when both see the same block. */
   private pendingReplyEmissions = new Map<string, PendingReplyEmission>();
   /** While active, suppress echoed protocol-instruction blocks before they reach the orchestrator. */
@@ -656,8 +650,9 @@ export class TerminalPanel {
       this.lastScrollbackIndex = this.vterm.primaryScrollbackStartIndex;
       this.activeGridProtocolKeys.clear();
       this.activeTailReplyKeys.clear();
-      this.recentEmissions.clear();
-      this.protocolReservations.clear();
+      this.replayGuard = new ProtocolReplayGuard();
+      this.protocolCapability = null;
+      this.protocolReplayWarningShown = false;
       this.clearCommanderActivity();
       this.clearPendingReplyEmissions();
       this.scanner = enableProtocolScanner
@@ -726,7 +721,6 @@ export class TerminalPanel {
           this.instructionEchoGuardUntil = 0;
           this.activeGridProtocolKeys.clear();
           this.activeTailReplyKeys.clear();
-          this.protocolReservations.clear();
           this.clearCommanderActivity();
           this.clearPendingReplyEmissions();
           if (this.gridScanTimer) { clearTimeout(this.gridScanTimer); this.gridScanTimer = null; }
@@ -781,10 +775,7 @@ export class TerminalPanel {
    */
   private emitDeduped(msg: CommanderMessage, origin: ProtocolScannerOrigin): void {
     if (!this.onCommanderMessage) return;
-    if (Date.now() < this.instructionEchoGuardUntil && looksLikeInstructionEcho(msg.content)) {
-      logger.info(`Dedup[${this.panelIndex}]: suppressed echoed ${msg.type} block from protocol instructions`);
-      return;
-    }
+    if (this.protocolCapability && msg.capability !== this.protocolCapability) return;
     const canonical = TerminalPanel.canonicalizeContent(msg.content);
     const key = this.buildEmissionKey(
       msg.type,
@@ -792,40 +783,16 @@ export class TerminalPanel {
       msg.targetPanel,
       canonical,
       msg.capability ?? null,
+      msg.sequence,
     );
-    const now = Date.now();
-    this.pruneExpiredEmissionKeys(now);
-    this.pruneExpiredProtocolReservations(now);
-
-    const reservation = this.protocolReservations.get(key);
-    if (reservation) {
-      const suppressed = reservation.suppressedByOrigin.get(origin) ?? 0;
-      if (suppressed < reservation.expectedOccurrences) {
-        reservation.suppressedByOrigin.set(origin, suppressed + 1);
-        // This is the exact capability-bound block Commander just wrote into
-        // the agent prompt. Terminal UIs commonly render pasted input back into
-        // their output, and the same physical echo can be observed independently
-        // by the scrollback, grid, and tail scanners. Each path suppresses up to
-        // the known number of outgoing occurrences.
-        logger.info(
-          `Dedup[${this.panelIndex}]: suppressed outgoing ${msg.type} prompt echo (${origin})`,
-        );
-        return;
-      }
-
-      // The N+1 occurrence on one scanner path is agent-authored. End the
-      // reservation without inheriting an older dedup entry so it can route;
-      // its normal recentEmissions entry then suppresses replays on every path.
-      this.protocolReservations.delete(key);
-      this.recentEmissions.delete(key);
-    }
-
-    const expiryAt = this.recentEmissions.get(key) ?? 0;
-    if (expiryAt > now) {
-      logger.debug(`Dedup[${this.panelIndex}]: suppressed duplicate ${msg.type} → ${msg.targetAgent}:${msg.targetPanel + 1}`);
+    if (!this.claimProtocolIdentity(key)) {
+      logger.debug(`Dedup[${this.panelIndex}]: suppressed repeated ${msg.type} (${origin})`);
       return;
     }
-    this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
+    if (Date.now() < this.instructionEchoGuardUntil && looksLikeInstructionEcho(msg.content)) {
+      logger.info(`Dedup[${this.panelIndex}]: suppressed echoed ${msg.type} block from protocol instructions`);
+      return;
+    }
     this.onCommanderMessage(msg);
   }
 
@@ -897,6 +864,7 @@ export class TerminalPanel {
     let startIdx = -1;
     let msgType: MessageType = 'send';
     let capability: string | null = null;
+    let sequence: number | undefined;
     let target: { agent: string; panel: number } | null = null;
 
     for (let i = 0; i < lines.length; i++) {
@@ -906,12 +874,14 @@ export class TerminalPanel {
       if (startIdx < 0) {
         // ── SEND:agent:panel ──
         const startMatch = matchSendStart(line);
-        if (startMatch && isAgentType(startMatch[1])) {
+        if (startMatch && isAgentType(startMatch[1])
+          && (!this.protocolCapability || startMatch[3] === this.protocolCapability)) {
           const panelNum = parseProtocolPanelId(startMatch[2]);
           if (panelNum !== null) {
             startIdx = i;
             msgType = 'send';
             capability = startMatch[3] ?? null;
+            sequence = startMatch[4] === undefined ? undefined : Number(startMatch[4]);
             target = { agent: startMatch[1], panel: panelNum };
           }
           continue;
@@ -919,50 +889,55 @@ export class TerminalPanel {
 
         // ── REPLY ──
         const replyMarker = matchReplyMarker(line);
-        if (replyMarker) {
+        if (replyMarker && (!this.protocolCapability || replyMarker.capability === this.protocolCapability)) {
           startIdx = i;
           msgType = 'reply';
           capability = replyMarker.capability;
+          sequence = replyMarker.sequence;
           target = null;
           continue;
         }
 
         // ── BROADCAST ──
         const broadcastMarker = matchBroadcastMarker(line);
-        if (broadcastMarker) {
+        if (broadcastMarker && (!this.protocolCapability || broadcastMarker.capability === this.protocolCapability)) {
           startIdx = i;
           msgType = 'broadcast';
           capability = broadcastMarker.capability;
+          sequence = broadcastMarker.sequence;
           target = null;
           continue;
         }
 
         // ── STATUS ──
         const statusMarker = matchStatusMarker(line);
-        if (statusMarker) {
+        if (statusMarker && (!this.protocolCapability || statusMarker.capability === this.protocolCapability)) {
           startIdx = i;
           msgType = 'status';
           capability = statusMarker.capability;
+          sequence = statusMarker.sequence;
           target = null;
           continue;
         }
 
         // ── QUERY ──
         const queryMarker = matchQueryMarker(line);
-        if (queryMarker) {
+        if (queryMarker && (!this.protocolCapability || queryMarker.capability === this.protocolCapability)) {
           startIdx = i;
           msgType = 'query';
           capability = queryMarker.capability;
+          sequence = queryMarker.sequence;
           target = null;
           continue;
         }
       }
 
-      if (startIdx >= 0 && isEndMarker(line, capability)) {
+      if (startIdx >= 0 && isEndMarker(line, capability, sequence)) {
         const contentLines = lines.slice(startIdx + 1, i);
         if (!this.protocolContentWithinLimits(contentLines)) {
           startIdx = -1;
           capability = null;
+          sequence = undefined;
           target = null;
           continue;
         }
@@ -974,6 +949,7 @@ export class TerminalPanel {
           target?.panel ?? -1,
           canonical,
           capability,
+          sequence,
         );
         visibleKeys.add(key);
         if (msgType === 'reply') {
@@ -995,14 +971,16 @@ export class TerminalPanel {
             targetPanel: target?.panel ?? -1,
             content,
             ...(capability ? { capability } : {}),
+            ...(sequence === undefined ? {} : { sequence }),
           }, 'grid');
           if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
-        } else if (!this.protocolReservations.has(key)) {
+        } else {
           this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
         }
 
         startIdx = -1;
         capability = null;
+        sequence = undefined;
         target = null;
       }
     }
@@ -1064,7 +1042,9 @@ export class TerminalPanel {
       : this._status === 'exited' ? '{yellow-fg}-{/yellow-fg}'
       : '{red-fg}!{/red-fg}';
     const pid = this.proc ? ` pid=${this.proc.pid}` : '';
-    const activity = this.commanderActivityLabel
+    const activity = this.protocolReplayWarningShown
+      ? '  |  {red-fg}Protocol limit: restart agent{/red-fg}'
+      : this.commanderActivityLabel
       ? `  |  {yellow-fg}${this.commanderActivityLabel}{/yellow-fg}`
       : '  |  Type directly  ^C=Int';
     const escape = (blessed as unknown as { escape(text: string): string }).escape;
@@ -1312,7 +1292,6 @@ export class TerminalPanel {
     this.instructionEchoGuardUntil = 0;
     this.activeGridProtocolKeys.clear();
     this.activeTailReplyKeys.clear();
-    this.protocolReservations.clear();
     this.clearCommanderActivity();
     this.clearPendingReplyEmissions();
     if (this.gridScanTimer) { clearTimeout(this.gridScanTimer); this.gridScanTimer = null; }
@@ -1399,10 +1378,8 @@ export class TerminalPanel {
   }
 
   /**
-   * Reserve complete protocol blocks in outgoing prompt text so their exact
-   * terminal echoes are suppressed. The reservation is consumed without
-   * entering the normal dedup window, allowing a later identical block that
-   * the agent intentionally emits to route once.
+   * Reserve prompt examples across every scanner path. A repeated echo is
+   * never promoted to authored output; actual responses need a fresh sequence.
    */
   reserveProtocolTextForEcho(text: string): void {
     if (!this.scannerEnabled || !text.includes('COMMANDER')) return;
@@ -1449,6 +1426,7 @@ export class TerminalPanel {
     let startIdx = -1;
     let msgType: MessageType = 'send';
     let capability: string | null = null;
+    let sequence: number | undefined;
     let target: { agent: string; panel: number } | null = null;
 
     for (let i = 0; i < lines.length; i++) {
@@ -1456,27 +1434,29 @@ export class TerminalPanel {
 
       if (startIdx < 0) {
         const startMatch = matchSendStart(line);
-        if (startMatch && isAgentType(startMatch[1])) {
+        if (startMatch && isAgentType(startMatch[1])
+          && (!this.protocolCapability || startMatch[3] === this.protocolCapability)) {
           const panelNum = parseProtocolPanelId(startMatch[2]);
           if (panelNum !== null) {
             startIdx = i;
             msgType = 'send';
             capability = startMatch[3] ?? null;
+            sequence = startMatch[4] === undefined ? undefined : Number(startMatch[4]);
             target = { agent: startMatch[1], panel: panelNum };
           }
           continue;
         }
         const replyMarker = matchReplyMarker(line);
-        if (replyMarker) { startIdx = i; msgType = 'reply'; capability = replyMarker.capability; target = null; continue; }
+        if (replyMarker && (!this.protocolCapability || replyMarker.capability === this.protocolCapability)) { startIdx = i; msgType = 'reply'; capability = replyMarker.capability; sequence = replyMarker.sequence; target = null; continue; }
         const broadcastMarker = matchBroadcastMarker(line);
-        if (broadcastMarker) { startIdx = i; msgType = 'broadcast'; capability = broadcastMarker.capability; target = null; continue; }
+        if (broadcastMarker && (!this.protocolCapability || broadcastMarker.capability === this.protocolCapability)) { startIdx = i; msgType = 'broadcast'; capability = broadcastMarker.capability; sequence = broadcastMarker.sequence; target = null; continue; }
         const statusMarker = matchStatusMarker(line);
-        if (statusMarker) { startIdx = i; msgType = 'status'; capability = statusMarker.capability; target = null; continue; }
+        if (statusMarker && (!this.protocolCapability || statusMarker.capability === this.protocolCapability)) { startIdx = i; msgType = 'status'; capability = statusMarker.capability; sequence = statusMarker.sequence; target = null; continue; }
         const queryMarker = matchQueryMarker(line);
-        if (queryMarker) { startIdx = i; msgType = 'query'; capability = queryMarker.capability; target = null; continue; }
+        if (queryMarker && (!this.protocolCapability || queryMarker.capability === this.protocolCapability)) { startIdx = i; msgType = 'query'; capability = queryMarker.capability; sequence = queryMarker.sequence; target = null; continue; }
       }
 
-      if (startIdx >= 0 && isEndMarker(line, capability)) {
+      if (startIdx >= 0 && isEndMarker(line, capability, sequence)) {
         const content = lines.slice(startIdx + 1, i).join('\n').trim();
         const canonical = TerminalPanel.canonicalizeContent(content);
         const key = this.buildEmissionKey(
@@ -1485,15 +1465,15 @@ export class TerminalPanel {
           target?.panel ?? -1,
           canonical,
           capability,
+          sequence,
         );
         visibleKeys.add(key);
-        if (!this.protocolReservations.has(key)) {
-          this.rememberEmissionKey(key, ttlMs);
-        }
+        this.rememberEmissionKey(key, ttlMs);
 
         logger.debug(`Snapshot[${this.panelIndex}]: marked existing ${msgType} block as processed`);
         startIdx = -1;
         capability = null;
+        sequence = undefined;
         target = null;
       }
     }
@@ -1507,6 +1487,7 @@ export class TerminalPanel {
     let startIdx = -1;
     let msgType: MessageType = 'send';
     let capability: string | null = null;
+    let sequence: number | undefined;
     let target: { agent: string; panel: number } | null = null;
 
     for (let i = 0; i < lines.length; i++) {
@@ -1514,27 +1495,29 @@ export class TerminalPanel {
 
       if (startIdx < 0) {
         const startMatch = matchSendStart(line);
-        if (startMatch && isAgentType(startMatch[1])) {
+        if (startMatch && isAgentType(startMatch[1])
+          && (!this.protocolCapability || startMatch[3] === this.protocolCapability)) {
           const panelNum = parseProtocolPanelId(startMatch[2]);
           if (panelNum !== null) {
             startIdx = i;
             msgType = 'send';
             capability = startMatch[3] ?? null;
+            sequence = startMatch[4] === undefined ? undefined : Number(startMatch[4]);
             target = { agent: startMatch[1], panel: panelNum };
           }
           continue;
         }
         const replyMarker = matchReplyMarker(line);
-        if (replyMarker) { startIdx = i; msgType = 'reply'; capability = replyMarker.capability; target = null; continue; }
+        if (replyMarker && (!this.protocolCapability || replyMarker.capability === this.protocolCapability)) { startIdx = i; msgType = 'reply'; capability = replyMarker.capability; sequence = replyMarker.sequence; target = null; continue; }
         const broadcastMarker = matchBroadcastMarker(line);
-        if (broadcastMarker) { startIdx = i; msgType = 'broadcast'; capability = broadcastMarker.capability; target = null; continue; }
+        if (broadcastMarker && (!this.protocolCapability || broadcastMarker.capability === this.protocolCapability)) { startIdx = i; msgType = 'broadcast'; capability = broadcastMarker.capability; sequence = broadcastMarker.sequence; target = null; continue; }
         const statusMarker = matchStatusMarker(line);
-        if (statusMarker) { startIdx = i; msgType = 'status'; capability = statusMarker.capability; target = null; continue; }
+        if (statusMarker && (!this.protocolCapability || statusMarker.capability === this.protocolCapability)) { startIdx = i; msgType = 'status'; capability = statusMarker.capability; sequence = statusMarker.sequence; target = null; continue; }
         const queryMarker = matchQueryMarker(line);
-        if (queryMarker) { startIdx = i; msgType = 'query'; capability = queryMarker.capability; target = null; continue; }
+        if (queryMarker && (!this.protocolCapability || queryMarker.capability === this.protocolCapability)) { startIdx = i; msgType = 'query'; capability = queryMarker.capability; sequence = queryMarker.sequence; target = null; continue; }
       }
 
-      if (startIdx >= 0 && isEndMarker(line, capability)) {
+      if (startIdx >= 0 && isEndMarker(line, capability, sequence)) {
         const content = lines.slice(startIdx + 1, i).join('\n').trim();
         const canonical = TerminalPanel.canonicalizeContent(content);
         const key = this.buildEmissionKey(
@@ -1543,10 +1526,12 @@ export class TerminalPanel {
           target?.panel ?? -1,
           canonical,
           capability,
+          sequence,
         );
         this.rememberProtocolReservation(key, ttlMs);
         startIdx = -1;
         capability = null;
+        sequence = undefined;
         target = null;
       }
     }
@@ -1563,31 +1548,34 @@ export class TerminalPanel {
     const visibleKeys = new Set<string>();
     let startIdx = -1;
     let capability: string | null = null;
+    let sequence: number | undefined;
 
     for (let i = 0; i < tailLines.length; i++) {
       const line = tailLines[i].replace(/\x1b\[[0-9;]*m/g, '');
 
       if (startIdx < 0) {
         const replyMarker = matchReplyMarker(line);
-        if (replyMarker) {
+        if (replyMarker && (!this.protocolCapability || replyMarker.capability === this.protocolCapability)) {
           startIdx = i;
           capability = replyMarker.capability;
+          sequence = replyMarker.sequence;
         }
         continue;
       }
 
-      if (isEndMarker(line, capability)) {
+      if (isEndMarker(line, capability, sequence)) {
         const contentLines = tailLines
           .slice(startIdx + 1, i)
           .map((tailLine) => tailLine.replace(/\x1b\[[0-9;]*m/g, ''));
         if (!this.protocolContentWithinLimits(contentLines)) {
           startIdx = -1;
           capability = null;
+          sequence = undefined;
           continue;
         }
         const content = contentLines.join('\n').trim();
         const canonical = TerminalPanel.canonicalizeContent(content);
-        const key = this.buildEmissionKey('reply', 'generic', -1, canonical, capability);
+        const key = this.buildEmissionKey('reply', 'generic', -1, canonical, capability, sequence);
         visibleKeys.add(key);
         this.cancelPendingReplyEmission(key);
 
@@ -1602,14 +1590,16 @@ export class TerminalPanel {
             targetPanel: -1,
             content,
             ...(capability ? { capability } : {}),
+            ...(sequence === undefined ? {} : { sequence }),
           }, 'tail');
           if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
-        } else if (!this.protocolReservations.has(key)) {
+        } else {
           this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
         }
 
         startIdx = -1;
         capability = null;
+        sequence = undefined;
       }
     }
 
@@ -1627,33 +1617,34 @@ export class TerminalPanel {
     const visibleKeys = new Set<string>();
     let startIdx = -1;
     let capability: string | null = null;
+    let sequence: number | undefined;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].replace(/\x1b\[[0-9;]*m/g, '');
 
       if (startIdx < 0) {
         const replyMarker = matchReplyMarker(line);
-        if (replyMarker) {
+        if (replyMarker && (!this.protocolCapability || replyMarker.capability === this.protocolCapability)) {
           startIdx = i;
           capability = replyMarker.capability;
+          sequence = replyMarker.sequence;
         }
         continue;
       }
 
-      if (isEndMarker(line, capability)) {
+      if (isEndMarker(line, capability, sequence)) {
         const content = lines
           .slice(startIdx + 1, i)
           .map((tailLine) => tailLine.replace(/\x1b\[[0-9;]*m/g, ''))
           .join('\n')
           .trim();
         const canonical = TerminalPanel.canonicalizeContent(content);
-        const key = this.buildEmissionKey('reply', 'generic', -1, canonical, capability);
+        const key = this.buildEmissionKey('reply', 'generic', -1, canonical, capability, sequence);
         visibleKeys.add(key);
-        if (!this.protocolReservations.has(key)) {
-          this.rememberEmissionKey(key, ttlMs);
-        }
+        this.rememberEmissionKey(key, ttlMs);
         startIdx = -1;
         capability = null;
+        sequence = undefined;
       }
     }
 
@@ -1673,55 +1664,52 @@ export class TerminalPanel {
     targetPanel: number,
     canonical: string,
     capability: string | null = null,
+    sequence?: number,
   ): string {
+    // A sequenced emission keeps its identity through reflow, even if its
+    // reconstructed body/target changes. Never execute a changed reused ID.
+    if (sequence !== undefined) return `seq:${capability ?? 'invalid'}:${sequence}`;
     const contentDigest = createHash('sha256').update(canonical, 'utf8').digest('base64url');
     return `${capability ?? 'legacy'}:${type}:${targetAgent}:${targetPanel}:${contentDigest}`;
   }
 
-  private rememberEmissionKey(key: string, ttlMs: number): void {
-    const now = Date.now();
-    const expiryAt = now + ttlMs;
-    const existing = this.recentEmissions.get(key) ?? 0;
-    if (expiryAt > existing) {
-      this.recentEmissions.set(key, expiryAt);
+  private claimProtocolIdentity(key: string): boolean {
+    const scope = key.split(':')[key.startsWith('seq:') ? 1 : 0];
+    if (this.protocolCapability && scope !== this.protocolCapability) return false;
+    this.replayGuard ??= new ProtocolReplayGuard();
+    const accepted = this.replayGuard.claim(key);
+    if (this.replayGuard.saturated && !this.protocolReplayWarningShown) {
+      this.protocolReplayWarningShown = true;
+      logger.warn(`Protocol replay capacity reached in panel ${this.panelIndex}; restart the agent`);
+      this.updateHeader();
+      this.scheduleRender();
     }
+    return accepted;
+  }
+
+  /** Explicit capability rotation only; reusing a key must not forget history. */
+  setProtocolCapability(capability: string): void {
+    if (!isProtocolCapability(capability)) throw new Error('Invalid protocol capability');
+    if (this.protocolCapability === capability) return;
+    this.protocolCapability = capability;
+    this.scanner?.setProtocolCapability?.(capability);
+    this.replayGuard = new ProtocolReplayGuard();
+    this.protocolReplayWarningShown = false;
+    this.activeGridProtocolKeys.clear();
+    this.activeTailReplyKeys.clear();
+    this.clearPendingReplyEmissions();
+    this.updateHeader();
+    this.scheduleRender();
+  }
+
+  private rememberEmissionKey(key: string, _ttlMs: number): void {
+    this.claimProtocolIdentity(key);
   }
 
   private rememberProtocolReservation(key: string, ttlMs: number): void {
-    const now = Date.now();
-    const expiryAt = now + ttlMs;
-    // An explicitly outgoing prompt starts a new interaction even if its exact
-    // block matched a recently routed message.
-    this.recentEmissions.delete(key);
-    const existing = this.protocolReservations.get(key);
-    if (existing && existing.expiresAt > now) {
-      existing.expectedOccurrences += 1;
-      if (expiryAt > existing.expiresAt) {
-        existing.expiresAt = expiryAt;
-      }
-      return;
-    }
-    this.protocolReservations.set(key, {
-      expectedOccurrences: 1,
-      suppressedByOrigin: new Map(),
-      expiresAt: expiryAt,
-    });
-  }
-
-  private pruneExpiredEmissionKeys(now: number): void {
-    for (const [key, expiryAt] of this.recentEmissions) {
-      if (expiryAt <= now) {
-        this.recentEmissions.delete(key);
-      }
-    }
-  }
-
-  private pruneExpiredProtocolReservations(now: number): void {
-    for (const [key, reservation] of this.protocolReservations) {
-      if (reservation.expiresAt <= now) {
-        this.protocolReservations.delete(key);
-      }
-    }
+    // Repeated sightings of a prompt echo cannot establish authorship.
+    // The agent must use a fresh sequence for its actual response.
+    this.rememberEmissionKey(key, ttlMs);
   }
 
   private schedulePendingReplyEmission(msg: CommanderMessage): void {
@@ -1733,6 +1721,7 @@ export class TerminalPanel {
       msg.targetPanel,
       canonical,
       msg.capability ?? null,
+      msg.sequence,
     );
     const existing = this.pendingReplyEmissions.get(key);
     if (existing) {

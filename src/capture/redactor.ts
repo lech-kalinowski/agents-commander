@@ -125,9 +125,11 @@ export class CaptureRedactor {
       text = text.replace(pattern, () => { count(rule); return replacement; });
     };
     // Covers capability-bearing headers/footers even if the key was not bound here.
-    text = text.replace(/(COMMANDER:(?:SEND:[A-Za-z0-9_]{1,32}:[0-9]{1,16}|REPLY|BROADCAST|STATUS|QUERY|END):)([A-Za-z0-9_-]{32,64})(={3})/gu,
-      (_match, prefix: string, _key: string, suffix: string) => {
-        count('marker_capability'); return `${prefix}[REDACTED:capability]${suffix}`;
+    // Redact before a sequence separator as well as a footer delimiter. Even
+    // malformed/unfinished sequence suffixes must not expose an unknown key.
+    text = text.replace(/(COMMANDER:(?:SEND:[A-Za-z0-9_]{1,32}:[0-9]{1,16}|REPLY|BROADCAST|STATUS|QUERY|END):)([A-Za-z0-9_-]{32,64})(?=[:=\s]|$)/gu,
+      (_match, prefix: string) => {
+        count('marker_capability'); return `${prefix}[REDACTED:capability]`;
       });
     // Avoid an unbounded lazy regex: repeated unterminated BEGIN lines must
     // not turn redaction into quadratic work on the terminal routing thread.

@@ -19,6 +19,7 @@ export const CANDIDATE_SCHEMA = {
   properties: {
     schemaVersion: { const: 1 }, id: text, captureId: text, projectId: text, synthetic: { type: 'boolean' }, syntheticConditioning: { type: 'boolean' },
     sessionId: text, emissionId: text, eventId: text, sequence: { type: 'integer', minimum: 1 },
+    protocolSequence: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
     sourceEventIds: { type: 'array', minItems: 1, uniqueItems: true, items: text },
     capabilityRef: { type: 'string', pattern: '^cap_[1-9][0-9]*$' },
     capabilityOwners: { type: 'object', propertyNames: { pattern: '^cap_[1-9][0-9]*$' }, additionalProperties: text },

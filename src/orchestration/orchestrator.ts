@@ -595,7 +595,8 @@ export class Orchestrator {
       ...(msg.type === 'send' ? { targetAgent: msg.targetAgent, targetPanel: msg.targetPanel + 1 } : {}),
       ...resolved,
     };
-    this.recordCapture({ ...context, type: 'frame.accepted', content: msg.content, coverage: 'commander-visible' });
+    this.recordCapture({ ...context, type: 'frame.accepted', content: msg.content, coverage: 'commander-visible',
+      ...(msg.sequence === undefined ? {} : { protocolSequence: msg.sequence }) });
     return context;
   }
 
@@ -1265,6 +1266,7 @@ export class Orchestrator {
     engaged: boolean,
   ): void {
     this.protocolCapabilities.set(target.sessionId, capability);
+    target.terminal.setProtocolCapability?.(capability);
     this.protocolInjected.add(target.panelIndex);
     this.protocolSessionState.set(target.sessionId, {
       injectedAt: Date.now(),

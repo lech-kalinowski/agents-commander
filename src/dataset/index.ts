@@ -20,6 +20,20 @@ const SCHEMA_FILES = {
   'review.schema.json': `${canonical(REVIEW_SCHEMA)}\n`,
   'training-row.schema.json': `${canonical(TRAINING_ROW_SCHEMA)}\n`,
 };
+// Existing reviewed v1 artifacts remain valid: their schema predates the
+// optional wire counter. Accept that exact schema, not arbitrary replacements.
+const { protocolSequence: _sequenceSchema, ...legacyCandidateProperties } = CANDIDATE_SCHEMA.properties;
+const LEGACY_CANDIDATE_SCHEMA_TEXT = `${canonical({ ...CANDIDATE_SCHEMA, properties: legacyCandidateProperties })}\n`;
+function validateSchemaFiles(files: Record<string, Buffer>, error: string): boolean {
+  let legacyCandidateSchema = false;
+  for (const [name, content] of Object.entries(SCHEMA_FILES)) {
+    const actual = files[name].toString();
+    if (actual === content) continue;
+    if (name === 'candidate.schema.json' && actual === LEGACY_CANDIDATE_SCHEMA_TEXT) legacyCandidateSchema = true;
+    else throw new Error(error);
+  }
+  return legacyCandidateSchema;
+}
 const SPLIT_FILES = ['train.jsonl', 'validation.jsonl', 'test.jsonl', 'synthetic.train.jsonl', 'synthetic.validation.jsonl', 'synthetic.test.jsonl'];
 const hashFiles = (files: Record<string, string>) => Object.fromEntries(Object.entries(files).map(([name, content]) => [name, sha256(content)]));
 const countKinds = (capture: ReadCaptureResult) => {
@@ -150,9 +164,10 @@ function readPrepared(directory: string) {
     || !Number.isSafeInteger(parsed.candidates) || Number(parsed.candidates) < 0 || Number(parsed.candidates) > DATASET_MAX_CANDIDATES) throw new Error('Unsupported candidate manifest');
   validateSources(parsed.sources);
   const files = verifyFiles(root, parsed.files, [...Object.keys(SCHEMA_FILES), 'candidates.jsonl']);
-  for (const [name, content] of Object.entries(SCHEMA_FILES)) if (files[name].toString() !== content) throw new Error('Unsupported dataset schema');
+  const legacyCandidateSchema = validateSchemaFiles(files, 'Unsupported dataset schema');
   if (sha256(files['candidates.jsonl']) !== parsed.candidatesSha256) throw new Error('Candidate hash mismatch');
   const candidates = parseJsonl(files['candidates.jsonl'], 'candidates') as Candidate[];
+  if (legacyCandidateSchema && candidates.some((candidate) => Object.hasOwn(candidate, 'protocolSequence'))) throw new Error('Wire counter requires its declared candidate schema');
   if (candidates.length !== parsed.candidates) throw new Error('Candidate count mismatch');
   checkCandidateSources(candidates, parsed.sources);
   const groups = groupCandidates(candidates);
@@ -177,7 +192,8 @@ export function renderTrainingRow(candidate: Candidate, seed: string): { row: Tr
     prompt: candidate.prompt.map((message) => ({ role: message.role, content: substitute(message.content) })),
     completion: [{ role: 'assistant', content: substitute(candidate.completion[0].content) }],
   };
-  if (canonical(row).includes('<cap:') || !row.completion[0].content.endsWith(`===COMMANDER:END:${bindings[candidate.capabilityRef]}===`)) throw new Error('Unresolved exported protocol reference');
+  const sequence = candidate.protocolSequence === undefined ? '' : `:${candidate.protocolSequence}`;
+  if (canonical(row).includes('<cap:') || !row.completion[0].content.endsWith(`===COMMANDER:END:${bindings[candidate.capabilityRef]}${sequence}===`)) throw new Error('Unresolved exported protocol reference');
   return { row, bindings };
 }
 
@@ -256,7 +272,7 @@ export async function validateDataset(directory: string) {
   const files = verifyFiles(root, parsed.files, expectedFiles);
   const actualNames = fs.readdirSync(root);
   if (actualNames.length !== expectedFiles.length + 1 || actualNames.some((name) => name !== 'manifest.json' && !expectedFiles.includes(name))) throw new Error('Unexpected files in dataset directory');
-  for (const [name, content] of Object.entries(SCHEMA_FILES)) if (files[name].toString() !== content) throw new Error('Unsupported export schema');
+  const legacyCandidateSchema = validateSchemaFiles(files, 'Unsupported export schema');
   const trainingConfig = parseJson(files['training-config.json'], 'training config');
   assertRecord(trainingConfig, ['schemaVersion', 'status', 'trainer', 'requirements'], 'training config');
   assertRecord(trainingConfig.trainer, ['completion_only_loss', 'assistant_only_loss', 'packing'], 'training options');
@@ -279,6 +295,7 @@ export async function validateDataset(directory: string) {
     || canonical(frozen.assignments) !== canonical(preparation.splitAssignments)
     || canonical(frozen.warnings) !== canonical(preparation.warnings)) throw new Error('Frozen split assignments changed');
   const candidates = parseJsonl(files['source-candidates.jsonl'], 'source candidates') as Candidate[];
+  if (legacyCandidateSchema && candidates.some((candidate) => Object.hasOwn(candidate, 'protocolSequence'))) throw new Error('Wire counter requires its declared candidate schema');
   if (!candidates.length) throw new Error('Empty export');
   checkCandidateSources(candidates, parsed.sources);
   const review = parseJson(files['review.json'], 'exported review');

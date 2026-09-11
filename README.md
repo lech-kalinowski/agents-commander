@@ -335,18 +335,25 @@ to fix every vulnerability you find."
 
 Five commands, one session-bound routing capability. `Ctrl+P` generates a fresh private capability for that agent session and teaches the agent the exact marker format. Static or copied markers without the current capability are inert. In the examples below, `<session-key>` stands for the value injected into the agent.
 
+The current source adds a **sequence suffix** (not in npm 0.1.5). Each agent
+starts its own counter at `1` after protocol injection and increments it for
+every new command across all five verbs. Replace `<N>` below with that number;
+the header and footer must contain the same key and number. A redraw keeps the
+original number. An intentionally repeated action, even with identical text,
+needs a new number. `Ctrl+P` and F2 → P teach this format automatically.
+
 **SEND** -- direct message to a specific agent:
 ```
-===COMMANDER:SEND:codex:2:<session-key>===
+===COMMANDER:SEND:codex:2:<session-key>:<N>===
 Please write unit tests for the auth module.
-===COMMANDER:END:<session-key>===
+===COMMANDER:END:<session-key>:<N>===
 ```
 
 **REPLY** -- continue your latest open reply thread (no panel number needed):
 ```
-===COMMANDER:REPLY:<session-key>===
+===COMMANDER:REPLY:<session-key>:<N>===
 Tests written. 12 passing, 0 failing.
-===COMMANDER:END:<session-key>===
+===COMMANDER:END:<session-key>:<N>===
 ```
 
 Commander claims the newest open reply window and resolves its return session.
@@ -355,23 +362,23 @@ if the route is still valid. This is not a permanent "last sender" address.
 
 **BROADCAST** -- send to every other connected agent at once:
 ```
-===COMMANDER:BROADCAST:<session-key>===
+===COMMANDER:BROADCAST:<session-key>:<N>===
 Phase 1 complete. All agents: begin phase 2.
-===COMMANDER:END:<session-key>===
+===COMMANDER:END:<session-key>:<N>===
 ```
 
 **STATUS** -- report progress (shown as a toast in Commander UI, not sent to agents):
 ```
-===COMMANDER:STATUS:<session-key>===
+===COMMANDER:STATUS:<session-key>:<N>===
 Analyzing file 5 of 10...
-===COMMANDER:END:<session-key>===
+===COMMANDER:END:<session-key>:<N>===
 ```
 
 **QUERY** -- ask Commander what agents are running:
 ```
-===COMMANDER:QUERY:<session-key>===
+===COMMANDER:QUERY:<session-key>:<N>===
 agents
-===COMMANDER:END:<session-key>===
+===COMMANDER:END:<session-key>:<N>===
 ```
 
 Commander's `ProtocolScanner` watches agent output in real-time, strips ANSI codes, detects these markers across streaming chunks, and routes a message only when its capability matches the currently armed session. The target agent sees:
@@ -392,6 +399,34 @@ subsequent per-target delivery outcomes appear in F12 Activity. STATUS returns
 a local `kind=status status=accepted` ACK.
 
 Routing is bidirectional between connected supported sessions.
+
+### Redraws, repeated actions, and compatibility
+
+Terminal history can reappear after scrolling, fullscreen changes, or a resize.
+The source replay guard retains command identities across these changes; a
+previously seen sequence cannot become a new action because its body, wrapping,
+destination, or verb changes. Recognized outgoing instruction/prompt echoes stay
+suppressed rather than becoming agent-authored output after repeated redraws.
+
+- Sequences are positive decimal integers from `1` to `9007199254740991`, without
+  leading zeros. One counter covers all five verbs for the current capability.
+- Each capability has a 4,096-number sliding replay window. Unseen numbers
+  within that window may arrive out of order; duplicates and older numbers are
+  rejected. This is local replay suppression, **not exactly-once delivery** or
+  proof that a model completed a task. A suppressed frame may have no ACK.
+- Capability-only markers without `:<N>` remain compatible, but an identical
+  command fingerprint is allowed only once until the agent process or its
+  explicitly armed capability changes. If a CLI rewrites hard line breaks,
+  unsequenced text can be ambiguous. Use sequences for new workflows and for
+  intentionally repeated identical actions.
+- Replay storage is bounded: up to 4,096 legacy fingerprints and eight
+  sequence-capability scopes. Exhaustion blocks further outgoing protocol
+  processing and is shown in the panel header; restarting the agent clears it.
+  Resizing or toggling fullscreen does not reset replay history. Explicit
+  `Ctrl+P` also resets it by arming a fresh capability and counter; old-key
+  output then remains inert. Finish any current input before reinjecting, and
+  inspect prior deliveries before retrying an uncertain task. F2 → P skips
+  already-armed sessions and does not rotate their keys.
 
 ### Activity, diagnostics, and recording limits
 

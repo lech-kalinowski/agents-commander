@@ -50,19 +50,22 @@ with another agent running in a different panel.
 
   Ctrl+P supplies the real {white-fg}<session-key>{/white-fg} to the agent.
   Static markers without that key are intentionally inert.
-  All headers and footers must use the same session key.
+  All headers and footers must use the same session key and N.
+  N starts at 1; increment for every NEW command across all verbs.
+  Keep the original N on redraw. Use a new N to repeat an action.
+  This sequence extension is a source addition after npm 0.1.5.
 
   {bold}1. SEND{/bold} — direct message to a specific agent:
 
-    {cyan-fg}===COMMANDER:SEND:{/cyan-fg}{white-fg}agent_type{/white-fg}{cyan-fg}:{/cyan-fg}{white-fg}panel_number{/white-fg}{cyan-fg}:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
+    {cyan-fg}===COMMANDER:SEND:{/cyan-fg}{white-fg}agent_type{/white-fg}{cyan-fg}:{/cyan-fg}{white-fg}panel_number{/white-fg}{cyan-fg}:{/cyan-fg}{white-fg}<session-key>:<N>{/white-fg}{cyan-fg}==={/cyan-fg}
     {white-fg}your message or task{/white-fg}
-    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
+    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>:<N>{/white-fg}{cyan-fg}==={/cyan-fg}
 
   {bold}2. REPLY{/bold} — continue your newest open reply window:
 
-    {cyan-fg}===COMMANDER:REPLY:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
+    {cyan-fg}===COMMANDER:REPLY:{/cyan-fg}{white-fg}<session-key>:<N>{/white-fg}{cyan-fg}==={/cyan-fg}
     {white-fg}your response{/white-fg}
-    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
+    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>:<N>{/white-fg}{cyan-fg}==={/cyan-fg}
 
     Commander claims the newest open window for this session
     and resolves its return session, thread and prior message.
@@ -71,32 +74,55 @@ with another agent running in a different panel.
 
   {bold}3. BROADCAST{/bold} — send to all other connected agents:
 
-    {cyan-fg}===COMMANDER:BROADCAST:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
+    {cyan-fg}===COMMANDER:BROADCAST:{/cyan-fg}{white-fg}<session-key>:<N>{/white-fg}{cyan-fg}==={/cyan-fg}
     {white-fg}message for everyone{/white-fg}
-    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
+    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>:<N>{/white-fg}{cyan-fg}==={/cyan-fg}
 
     Queued for other connected running agents, not file panels.
     Each target is checked independently; no agent is auto-launched.
 
   {bold}4. STATUS{/bold} — report progress (shown in UI and acknowledged in your panel):
 
-    {cyan-fg}===COMMANDER:STATUS:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
+    {cyan-fg}===COMMANDER:STATUS:{/cyan-fg}{white-fg}<session-key>:<N>{/white-fg}{cyan-fg}==={/cyan-fg}
     {white-fg}Processing file 5 of 10...{/white-fg}
-    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
+    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>:<N>{/white-fg}{cyan-fg}==={/cyan-fg}
 
     Shows a toast notification in Commander and returns a local ACK.
 
   {bold}5. QUERY{/bold} — ask Commander for environment info:
 
-    {cyan-fg}===COMMANDER:QUERY:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
+    {cyan-fg}===COMMANDER:QUERY:{/cyan-fg}{white-fg}<session-key>:<N>{/white-fg}{cyan-fg}==={/cyan-fg}
     {white-fg}agents{/white-fg}
-    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>{/white-fg}{cyan-fg}==={/cyan-fg}
+    {cyan-fg}===COMMANDER:END:{/cyan-fg}{white-fg}<session-key>:<N>{/white-fg}{cyan-fg}==={/cyan-fg}
 
     Queries: {cyan-fg}agents{/cyan-fg} (list running agents),
     {cyan-fg}panels{/cyan-fg} (panel layout info),
     {cyan-fg}status{/cyan-fg} (your status),
     {cyan-fg}help{/cyan-fg} (protocol command list),
     {cyan-fg}ping{/cyan-fg} (test responsiveness).
+
+  N is a positive decimal integer, with no leading zeros.
+  Use at most 9007199254740991; do not reset the counter mid-session.
+  A fresh Ctrl+P key starts a new counter at 1.
+
+
+{bold}{yellow-fg}REPLAY PROTECTION{/yellow-fg}{/bold}
+
+  Scrolling, redraw and F4/resize do not reset command identity.
+  A seen N is rejected even if its verb, target or text changes.
+  The 4,096-number window accepts unseen out-of-order numbers
+  within it, but rejects older numbers. This is local suppression,
+  not an exactly-once delivery or model-completion guarantee.
+  Recognized prompt/instruction echoes never become authored output.
+
+  Older key-only markers work, but identical command fingerprints
+  are accepted only once until process/capability replacement.
+  Hard-reflowed legacy text is ambiguous; use sequences for identity.
+  Limits: 4,096 legacy fingerprints and 8 sequence-capability scopes.
+  Exhaustion blocks outgoing protocol with a panel-header warning.
+  Restart the agent, or explicitly inject a fresh key with Ctrl+P
+  into its empty ready prompt. Old-key output then remains inert.
+  Inspect prior delivery before retrying an uncertain task.
 
 
 {bold}{yellow-fg}ACKNOWLEDGMENTS{/yellow-fg}{/bold}

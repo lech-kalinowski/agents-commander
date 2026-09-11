@@ -65,6 +65,7 @@ additions after npm 0.1.5; do not describe them as published 0.1.5 features.
 - Up to 100 active panels use stable numbers in a paged workspace; hidden sessions keep running
 - Shift+F4 cycles auto/2/3/4 visible density independently of active panel count; Ctrl+0/2/3/4 are terminal-dependent aliases
 - REPLY claims the latest open reply window, not a permanent last-sender address
+- New protocol injections teach a per-capability positive sequence on every header and matching END footer. Fresh actions use a fresh counter; redraws/retries keep their identity. Replay suppression survives scrolling and resize. Legacy frames remain accepted with conservative session-lifetime exact-content suppression; hard reflow requires sequenced identity. Replay storage is bounded and fails closed, never evicting history into execution eligibility. See the protocol reference for limits and explicit capability rotation.
 - Activity is bounded and in-memory; diagnostic logs are not session recordings. Capture/export require explicit launch consent and human review; see `docs/datasets.md` and the broader proposed roadmap in `docs/session-capture-plan.md`
 - Dataset commands must remain UI-independent; never enable recording from saved config, export unapproved data, retain live capability keys, or include private research artifacts in git/npm
 - marked-terminal renderer methods must be extracted and bound to avoid marked v15 compat issues

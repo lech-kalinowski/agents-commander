@@ -31,23 +31,24 @@ export const CMD_QUERY_RE = /^={3,}COMMANDER:QUERY={3,}$/;
 export const CMD_END_MARKER = '===COMMANDER:END===';
 const CAPABILITY_SOURCE = '[A-Za-z0-9_-]{32,64}';
 const CAPABILITY_RE = new RegExp(`^${CAPABILITY_SOURCE}$`);
+const OPTIONAL_SEQUENCE_SOURCE = '(?::(\\d+))?';
 const CAPABILITY_SEND_RE = new RegExp(
-  `^={3,}COMMANDER:SEND:(\\w+):(\\d+):(${CAPABILITY_SOURCE})={3,}$`,
+  `^={3,}COMMANDER:SEND:(\\w+):(\\d+):(${CAPABILITY_SOURCE})${OPTIONAL_SEQUENCE_SOURCE}={3,}$`,
 );
 const CAPABILITY_REPLY_RE = new RegExp(
-  `^={3,}COMMANDER:REPLY:(${CAPABILITY_SOURCE})={3,}$`,
+  `^={3,}COMMANDER:REPLY:(${CAPABILITY_SOURCE})${OPTIONAL_SEQUENCE_SOURCE}={3,}$`,
 );
 const CAPABILITY_BROADCAST_RE = new RegExp(
-  `^={3,}COMMANDER:BROADCAST:(${CAPABILITY_SOURCE})={3,}$`,
+  `^={3,}COMMANDER:BROADCAST:(${CAPABILITY_SOURCE})${OPTIONAL_SEQUENCE_SOURCE}={3,}$`,
 );
 const CAPABILITY_STATUS_RE = new RegExp(
-  `^={3,}COMMANDER:STATUS:(${CAPABILITY_SOURCE})={3,}$`,
+  `^={3,}COMMANDER:STATUS:(${CAPABILITY_SOURCE})${OPTIONAL_SEQUENCE_SOURCE}={3,}$`,
 );
 const CAPABILITY_QUERY_RE = new RegExp(
-  `^={3,}COMMANDER:QUERY:(${CAPABILITY_SOURCE})={3,}$`,
+  `^={3,}COMMANDER:QUERY:(${CAPABILITY_SOURCE})${OPTIONAL_SEQUENCE_SOURCE}={3,}$`,
 );
 const CAPABILITY_END_RE = new RegExp(
-  `^={3,}COMMANDER:END:(${CAPABILITY_SOURCE})={3,}$`,
+  `^={3,}COMMANDER:END:(${CAPABILITY_SOURCE})${OPTIONAL_SEQUENCE_SOURCE}={3,}$`,
 );
 const LEGACY_TEMPLATE_MARKER_BODY = String.raw`={3,}COMMANDER:(?:SEND:[^:\s=]+:[^:\s=]+|REPLY(?::[^:\s=]+:[^:\s=]+)?|BROADCAST|STATUS|QUERY|END)`;
 const LEGACY_TEMPLATE_MARKER_SOURCE = `${LEGACY_TEMPLATE_MARKER_BODY}={3,}`;
@@ -82,11 +83,14 @@ export interface CommanderMessage {
   content: string;
   /** Per-managed-session authorization issued when Commander protocol is armed. */
   capability?: string;
+  /** Positive per-session emission identity; unchanged when a CLI redraws history. */
+  sequence?: number;
 }
 
 export interface ProtocolMarkerMatch {
   /** Null denotes the legacy, unarmed marker format. */
   capability: string | null;
+  sequence?: number;
 }
 
 /** Generate a 256-bit, URL-safe capability for one managed agent session. */
@@ -112,7 +116,19 @@ export function normalizeMarkerLine(line: string): string {
 
 export function matchSendStart(line: string): RegExpMatchArray | null {
   const normalized = normalizeMarkerLine(line);
-  return normalized.match(CAPABILITY_SEND_RE) ?? normalized.match(CMD_START_RE);
+  const capabilityMatch = normalized.match(CAPABILITY_SEND_RE);
+  if (capabilityMatch) {
+    if (capabilityMatch[4] !== undefined && parseProtocolSequence(capabilityMatch[4]) === null) return null;
+    return capabilityMatch;
+  }
+  return normalized.match(CMD_START_RE);
+}
+
+/** Parse canonical positive decimal integers without lossy numeric coercion. */
+function parseProtocolSequence(value: string): number | null {
+  if (!/^[1-9]\d{0,15}$/.test(value)) return null;
+  const sequence = Number(value);
+  return Number.isSafeInteger(sequence) ? sequence : null;
 }
 
 export function isReplyMarker(line: string): boolean {
@@ -138,7 +154,13 @@ function matchSimpleMarker(
 ): ProtocolMarkerMatch | null {
   const normalized = normalizeMarkerLine(line);
   const capabilityMatch = normalized.match(capabilityPattern);
-  if (capabilityMatch) return { capability: capabilityMatch[1] };
+  if (capabilityMatch) {
+    if (capabilityMatch[2] === undefined) return { capability: capabilityMatch[1] };
+    const sequence = parseProtocolSequence(capabilityMatch[2]);
+    // Do not fall through to legacy REPLY:<type>:<panel> for a malformed
+    // capability-bound sequence: that would silently downgrade its identity.
+    return sequence === null ? null : { capability: capabilityMatch[1], sequence };
+  }
   return legacyPattern.test(normalized) ? { capability: null } : null;
 }
 
@@ -164,17 +186,23 @@ export function matchEndMarker(line: string): ProtocolMarkerMatch | null {
 
 /**
  * Match a footer. When an expected capability is supplied, the footer must
- * carry exactly the same capability as its header. Passing null explicitly
- * limits matching to the legacy marker format.
+ * carry exactly the same capability and sequence as its header. Omitting the
+ * expected sequence permits only a non-sequenced footer in this comparison.
+ * Passing null explicitly limits matching to the legacy marker format; calling
+ * with only a line detects any valid footer without comparing a header.
  */
 export function isEndMarker(
   line: string,
   expectedCapability?: string | null,
+  expectedSequence?: number,
 ): boolean {
   const match = matchEndMarker(line);
   if (!match) return false;
-  if (expectedCapability === undefined) return true;
-  return match.capability === expectedCapability;
+  if (expectedCapability !== undefined && match.capability !== expectedCapability) return false;
+  if (expectedCapability !== undefined || expectedSequence !== undefined) {
+    return match.sequence === expectedSequence;
+  }
+  return true;
 }
 
 /**
@@ -262,6 +290,8 @@ export class ProtocolScanner {
   private collecting = false;
   private collectType: MessageType = 'send';
   private collectCapability: string | null = null;
+  private collectSequence: number | undefined;
+  private expectedCapability: string | null = null;
   private target: { agent: AgentType; panel: number } | null = null;
   private contentLines: string[] = [];
   private contentBytes = 0;
@@ -280,6 +310,22 @@ export class ProtocolScanner {
   }
 
   private mutedUntil = 0;
+
+  /** Explicit key rotation discards partial old output, but preserves muting. */
+  setProtocolCapability(capability: string): void {
+    if (!isProtocolCapability(capability)) throw new Error('Invalid protocol capability');
+    if (this.expectedCapability === capability) return;
+    this.expectedCapability = capability;
+    this.collecting = false;
+    this.collectCapability = null;
+    this.collectSequence = undefined;
+    this.target = null;
+    this.contentLines = [];
+    this.contentBytes = 0;
+    this.clearPendingLine();
+    this.rawProbeTail = '';
+    this.discardingLine = false;
+  }
 
   /**
    * Extend the mute window.  If the new deadline is earlier than an
@@ -354,6 +400,7 @@ export class ProtocolScanner {
     if (this.bufferBytes > pendingLimit) {
       this.collecting = false;
       this.collectCapability = null;
+      this.collectSequence = undefined;
       this.target = null;
       this.contentLines = [];
       this.contentBytes = 0;
@@ -404,6 +451,7 @@ export class ProtocolScanner {
       // ── SEND:agent:panel ──
       const startMatch = matchSendStart(line);
       if (startMatch) {
+        if (this.expectedCapability && startMatch[3] !== this.expectedCapability) return;
         if (!isAgentType(startMatch[1])) {
           logger.debug(`Scanner[${this.sourcePanel}] ignoring marker with unknown agent type`);
           return;
@@ -417,6 +465,7 @@ export class ProtocolScanner {
         this.collecting = true;
         this.collectType = 'send';
         this.collectCapability = startMatch[3] ?? null;
+        this.collectSequence = startMatch[4] === undefined ? undefined : Number(startMatch[4]);
         this.target = { agent: startMatch[1], panel: panelNum };
         this.contentLines = [];
         this.contentBytes = 0;
@@ -426,9 +475,11 @@ export class ProtocolScanner {
       // ── REPLY ──
       const replyMarker = matchReplyMarker(line);
       if (replyMarker) {
+        if (this.expectedCapability && replyMarker.capability !== this.expectedCapability) return;
         this.collecting = true;
         this.collectType = 'reply';
         this.collectCapability = replyMarker.capability;
+        this.collectSequence = replyMarker.sequence;
         this.target = null;
         this.contentLines = [];
         this.contentBytes = 0;
@@ -438,9 +489,11 @@ export class ProtocolScanner {
       // ── BROADCAST ──
       const broadcastMarker = matchBroadcastMarker(line);
       if (broadcastMarker) {
+        if (this.expectedCapability && broadcastMarker.capability !== this.expectedCapability) return;
         this.collecting = true;
         this.collectType = 'broadcast';
         this.collectCapability = broadcastMarker.capability;
+        this.collectSequence = broadcastMarker.sequence;
         this.target = null;
         this.contentLines = [];
         this.contentBytes = 0;
@@ -450,9 +503,11 @@ export class ProtocolScanner {
       // ── STATUS ──
       const statusMarker = matchStatusMarker(line);
       if (statusMarker) {
+        if (this.expectedCapability && statusMarker.capability !== this.expectedCapability) return;
         this.collecting = true;
         this.collectType = 'status';
         this.collectCapability = statusMarker.capability;
+        this.collectSequence = statusMarker.sequence;
         this.target = null;
         this.contentLines = [];
         this.contentBytes = 0;
@@ -462,9 +517,11 @@ export class ProtocolScanner {
       // ── QUERY ──
       const queryMarker = matchQueryMarker(line);
       if (queryMarker) {
+        if (this.expectedCapability && queryMarker.capability !== this.expectedCapability) return;
         this.collecting = true;
         this.collectType = 'query';
         this.collectCapability = queryMarker.capability;
+        this.collectSequence = queryMarker.sequence;
         this.target = null;
         this.contentLines = [];
         this.contentBytes = 0;
@@ -473,7 +530,7 @@ export class ProtocolScanner {
     }
 
     // Check for end marker (lenient: allow extra = signs, whitespace)
-    if (this.collecting && isEndMarker(line, this.collectCapability)) {
+    if (this.collecting && isEndMarker(line, this.collectCapability, this.collectSequence)) {
       const content = this.contentLines.join('\n').trim();
       this.onMessage({
         type: this.collectType,
@@ -483,10 +540,12 @@ export class ProtocolScanner {
         targetPanel: this.target?.panel ?? -1,
         content,
         ...(this.collectCapability ? { capability: this.collectCapability } : {}),
+        ...(this.collectSequence !== undefined ? { sequence: this.collectSequence } : {}),
       });
       this.collecting = false;
       this.collectType = 'send';
       this.collectCapability = null;
+      this.collectSequence = undefined;
       this.target = null;
       this.contentLines = [];
       this.contentBytes = 0;
@@ -506,6 +565,7 @@ export class ProtocolScanner {
       )) {
         this.collecting = false;
         this.collectCapability = null;
+        this.collectSequence = undefined;
         this.target = null;
         this.contentLines = [];
         this.contentBytes = 0;
@@ -562,18 +622,26 @@ export function buildProtocolInstructions(
     `Use Commander protocol only when the user explicitly asks you to coordinate, or when Commander delivers [From ...] / [Broadcast from ...] to you.`,
     `Do not send startup broadcasts, self-check queries, or status pings on your own right after reading these instructions.`,
     `Protocol capability: ${effectiveCapability}. Include it on every protocol header and footer exactly as shown below.`,
+    `For this capability, keep one positive integer counter n starting at 1, shared across SEND, REPLY, BROADCAST, STATUS, and QUERY.`,
+    `Use the next counter for every new message and put the exact same n on its header and footer. Write canonical decimal digits only: no leading zero, sign, or decimal point.`,
+    `Keep the original counter unchanged when retrying or redrawing an existing message; replaying it does not send it again. Never reuse a counter for a changed body, target, or command.`,
+    `To intentionally send the same body again as a new action, use a new counter. Historical redraws must retain their original counters.`,
+    `Commander keeps a 4096-number reorder window and rejects older counters, including counters never observed before. Do not jump ahead or reset your counter within this capability.`,
+    `The largest counter is ${Number.MAX_SAFE_INTEGER}; restart the agent and inject fresh protocol instructions before exhausting it.`,
     ``,
     `To message another agent, output exactly 3 lines:`,
-    `  1) header: three "=" + "COMMANDER:SEND:<type>:<panel>:${effectiveCapability}" + three "="`,
+    `  1) header: three "=" + "COMMANDER:SEND:<type>:<panel>:${effectiveCapability}:<n>" + three "="`,
     `  2) body: your message text`,
-    `  3) footer: three "=" + "COMMANDER:END:${effectiveCapability}" + three "="`,
+    `  3) footer: three "=" + "COMMANDER:END:${effectiveCapability}:<n>" + three "="`,
+    `Replace <n> with your current counter; do not print angle brackets. Even when a template shows an older marker format, include your counter on both output markers.`,
+    `Quoted protocol blocks are examples; choose your own next counter for a new action rather than reusing their number.`,
     `Types: claude, codex, gemini, aider, cline, opencode, goose, kiro, amp, generic. Panel numbers: 1-${MAX_PANEL_NUMBER}.`,
     ``,
     `Other line-1 headers:`,
-    `  REPLY     -> COMMANDER:REPLY:${effectiveCapability}        (auto-routes to whoever messaged you)`,
-    `  BROADCAST -> COMMANDER:BROADCAST:${effectiveCapability}`,
-    `  STATUS    -> COMMANDER:STATUS:${effectiveCapability}`,
-    `  QUERY     -> COMMANDER:QUERY:${effectiveCapability}`,
+    `  REPLY     -> COMMANDER:REPLY:${effectiveCapability}:<n>        (claims your newest open reply window)`,
+    `  BROADCAST -> COMMANDER:BROADCAST:${effectiveCapability}:<n>`,
+    `  STATUS    -> COMMANDER:STATUS:${effectiveCapability}:<n>`,
+    `  QUERY     -> COMMANDER:QUERY:${effectiveCapability}:<n>`,
     `Query values: agents, panels, status, help, ping`,
     ``,
     `SEND, REPLY, BROADCAST, and STATUS produce a Commander ACK in your panel. QUERY returns Commander info directly.`,

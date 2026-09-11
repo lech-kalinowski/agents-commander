@@ -16,7 +16,7 @@ export const COVERAGE = new Set(['commander-visible', 'missing-manual-input', 't
 export const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 export const MACHINE_RE = /^[a-z][a-z0-9_]{0,63}$/u;
 export const CAP_REF_RE = /^cap_[1-9][0-9]{0,5}$/u;
-export const INPUT_KEYS = ['type', 'actor', 'target', 'verb', 'content', 'capabilityRef', 'targetAgent', 'targetPanel', 'emissionId', 'messageId', 'threadId', 'replyToMessageId', 'inputKind', 'outcome', 'reason', 'coverage'] as const;
+export const INPUT_KEYS = ['type', 'actor', 'target', 'verb', 'content', 'capabilityRef', 'protocolSequence', 'targetAgent', 'targetPanel', 'emissionId', 'messageId', 'threadId', 'replyToMessageId', 'inputKind', 'outcome', 'reason', 'coverage'] as const;
 
 export function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -44,6 +44,7 @@ export function validateInput(value: unknown): value is CaptureInput {
     if (value[key] !== undefined && (typeof value[key] !== 'string' || !MACHINE_RE.test(value[key]))) return false;
   }
   if (value.capabilityRef !== undefined && (typeof value.capabilityRef !== 'string' || !CAP_REF_RE.test(value.capabilityRef))) return false;
+  if (value.protocolSequence !== undefined && (!Number.isSafeInteger(value.protocolSequence) || Number(value.protocolSequence) < 1)) return false;
   if (value.targetAgent !== undefined && !AGENTS.has(value.targetAgent as string)) return false;
   if (value.targetPanel !== undefined && !validPanel(value.targetPanel)) return false;
   if (value.verb !== undefined && !VERBS.has(value.verb as string)) return false;

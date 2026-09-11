@@ -4,6 +4,10 @@
 
 ### Added
 
+- Source-only protocol sequence suffixes on all five command headers and their
+  END footer. Newly injected instructions use one increasing per-capability
+  counter, allowing intentional identical actions without treating old terminal
+  history as new output. Capability-only markers remain compatible.
 - Explicit F2/P bulk protocol setup for selected or all running agent profiles,
   including hidden panels. One confirmation precedes sequential submissions;
   each session gets a private key. Already-enabled sessions are skipped and
@@ -19,6 +23,15 @@
 
 ### Fixed
 
+- Keep bounded, process-session replay protection across terminal redraws,
+  scrollback scans and fullscreen/resize changes instead of allowing old frames
+  to route again after the short deduplication interval. Sequenced frames retain
+  their identity even when a CLI changes hard line wrapping. Repeated recognized
+  input echoes remain suppressed. Legacy identical frames are conservative
+  once-per-armed-session; ambiguous hard-reflow cases require sequenced output.
+  Exhausting replay storage fails closed with a panel-header warning and
+  requires an agent restart or explicit fresh-capability injection; this is not
+  an exactly-once delivery guarantee.
 - Preserve confirmation ownership across cancellation and immediate reopening;
   an owner-cancelled dialog cannot commit a queued approval or release a newer
   dialog's input shield.
@@ -43,6 +56,8 @@
 
 ### Maintenance
 
+- Restrict application test discovery to `tests/`, excluding private rehearsal
+  helpers and other non-product scripts from the public verification gate.
 - Update development test/build dependencies to patched versions; retain
   runtime dependency ranges and the published package version.
 - Add build/watch startup and owned-process cleanup to the verification gate,

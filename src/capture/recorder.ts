@@ -110,7 +110,7 @@ class LocalCaptureRecorder implements CaptureRecorder {
       };
       if (input.actor) event.actor = this.actor(input.actor);
       if (input.target) event.target = this.actor(input.target);
-      for (const key of ['verb', 'capabilityRef', 'targetAgent', 'targetPanel', 'inputKind', 'outcome', 'reason', 'coverage'] as const) {
+      for (const key of ['verb', 'capabilityRef', 'protocolSequence', 'targetAgent', 'targetPanel', 'inputKind', 'outcome', 'reason', 'coverage'] as const) {
         if (input[key] !== undefined) Object.assign(event, { [key]: input[key] });
       }
       for (const [key, kind] of [['emissionId', 'emission'], ['messageId', 'message'], ['threadId', 'thread'], ['replyToMessageId', 'message']] as const) {

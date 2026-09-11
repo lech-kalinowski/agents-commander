@@ -596,7 +596,7 @@ describe('buildProtocolInstructions', () => {
     expect(text).not.toContain('===COMMANDER:QUERY===');
     expect(text).not.toContain('===COMMANDER:END===');
     expect(text).toContain(
-      `three "=" + "COMMANDER:SEND:<type>:<panel>:${TEST_CAPABILITY}" + three "="`,
+      `three "=" + "COMMANDER:SEND:<type>:<panel>:${TEST_CAPABILITY}:<n>" + three "="`,
     );
   });
 

@@ -49,6 +49,8 @@ let spawnError;
 child.once('error', (error) => { spawnError = error; });
 child.stdout.on('data', (data) => term.write(decoder.write(data)));
 child.stderr.on('data', (data) => { stderr = (stderr + data.toString()).slice(-8192); });
+// Cleanup may race a helper that has already closed its control pipe.
+child.stdio[3].on('error', () => {});
 const closed = once(child, 'close');
 const screen = () => term.getGridPlainLines().join('\n');
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -109,6 +111,13 @@ try {
   if (child.exitCode === null && child.signalCode === null) {
     child.kill('SIGTERM');
     await Promise.race([closed.catch(() => {}), delay(2000)]);
+    if (child.exitCode === null && child.signalCode === null) {
+      // Ask the still-running helper to kill its owned PTY process group first;
+      // killing only the helper could orphan the unresponsive CLI under test.
+      child.stdio[3].write('signal KILL\n');
+      child.stdin.end();
+      await Promise.race([closed.catch(() => {}), delay(2000)]);
+    }
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
 }

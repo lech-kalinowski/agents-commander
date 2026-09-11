@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Break obsolete soft-wrap links when a TUI erases an entire terminal row.
+  A freshly painted Commander header is no longer joined to unrelated old
+  text, which could delay routing until another redraw or panel resize.
+  Preserve genuine wraps, partial edits, capability checks and replay guards.
 - Keep automatic file refresh from superseding an in-flight explicit directory
   navigation. Later navigation still wins; hidden-file toggles follow the
   intended destination, and closed panels cannot commit late reads.

@@ -1062,7 +1062,9 @@ export class VTerm {
           for (let c = this.cursorCol; c < end; c++) {
             row[c] = this.blankCell();
           }
-          if (end >= this.cols) {
+          if (this.cursorCol === 0 && end >= this.cols) {
+            this.clearErasedRowWrapBoundaries(this.cursorRow);
+          } else if (end >= this.cols) {
             this.gridWrapsToNext[this.cursorRow] = false;
           }
         }
@@ -1267,25 +1269,40 @@ export class VTerm {
 
   // ── Erase operations ───────────────────────────────────────────
 
+  /** A wholly erased row no longer continues either adjacent logical line. */
+  private clearErasedRowWrapBoundaries(row: number): void {
+    this.gridWrapsToNext[row] = false;
+    if (row > 0) {
+      this.gridWrapsToNext[row - 1] = false;
+    } else if (!this._inAltScreen && this.scrollbackWrapsToNext.length > 0) {
+      // The first visible row may continue a row that already scrolled out.
+      this.scrollbackWrapsToNext[this.scrollbackWrapsToNext.length - 1] = false;
+    }
+  }
+
   private eraseDisplay(mode: number): void {
     switch (mode) {
       case 0: // From cursor to end
         this.eraseLine(0);
         for (let r = this.cursorRow + 1; r < this.rows; r++) {
           this.grid[r] = this.makeRow();
-          this.gridWrapsToNext[r] = false;
+          this.clearErasedRowWrapBoundaries(r);
         }
         break;
       case 1: // From start to cursor
         for (let r = 0; r < this.cursorRow; r++) {
           this.grid[r] = this.makeRow();
-          this.gridWrapsToNext[r] = false;
+          this.clearErasedRowWrapBoundaries(r);
         }
         for (let c = 0; c <= this.cursorCol; c++) {
           this.grid[this.cursorRow][c] = this.blankCell();
         }
+        if (this.cursorCol >= this.cols - 1) {
+          this.clearErasedRowWrapBoundaries(this.cursorRow);
+        }
         break;
       case 2: // Entire display
+        this.clearErasedRowWrapBoundaries(0);
         this.grid = this.makeGrid();
         this.gridWrapsToNext = this.makeWrapFlags();
         break;
@@ -1306,19 +1323,23 @@ export class VTerm {
         for (let c = this.cursorCol; c < this.cols; c++) {
           row[c] = this.blankCell();
         }
-        this.gridWrapsToNext[this.cursorRow] = false;
+        if (this.cursorCol === 0) {
+          this.clearErasedRowWrapBoundaries(this.cursorRow);
+        } else {
+          this.gridWrapsToNext[this.cursorRow] = false;
+        }
         break;
       case 1: // From start to cursor
         for (let c = 0; c <= this.cursorCol; c++) {
           row[c] = this.blankCell();
         }
         if (this.cursorCol >= this.cols - 1) {
-          this.gridWrapsToNext[this.cursorRow] = false;
+          this.clearErasedRowWrapBoundaries(this.cursorRow);
         }
         break;
       case 2: // Entire line
         this.grid[this.cursorRow] = this.makeRow();
-        this.gridWrapsToNext[this.cursorRow] = false;
+        this.clearErasedRowWrapBoundaries(this.cursorRow);
         break;
     }
   }

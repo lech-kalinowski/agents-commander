@@ -52,7 +52,8 @@ in 0.1.6, not 0.1.5. See the
 Version 0.1.7 fixes unresponsive startup from large directory trees and missing
 installed prompt templates; the 0.1.6 collaboration features remain unchanged.
 Version 0.1.8 fixes folder-navigation and modal-focus races found by deeper
-release QA, and adds packaged 100-panel / 20-agent stress checks.
+release QA, repairs delayed protocol detection after terminal-row redraws,
+and adds packaged 100-panel / 20-agent stress checks.
 Registry publication is a separate step; check the npm version listing before
 installing, or build the current source below.
 
@@ -103,6 +104,12 @@ change. While the Markdown editor loads a slow file, **Esc** or **Ctrl+Q**
 cancels without sending keys to the underlying panel. A background Vim exit
 no longer steals keyboard focus from an open dialog; closing that dialog
 returns focus to the replacement file panel.
+
+If a complete protocol block becomes deliverable only after adding panels or
+resizing, update to 0.1.8: it repairs stale soft-wrap boundaries after full-row
+terminal erases. A matching synthetic redraw now reaches the first scheduled
+scan (50 ms with default settings), without additional user input. This is
+local detection latency, not a guarantee of provider response time.
 
 ### Current source version
 

@@ -129,14 +129,26 @@ automated test counts above remain historical checkpoints.
 
 ### 0.1.8 deep release QA
 
-The local final-source gate passed **1,318 application tests across 104 files**,
+The first local 0.1.8 candidate passed **1,318 application tests across 104 files**,
 **28 Python bridge fixtures**, typechecking, development-watch cleanup,
 production build and built/packed CLI checks. A current `npm audit` returned
 zero advisories. Consult CI and registry evidence for the exact release; these
 counts are not proof of hardware or live-provider acceptance.
 
-Three reproduced races have dedicated regressions:
+The subsequent terminal-redraw fix adds 19 regressions, bringing application
+coverage to **1,337 tests across 105 files**. It must pass the same complete
+release gate; the 50 ms scanner assertion uses a controlled clock, not a live
+provider benchmark.
 
+Four reproduced issues have dedicated regressions:
+
+- Erasing a complete terminal row left its incoming soft-wrap link attached to
+  unrelated old text. The new visible header was not recognised until a later
+  repaint. A Claude-style synthetic repro now reaches the first scheduled grid
+  scan at 50 ms with default settings, without later output, scrolling or
+  resizing. Whole-row erases break obsolete links; partial edits, real wrapped
+  headers and replay suppression stay covered. This is detection evidence, not
+  a provider response-time guarantee or an exact raw trace of the user's CLI.
 - A watcher/layout refresh during a slow explicit folder change could reload
   the old path and cancel navigation. Refresh now shares the active navigation;
   newer explicit navigation wins, hidden-file toggles keep the intended target,

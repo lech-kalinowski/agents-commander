@@ -23,6 +23,8 @@ claiming that this version has been published.
 Version 0.1.7 fixes shallow file-panel watches and installed template lookup.
 Version 0.1.8 fixes refresh/navigation races, cancellable slow editor loading,
 and modal focus when Vim exits in the background. Preserve these input owners.
+Whole-row terminal erases must remove obsolete adjacent soft-wrap links;
+partial edits and genuine protocol wraps must remain intact.
 Restart after upgrading. Do not attribute the reproduced watcher freeze to
 Node.js 20; it remains unsupported, while Node.js 22+ is required.
 

@@ -74,7 +74,9 @@ const normalPanels = () => !screen().includes('Multi-Agent Terminal Manager')
 
 try {
   await waitFor(() => screen().includes(`v${metadata.version}`)
-    && screen().includes('Multi-Agent Terminal Manager'), 'normal welcome');
+    && screen().includes('Multi-Agent Terminal Manager')
+    // PTY output can split a render between its title and feature text.
+    && screen().includes('Browse 121 prompt templates'), 'complete normal welcome with templates');
   assert.match(screen(), /Browse 121 prompt templates/u);
   assert.equal(loadTemplates().filter((template) => template.source === 'builtin').length, 121);
   await key(' ', normalPanels, 'Space dismisses welcome');

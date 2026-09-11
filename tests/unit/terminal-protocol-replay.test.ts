@@ -90,6 +90,35 @@ afterEach(() => {
 });
 
 describe('TerminalPanel session-scoped protocol replay protection', () => {
+  it('detects a complete Claude-style redraw on the first scheduled scan without further output', () => {
+    vi.useFakeTimers();
+    const fixture = createFixture();
+    try {
+      const child = fixture.launch();
+      fixture.panel.setProtocolCapability(capability);
+      child.stdout.emit('data', Buffer.from(clearViewport + 'x'.repeat(100) + 'old continuation'));
+      vi.advanceTimersByTime(50);
+      expect(fixture.emitted).not.toHaveBeenCalled();
+
+      const body = 'Synthetic prompt-delivery latency check.';
+      const redraw = `\x1b[2;1H\x1b[2K●${frame('SEND:codex:2', body, capability, 1)}`;
+      const start = Date.now();
+      child.stdout.emit('data', Buffer.from(redraw));
+      // No scrolling, resize, input or later repaint is supplied to rescue it.
+      vi.advanceTimersByTime(49);
+      expect(fixture.emitted).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(Date.now() - start).toBe(50);
+      expect(fixture.emitted).toHaveBeenCalledOnce();
+      expect(fixture.emitted.mock.calls[0][0]).toMatchObject({
+        type: 'send', targetAgent: 'codex', targetPanel: 1, content: body, sequence: 1,
+      });
+      fixture.render(child, redraw);
+      vi.advanceTimersByTime(2000);
+      expect(fixture.emitted).toHaveBeenCalledOnce();
+    } finally { fixture.dispose(); }
+  });
+
   it('rotates away from partial old output and ignores stale headers before a long current frame', () => {
     vi.useFakeTimers();
     const fixture = createFixture();

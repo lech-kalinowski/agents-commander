@@ -52,6 +52,8 @@ Version 0.1.7 fixes bounded file-panel watching and installed template lookup.
 Version 0.1.8 preserves navigation during refresh and modal focus during slow
 editor loads or background Vim exit; the packed gate stress-tests 100 panels
 and twenty local synthetic agent sessions without providers or hardware.
+It also clears obsolete wrap links on whole-row terminal erases so complete
+protocol frames do not require another repaint before detection.
 Restart Commander after upgrading; Node.js 20 is unsupported, not the proven
 cause of the reproduced watcher freeze.
 

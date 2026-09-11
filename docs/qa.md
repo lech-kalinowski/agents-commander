@@ -82,6 +82,15 @@ Vitest discovery is restricted to `tests/` so ignored, private rehearsal helpers
 cannot be executed as part of the public product gate. These counts are software
 evidence; physical hardware and live-provider acceptance are separate checks.
 
+A bounded live acceptance on source commit `bbdd7c8` used literal `npm start`
+from its normal welcome screen, then two Shell-managed terminals executing real
+Pi/APEX sessions. One sequenced SEND and one sequenced REPLY shared one thread.
+F12 retained those same two delivered records after F4 fullscreen/back and an
+18-second settling period. Both processes stopped cleanly and saved settings
+stayed unchanged. This read-only, two-agent run validates that observed exchange,
+not every model, terminal, sixteen-agent workflow or physical controller. Its
+private media is excluded from the repository and npm package.
+
 ## Feature coverage
 
 | Area | Automated evidence |

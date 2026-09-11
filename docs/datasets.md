@@ -91,6 +91,15 @@ the focal agent, capability bindings and coverage. An accepted emission creates
 at most one candidate: broadcast fan-out does not multiply assistant responses.
 Transport success is not a quality label.
 
+The unreleased sequence-aware source also retains an optional `protocolSequence`:
+the agent's actual wire counter, distinct from `sequence`, the capture event's
+serial number. Preparation and export preserve that counter in the matching
+command header and END footer; synthetic key substitution changes the capability,
+not the counter. Existing unsequenced captures and exact legacy review schemas
+remain supported. They keep unsequenced completions: Commander does not infer a
+wire counter from an event number or automatically upgrade old examples to the
+new protocol format. Review which format an experiment is intended to teach.
+
 Initial safety limits are explicit: recorder content is at most 512 KiB before
 redaction, serialized events at most 1 MiB, pending writes 4 MiB, segments 16 MiB,
 and each run 256 MiB / 100,000 events. Dataset preparation is deliberately smaller:
@@ -156,7 +165,9 @@ tool calls. Earlier focal-agent frames may appear as assistant context.
 This is the conversational prompt/completion format supported by
 [TRL SFTTrainer](https://huggingface.co/docs/trl/sft_trainer). It keeps loss on
 the target response separate from context and audit metadata. The example above
-is illustrative synthetic data, not a captured agent response.
+is illustrative synthetic data in the legacy unsequenced format, not a captured
+agent response. A sequenced completion additionally retains its observed
+`:<N>` suffix after the synthetic key in both markers.
 
 Recommended starting configuration for a separately approved LoRA experiment:
 

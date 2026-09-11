@@ -42,20 +42,22 @@
 
 ## Quick Start
 
-This README describes **Agents Commander 0.1.6**, under the MIT License.
+This README describes **Agents Commander 0.1.7**, under the MIT License.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
 The [bulk-launch workflow](#launch-one-profile-in-many-new-panels),
 [bulk protocol setup](#enable-protocol-in-many-agents),
 sequenced protocol replay protection and subsequent QA hardening are included
 in 0.1.6, not 0.1.5. See the
 [QA coverage and remaining manual checks](docs/qa.md) when validating a checkout.
+Version 0.1.7 fixes unresponsive startup from large directory trees and missing
+installed prompt templates; the 0.1.6 collaboration features remain unchanged.
 Registry publication is a separate step; check the npm version listing before
 installing, or build the current source below.
 
-### Install version 0.1.6
+### Install version 0.1.7
 
 ```bash
-npm install -g agents-commander@0.1.6
+npm install -g agents-commander@0.1.7
 agents-commander --version
 agents-commander --doctor .
 agents-commander .
@@ -70,6 +72,29 @@ agents-commander --demo
 Check `--version` after upgrading so an older installation on your `PATH` does
 not shadow the selected version. Package versions are listed on
 [npm](https://www.npmjs.com/package/agents-commander?activeTab=versions).
+Quit the old Commander process and start a fresh one after upgrading; an
+already-running process does not load the new code.
+
+### Unresponsive startup or missing templates
+
+Version 0.1.6 could exhaust file descriptors while recursively watching a large
+home/project tree, making keyboard input appear unresponsive. Version 0.1.7
+uses one shallow native watch per distinct file-panel directory, at most 100,
+and updates that set as panels navigate, close, or become terminals. It does
+not recursively scan descendants. Successful notifications are not logged,
+avoiding feedback from Commander's own log writes. A failed watch stops instead
+of retrying on every refresh; a one-time warning directs you to **Ctrl+R** from
+a file panel for manual refresh.
+
+The separate installed-template lookup bug could show **0 templates** even when
+Doctor found 121. Version 0.1.7 resolves the library from the running package,
+including flat `dist` chunks, rather than falling back to your working directory.
+
+After upgrading and restarting, check `--version`, dismiss Welcome with Space,
+then try Tab, F2 and Ctrl+B. On macOS, F-keys may require Fn; the footer's numbers
+refer to function keys, not the number row. Node.js 22+ and Python 3 remain
+required. Node.js 20 is unsupported, but was not established as the cause of
+the reproduced watcher freeze. See [QA evidence](docs/qa.md#017-startup-hotfix).
 
 ### Current source version
 
@@ -102,12 +127,12 @@ prove that a physical controller or a particular model is ready.
 
 ### Upgrading from 0.1.4
 
-Version 0.1.4 advertised Node.js 18+; **0.1.6 requires Node.js 22+ and Python 3**,
-as did 0.1.5. Upgrade Node before installing 0.1.6. The older package supported only
+Version 0.1.4 advertised Node.js 18+; **0.1.7 requires Node.js 22+ and Python 3**,
+as did 0.1.5 and 0.1.6. Upgrade Node before installing 0.1.7. The older package supported only
 `--theme`, `--panels` (2, 3, or 4), and `--show-hidden`, plus help/version.
 The doctor, conference/demo modes, adaptive density, 100-panel workspace,
 OpenCode adapter, Codex Micro integration, and capture/dataset commands described
-here arrived in 0.1.5 and remain in 0.1.6, not 0.1.4. Bulk launch, bulk protocol
+here arrived in 0.1.5 and remain in 0.1.7, not 0.1.4. Bulk launch, bulk protocol
 setup and sequenced replay protection were added in 0.1.6.
 
 Panel controls have also changed: F4 toggles fullscreen, F6 clones a fresh agent
@@ -125,7 +150,7 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 
 ## Requirements
 
-For version 0.1.6:
+For version 0.1.7:
 
 - Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
@@ -865,7 +890,7 @@ privacy precautions before sharing logs or agent output.
 Open source under the [MIT License](LICENSE), including commercial use. Retain
 the copyright and permission notice when redistributing the software; see
 [third-party notices](THIRD_PARTY_NOTICES.md) for included third-party material.
-Version 0.1.6 uses MIT. Version 0.1.5 also used MIT.
+Version 0.1.7 uses MIT. Versions 0.1.5 and 0.1.6 also used MIT.
 Earlier published packages retain the license bundled with those versions;
 updating the source does not relicense older artifacts.
 

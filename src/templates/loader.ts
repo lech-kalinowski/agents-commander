@@ -1,28 +1,26 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { PromptTemplate } from './types.js';
 import { logger } from '../utils/logger.js';
+import {
+  resolveBuiltinTemplateDirectory,
+  runtimeAssetLookupForModule,
+} from '../utils/runtime-assets.js';
 
 let cachedTemplates: PromptTemplate[] | null = null;
 
-/** Locate built-ins in source checkouts and in the published dist layout. */
+/** Locate built-ins from the executing package, never workspace-controlled paths. */
 export function findBuiltinDir(
   moduleUrl = import.meta.url,
-  cwd = process.cwd(),
+  // Retained for callers of the previous signature; cwd never selects assets.
+  _cwd?: string,
 ): string | null {
-  const candidates: string[] = [];
   try {
-    const thisDir = path.dirname(fileURLToPath(moduleUrl));
-    candidates.push(path.join(thisDir, 'builtin'));
-    candidates.push(path.join(thisDir, '..', 'templates'));
-  } catch { /* ignore */ }
-  candidates.push(path.join(cwd, 'src', 'templates', 'builtin'));
-  candidates.push(path.join(cwd, 'dist', 'templates'));
-
-  for (const p of new Set(candidates)) {
-    if (fs.existsSync(p)) return p;
+    const directory = resolveBuiltinTemplateDirectory(runtimeAssetLookupForModule(moduleUrl));
+    if (directory) return directory;
+  } catch {
+    // Unsupported module layouts fail closed instead of loading cwd templates.
   }
   logger.error('Builtin templates directory not found');
   return null;

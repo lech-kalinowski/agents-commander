@@ -107,6 +107,21 @@ afterEach(() => {
 });
 
 describe('FilePanel navigation', () => {
+  it('notifies directory subscribers only after a successful changed-path commit', async () => {
+    const panel = createPanel();
+    panel.onDirectoryChanged = vi.fn();
+    mocks.readDirectory.mockResolvedValue([]);
+    await panel.loadDirectory();
+    expect(panel.onDirectoryChanged).not.toHaveBeenCalled();
+    await panel.loadDirectory('/workspace/next');
+    expect(panel.onDirectoryChanged).toHaveBeenCalledOnce();
+    expect(panel.currentPath).toBe('/workspace/next');
+    mocks.readDirectory.mockRejectedValueOnce(new Error('permission denied'));
+    await panel.loadDirectory('/workspace/denied');
+    expect(panel.onDirectoryChanged).toHaveBeenCalledOnce();
+    expect(panel.currentPath).toBe('/workspace/next');
+  });
+
   it('does not focus the background panel while a modal dialog is active', () => {
     const panel = createPanel();
     const screen = (panel as any).screen as blessed.Widgets.Screen;

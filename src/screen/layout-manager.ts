@@ -211,6 +211,8 @@ export class LayoutManager {
   public onPanelFocused: (() => void) | null = null;
   /** Callback fired when Enter opens a regular file from any file panel. */
   public onOpenFile: ((entry: FileEntry) => void) | null = null;
+  /** Keep shallow filesystem subscriptions aligned with file-panel navigation. */
+  public onFileDirectoryChanged: (() => void) | null = null;
 
   constructor(screen: blessed.Widgets.Screen, theme: Theme, config: AppConfig) {
     this.screen = screen;
@@ -228,6 +230,7 @@ export class LayoutManager {
       }
     };
     if (panel instanceof FilePanel) {
+      panel.onDirectoryChanged = () => this.onFileDirectoryChanged?.();
       panel.onSelectionChange = () => {
         this.onPanelFocused?.();
       };

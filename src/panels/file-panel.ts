@@ -48,6 +48,8 @@ export class FilePanel {
   public onMouseClick: (() => void) | null = null;
   /** Called when keyboard or mouse navigation changes the current entry. */
   public onSelectionChange: (() => void) | null = null;
+  /** Called after a successful navigation commits a different directory. */
+  public onDirectoryChanged: (() => void) | null = null;
   /** Called when Enter is pressed on a non-directory entry. */
   public onOpenFile: ((entry: FileEntry) => void) | null = null;
 
@@ -267,6 +269,7 @@ export class FilePanel {
       this.refreshList();
       this.list.select(nextCursor);
     }
+    if (pathChanged) this.onDirectoryChanged?.();
     return true;
   }
 
@@ -432,6 +435,7 @@ export class FilePanel {
     this.loadGeneration++;
     this.onMouseClick = null;
     this.onSelectionChange = null;
+    this.onDirectoryChanged = null;
     this.onOpenFile = null;
     this.box.destroy();
   }

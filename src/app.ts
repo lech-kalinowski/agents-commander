@@ -149,6 +149,7 @@ export class App {
   private watcherStarted = false;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private fileChangedHandler: (() => void) | null = null;
+  private fileWatchErrorHandler: ((event: { path: string; code: string; message: string }) => void) | null = null;
   private processHandlersInstalled = false;
   private capture: CaptureSink = NOOP_CAPTURE;
   private unsubscribeCaptureLifecycle: (() => void) | null = null;
@@ -284,18 +285,27 @@ export class App {
       this.screen.render();
     };
 
+    this.layout.onFileDirectoryChanged = () => {
+      if (!this.disposalStarted) this.updateStatus();
+    };
+    let watchWarningShown = false;
+    this.fileWatchErrorHandler = (event) => {
+      if (this.disposalStarted || watchWarningShown) return;
+      watchWarningShown = true;
+      showErrorToast(this.screen, `Auto-refresh unavailable (${event.code}); Ctrl+R refreshes file panels`);
+    };
+    appEvents.on('file:watch-error', this.fileWatchErrorHandler);
     this.watcherStarted = true;
-    startWatching(this.workingDir, this.config.watchDebounce);
+    this.syncWatchedDirectories();
 
     this.fileChangedHandler = () => {
       if (this.refreshTimer) return;
       this.refreshTimer = setTimeout(() => {
         this.refreshTimer = null;
-        try {
-          this.layout.refreshAll();
-        } catch (err) {
+        if (this.disposalStarted) return;
+        void this.layout.refreshAll().catch((err) => {
           logger.error('Failed to refresh layout after file change', err);
-        }
+        });
       }, 250); // Throttle refreshes to max 4 per second
     };
     appEvents.on('file:changed', this.fileChangedHandler);
@@ -2153,9 +2163,7 @@ export class App {
     }));
 
     // Ctrl+R - Refresh (termGuard: bash reverse-search, vim redo)
-    screen.key(['C-r'], termGuard(() => {
-      this.layout.refreshAll();
-    }));
+    screen.key(['C-r'], termGuard(() => this.layout.refreshAll()));
 
     // Ctrl+L - Log viewer (termGuard: shell clear screen)
     screen.key(['C-l'], termGuard(() => {
@@ -2219,7 +2227,15 @@ export class App {
     };
   }
 
+  private syncWatchedDirectories(): void {
+    if (!this.watcherStarted || this.disposalStarted) return;
+    // Watch the directories represented by file panels, never their subtrees.
+    // Hidden panels stay live; closed/replaced/navigated panels release roots.
+    startWatching(this.layout.filePanels.map((panel) => panel.currentPath), this.config.watchDebounce);
+  }
+
   private updateStatus(): void {
+    this.syncWatchedDirectories();
     updateDefaultFunctionBar(this.functionBar, this.theme, this.layout.isFullscreen);
     for (const [index, workspacePanel] of this.layout.allPanels.entries()) {
       workspacePanel.setWorkspacePosition(index + 1);
@@ -2428,6 +2444,11 @@ export class App {
         appEvents.removeListener('file:changed', this.fileChangedHandler);
         this.fileChangedHandler = null;
       }
+      if (this.fileWatchErrorHandler) {
+        appEvents.removeListener('file:watch-error', this.fileWatchErrorHandler);
+        this.fileWatchErrorHandler = null;
+      }
+      if (this.layout) this.layout.onFileDirectoryChanged = null;
 
       if (this.watcherStarted) {
         try {

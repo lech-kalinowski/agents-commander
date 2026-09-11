@@ -19,6 +19,7 @@ vi.mock('../../src/config/loader.js', async () => {
 
 import { App } from '../../src/app.js';
 import { FilePanel } from '../../src/panels/file-panel.js';
+import { startWatching } from '../../src/file-manager/file-watcher.js';
 
 async function createHarness() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'commander-workspace-qa-'));
@@ -56,6 +57,25 @@ async function createHarness() {
 }
 
 describe('real Blessed hundred-panel workspace', () => {
+  it('reconciles only current file-panel directories after navigation and closing', async () => {
+    const h = await createHarness();
+    try {
+      const nested = path.join(h.root, 'nested');
+      await fs.mkdir(nested);
+      const firstPanel = h.app.layout.activeFilePanel as FilePanel;
+      await firstPanel.loadDirectory(nested);
+      const requested = vi.mocked(startWatching).mock.lastCall?.[0];
+      expect(requested).toContain(nested);
+      expect(requested).toContain(h.root);
+      h.input.write('\x1b[20~');
+      await vi.waitFor(() => expect(h.app.layout.panelCount).toBe(99));
+      expect(vi.mocked(startWatching).mock.lastCall?.[0]).not.toContain(nested);
+      expect(new Set(vi.mocked(startWatching).mock.lastCall?.[0])).toEqual(new Set([h.root]));
+    } finally {
+      await h.dispose();
+    }
+  });
+
   it('resizes, jumps, reorders, closes and replaces panels without changing surviving stable IDs', async () => {
     const h = await createHarness();
     const { app, input } = h;

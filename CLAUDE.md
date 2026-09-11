@@ -10,16 +10,19 @@ npm run build
 npm start
 ```
 
-Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.6,
+Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.7,
 under the MIT License. Version 0.1.4 is the legacy baseline with different
 runtime requirements, features, and bundled license. The versioned install is
-`npm install -g agents-commander@0.1.6`. Run the local build with
+`npm install -g agents-commander@0.1.7`. Run the local build with
 `node dist/bin/agents-commander.js` or `npm start -- <options> <directory>`.
 Do not confuse an older global installation with this checkout; pushing source
 does not publish npm. See `AGENTS.md` and README for the current conventions.
 F2/N bulk launch, F2/P bulk protocol setup and sequenced replay protection are
 included in 0.1.6, not 0.1.5. Check registry publication separately before
 claiming that this version has been published.
+Version 0.1.7 fixes shallow file-panel watches and installed template lookup.
+Restart after upgrading. Do not attribute the reproduced watcher freeze to
+Node.js 20; it remains unsupported, while Node.js 22+ is required.
 
 ## Project Structure
 
@@ -46,7 +49,7 @@ claiming that this version has been published.
 
 ## Tech
 
-TypeScript + blessed + chokidar + marked + tsup
+TypeScript + blessed + native shallow filesystem watches + marked + tsup
 
 ## Key Conventions
 
@@ -58,6 +61,7 @@ TypeScript + blessed + chokidar + marked + tsup
 - F7 changes workspace position only; stable P IDs and routing/session identity must not change
 - Enter previews files; Shift+F6/Shift+F7/Shift+F9 copy/move/delete files from file panels; Ctrl+W remains the close-panel alias
 - Ctrl+B opens the prompt template browser dialog
+- File auto-refresh uses one shallow native handle per distinct file-panel directory, at most 100. Navigation updates the watched roots; failed watches stop and Ctrl+R provides manual refresh from a file panel. Successful events must not write logs; installed built-ins must resolve from their package, not the working directory.
 - Ctrl+P sends session-bound Commander Protocol instructions to the active running agent
 - F2 then P explicitly injects protocol into selected/all running agent profiles after confirmation. Each exact session gets its own key; already-armed sessions are skipped, replacements are never followed. Esc stops remaining work after an in-flight paste/submit settles. Built-in Shell/internal demos are excluded. Verify empty ready CLI prompts first; no automatic task/capture.
 - F11 opens the panel navigator

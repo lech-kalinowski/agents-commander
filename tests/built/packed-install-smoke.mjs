@@ -328,6 +328,13 @@ try {
   )).filter((name) => name.endsWith('.md'));
   assert.equal(installedTemplates.length, EXPECTED_TEMPLATE_COUNT);
 
+  const tui = run(process.execPath, [
+    path.join(repositoryRoot, 'tests', 'built', 'tui-startup-smoke.mjs'),
+    installedRoot,
+    homeDirectory,
+  ], { cwd: homeDirectory, label: 'packed normal-startup keyboard smoke' });
+  process.stdout.write(tui.stdout);
+
   process.stdout.write('Packed install smoke checks passed.\n');
 } finally {
   await fs.rm(fixtureRoot, { recursive: true, force: true });

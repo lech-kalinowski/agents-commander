@@ -8,6 +8,8 @@ It is not a certification that every possible bug has
 been found. These fixes are **included in 0.1.6, not 0.1.5**; a source push is
 not an npm release, and publication must be checked separately. Use the branch
 and commit under review, not an older global command.
+The separate **0.1.7 startup hotfix** below addresses recursive-watch exhaustion
+and installed template resolution; it does not relabel the 0.1.6 checkpoints.
 
 ## Reproduce the automated checks
 
@@ -92,17 +94,51 @@ stayed unchanged. This read-only, two-agent run validates that observed exchange
 not every model, terminal, sixteen-agent workflow or physical controller. Its
 private media is excluded from the repository and npm package.
 
+### 0.1.7 startup hotfix
+
+The reported unresponsive home-directory launch was reproduced with excessive
+recursive filesystem watches and `EMFILE` errors. Node.js 20 is unsupported,
+but was not established as the cause: Node.js 22+ and Python 3 remain the runtime
+requirements. A separate packaged-runtime bug showed zero templates in Welcome
+even though Doctor found all 121; flat `dist` chunks used the wrong asset path,
+and launching from the checkout masked it with a working-directory fallback.
+
+Version 0.1.7 replaces recursive traversal with one native, non-recursive handle
+per distinct file-panel directory, at most 100. Successful navigation commits
+update the watched set; closing or converting panels releases obsolete roots.
+Failed roots stop once and are not retried by ordinary status updates. A single
+warning per launch explains Ctrl+R manual refresh from a file panel. Successful
+watch events do not write logs, preventing feedback even with unnamed native
+notifications or a symlink alias of runtime state. Template lookup now uses the
+same package-root-aware asset resolver as Doctor and never substitutes cwd files.
+
+The actual packed CLI passed the new keyboard smoke in a temporary, home-like
+fixture with **180 nested project directories** and a **128-file-descriptor
+limit**. It verified normal Welcome and 121 built-ins, Space, Tab, arrows, F2,
+Esc, Ctrl+B, F3, F4/fullscreen-back, F11, F10, live shallow file refresh and a
+clean confirmed exit without `EMFILE`/`ENOSPC`. This is PTY/software evidence,
+not physical keyboard, provider or Codex Micro acceptance. The fixture is
+`tests/built/tui-startup-smoke.mjs`, invoked by the packed-install verification.
+
+Unit/integration regressions additionally cover root deduplication/capacity,
+navigation callbacks, watch failures and stale callbacks, no self-log feedback,
+source/installed template layouts and rejecting workspace template fallbacks.
+Restart after upgrading and repeat the key sequence in the intended terminal.
+Do not claim 0.1.7 is published until the registry has been checked; previous
+automated test counts above remain historical checkpoints.
+
 ## Feature coverage
 
 | Area | Automated evidence |
 | --- | --- |
-| CLI and packaging | Help/version, doctor, launch-option validation, runtime assets, dataset commands without UI imports, clean packed installation |
+| CLI and packaging | Help/version, doctor, launch-option validation, runtime assets, dataset commands without UI imports, clean packed installation and actual low-descriptor-limit TUI keyboard/template smoke |
 | Configuration and adapters | Saved/launch-only precedence, malformed profiles, argument/environment handling, command discovery, OpenCode and synthetic Pi/APEX fixtures |
 | Workspace and navigation | Stable IDs, 1–100 panel limits, paging, density, fullscreen/back, cloning, ordering, closing, navigator, real Blessed input and resize |
 | Bulk agent launch | 10/16/20 launch logic, 16 independent local PTYs, capacity rejection, unchanged existing sessions, cancellation, startup failures, hidden-panel geometry |
 | Bulk protocol setup | F2/P explicit subset/all selection, default-No confirmation, 16 real local PTYs receiving complete distinct-key instructions, no modal-key leakage, hidden stable IDs, stale-session/input-lane races, skip-already-armed, cancellation and shutdown |
 | Dialogs and overlays | Enter/Return shielding, keyboard and mouse isolation, cancellation, owner teardown, immediate reopening, focus restoration |
 | File browser and editor | Sorting, selection, preview, regular-file/symlink checks, copy/move/delete identity checks, atomic saves, locks and metadata preservation |
+| File auto-refresh | Shallow native roots bounded by panel capacity, navigation reconciliation, failed-watch suppression, stale callbacks and no runtime-log feedback |
 | Terminal lifecycle | UTF-8/ANSI rendering, PTY resize, restart/replacement, input forwarding, bounded termination and owned-child cleanup |
 | Commander Protocol | SEND/REPLY/BROADCAST/STATUS/QUERY, session capabilities, target identity, reply windows, sequence/footer parsing, redraw and resize replay fixtures, chunk boundaries, payload bounds and Activity |
 | Demo and templates | Two-agent deterministic offline collaboration, failure/retry cleanup, template catalogue and protocol preparation |

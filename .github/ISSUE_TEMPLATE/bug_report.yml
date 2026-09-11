@@ -11,7 +11,7 @@ body:
     attributes:
       label: Commander version and installation
       description: Include the version and whether you use an npm install or a source build. For source builds, include the commit or branch if known.
-      placeholder: "npm 0.1.6; launched with agents-commander (or source version and commit)"
+      placeholder: "npm 0.1.7; launched with agents-commander (or source version and commit)"
     validations:
       required: true
   - type: textarea

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.7
+
+### Fixed
+
+- Prevent recursive watching of a home/project tree from exhausting file
+  descriptors and making startup input unresponsive. Watch only distinct
+  file-panel directories with shallow native handles, capped at 100; reconcile
+  subscriptions when panels navigate, close, or become terminals.
+- Stop failed watches without automatic retry storms and show one warning per
+  launch with Ctrl+R manual-refresh guidance. Do not log successful file events,
+  avoiding feedback through runtime logs or symlink aliases.
+- Resolve built-in templates from the executing package layout, including flat
+  `dist` chunks. Installed launches no longer report zero templates or substitute
+  workspace-controlled files when the package library is missing.
+
+### Tests and upgrade
+
+- Add actual packed-CLI keyboard and template checks in a synthetic home-like
+  directory containing 180 nested project directories, under a 128-descriptor
+  limit. Verify normal Welcome, panel/dialog keys, Ctrl+B, live file refresh and
+  clean keyboard-driven exit; no providers or physical hardware are launched.
+- Node.js 22+ and Python 3 remain required. Node.js 20 is unsupported but was not
+  established as the cause of the reproduced watcher freeze. Restart Commander
+  after upgrading. The 0.1.6 collaboration and dataset behavior is unchanged.
+
+This section describes version contents; verify npm publication separately.
+
 ## 0.1.6
 
 ### Added

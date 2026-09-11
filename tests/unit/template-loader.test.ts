@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   findBuiltinDir,
   loadTemplates,
@@ -13,7 +13,16 @@ import {
   hasLegacyProtocolMarkers,
 } from '../../src/orchestration/protocol.js';
 
+vi.mock('../../src/utils/logger.js', () => ({ logger: { error: vi.fn() } }));
+
 const tempDirs: string[] = [];
+
+function packageFixture(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-commander-templates-'));
+  tempDirs.push(root);
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'agents-commander' }));
+  return root;
+}
 
 afterEach(() => {
   refreshTemplates();
@@ -44,15 +53,57 @@ describe('template loader', () => {
     }
   });
 
-  it('finds dist/templates relative to a bundled entry point', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-commander-templates-'));
-    tempDirs.push(root);
-    const entryDir = path.join(root, 'dist', 'src');
-    const templatesDir = path.join(root, 'dist', 'templates');
-    fs.mkdirSync(entryDir, { recursive: true });
-    fs.mkdirSync(templatesDir, { recursive: true });
+  it.each(['dist/src/index.js', 'dist/chunk-templates.js', 'dist/templates/loader.js'])(
+    'finds installed templates from %s with an unrelated working directory', (entry) => {
+      const root = packageFixture();
+      const templatesDir = path.join(root, 'dist', 'templates');
+      fs.mkdirSync(templatesDir, { recursive: true });
+      const unrelatedCwd = path.join(root, 'unrelated');
+      fs.mkdirSync(unrelatedCwd);
 
-    const moduleUrl = pathToFileURL(path.join(entryDir, 'index.js')).href;
-    expect(findBuiltinDir(moduleUrl, path.join(root, 'unrelated'))).toBe(templatesDir);
+      const moduleUrl = pathToFileURL(path.join(root, entry)).href;
+      expect(findBuiltinDir(moduleUrl, unrelatedCwd)).toBe(templatesDir);
+    },
+  );
+
+  it('does not substitute workspace or package-root templates when installed templates are absent', () => {
+    const root = packageFixture();
+    const workspace = path.join(root, 'workspace');
+    for (const directory of [
+      path.join(root, 'templates'),
+      path.join(workspace, 'src', 'templates', 'builtin'),
+      path.join(workspace, 'dist', 'templates'),
+    ]) fs.mkdirSync(directory, { recursive: true });
+
+    const moduleUrl = pathToFileURL(path.join(root, 'dist', 'chunk-templates.js')).href;
+    expect(findBuiltinDir(moduleUrl, workspace)).toBeNull();
+  });
+
+  it('resolves source templates independently of a conflicting working directory', () => {
+    const root = packageFixture();
+    const builtinDir = path.join(root, 'src', 'templates', 'builtin');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(builtinDir, { recursive: true });
+    fs.mkdirSync(path.join(workspace, 'dist', 'templates'), { recursive: true });
+
+    const moduleUrl = pathToFileURL(path.join(root, 'src', 'templates', 'loader.ts')).href;
+    expect(findBuiltinDir(moduleUrl, workspace)).toBe(builtinDir);
+  });
+
+  it('rejects a non-directory installed template asset', () => {
+    const root = packageFixture();
+    fs.mkdirSync(path.join(root, 'dist'));
+    fs.writeFileSync(path.join(root, 'dist', 'templates'), 'not a directory');
+
+    const moduleUrl = pathToFileURL(path.join(root, 'dist', 'src', 'index.js')).href;
+    expect(findBuiltinDir(moduleUrl, root)).toBeNull();
+  });
+
+  it('does not use workspace templates for an unsupported module URL', () => {
+    const root = packageFixture();
+    fs.mkdirSync(path.join(root, 'src', 'templates', 'builtin'), { recursive: true });
+
+    expect(findBuiltinDir('data:text/javascript,export{}', root)).toBeNull();
+    expect(findBuiltinDir(pathToFileURL(path.join(root, 'other', 'loader.js')).href, root)).toBeNull();
   });
 });

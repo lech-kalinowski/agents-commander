@@ -133,7 +133,7 @@ Start in a **fresh workspace with stable P1–P16**. In each panel, use F2 to
 launch the matching `APEX P01 …` through `APEX P16 …` profile. Complete any
 authentication before presenting. At empty ready CLI prompts, use **F2 → P → A
 → Enter → confirm Yes** to enable all sixteen (or select just the intended
-panels with Space). This is an unreleased source feature after npm 0.1.5;
+panels with Space). Bulk protocol setup is available in 0.1.6, not 0.1.5;
 **Ctrl+P separately in each session** remains available. Both paths give each
 session its own current protocol capability. Inspect responses before START. Do not
 type `opencode` into an unmanaged shell and expect the same managed lifecycle.

@@ -93,7 +93,7 @@ without a replacement prompt.
 
 Finish login/approvals and leave empty ready prompts. Use **F2 → P → A → Enter
 → confirm Yes** for all intended agents, or Space to select a subset. This is
-an unreleased source feature after npm 0.1.5; Ctrl+P per session still works.
+available in 0.1.6, not 0.1.5; Ctrl+P per session still works.
 Each session gets its own capability; already-enabled sessions are skipped.
 Wait for each agent's plain-text acknowledgment before sending the task.
 Use Ctrl+O to send `start.txt` to the existing **APEX Pi P01 Coordinator** at P1.

@@ -179,8 +179,9 @@ Commercial adoption depends on operational reliability, not just feature complet
 
 These mechanisms address handoff, rendering, timing and state-continuity risks. They do not prove task correctness or provide a service-level guarantee.
 
-Unreleased source after npm 0.1.5 also adds per-capability sequence numbers and
-bounded replay suppression across terminal redraws and resize. See the
+Version 0.1.6 adds per-capability sequence numbers and bounded replay suppression
+across terminal redraws and resize; these are absent from 0.1.5. This describes
+version contents, not verified registry publication. See the
 [protocol reliability notes](commander-protocol-ai-research.md#54-deduplication-and-echo-control)
 for storage limits, legacy hard-reflow ambiguity and explicit recovery. This
 does not establish durable exactly-once delivery or automatic safe retries.

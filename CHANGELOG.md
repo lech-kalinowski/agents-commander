@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.6
 
 ### Added
 
-- Source-only protocol sequence suffixes on all five command headers and their
+- Protocol sequence suffixes on all five command headers and their
   END footer. Newly injected instructions use one increasing per-capability
   counter, allowing intentional identical actions without treating old terminal
   history as new output. Capability-only markers remain compatible.
@@ -13,13 +13,16 @@
   each session gets a private key. Already-enabled sessions are skipped and
   exact-session checks prevent injection into replacements. Esc stops remaining
   work after any started paste/submit settles. No automatic task or recording.
-- Source-checkout F2 batch launch: select one CLI/profile, press N, and choose
+- F2 batch launch: select one CLI/profile, press N, and choose
   how many new terminal panels to create at the selected panel's directory.
   One confirmation precedes sequential launches; Esc stops the remaining work
   while preserving already-started sessions and existing panels.
 - Batch launches use distinct Commander session IDs and the selected profile's
   unchanged arguments/environment. They do not create worktrees, assign
   different roles, bootstrap the protocol, submit tasks, or enable capture.
+- Capture and reviewed dataset export preserve the optional wire message counter
+  separately from capture-event numbering. Previously prepared legacy reviews
+  remain supported without fabricating counters or upgrading old completions.
 
 ### Fixed
 
@@ -58,13 +61,16 @@
 
 - Restrict application test discovery to `tests/`, excluding private rehearsal
   helpers and other non-product scripts from the public verification gate.
-- Update development test/build dependencies to patched versions; retain
-  runtime dependency ranges and the published package version.
+- Update development test/build dependencies to patched versions while retaining
+  runtime dependency ranges.
 - Add build/watch startup and owned-process cleanup to the verification gate,
   plus a QA coverage and manual acceptance guide.
 
-These unreleased changes are not included in the npm 0.1.5 package. Provider usage and
-configured startup/resume behavior still apply.
+These changes are new in 0.1.6 and are not included in npm 0.1.5. Node.js 22+
+and Python 3 remain required. Restart existing sessions and inject fresh protocol
+instructions to use sequenced replay protection. Provider usage and configured
+startup/resume behavior still apply. Presentations, private recordings and
+training datasets are excluded from the package.
 
 ## 0.1.5
 

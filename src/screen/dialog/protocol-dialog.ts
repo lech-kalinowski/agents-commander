@@ -53,7 +53,7 @@ with another agent running in a different panel.
   All headers and footers must use the same session key and N.
   N starts at 1; increment for every NEW command across all verbs.
   Keep the original N on redraw. Use a new N to repeat an action.
-  This sequence extension is a source addition after npm 0.1.5.
+  This sequence extension is available in 0.1.6, not npm 0.1.5.
 
   {bold}1. SEND{/bold} — direct message to a specific agent:
 
@@ -206,7 +206,7 @@ with another agent running in a different panel.
   {cyan-fg}F2{/cyan-fg}          Launch agent in a panel
   {cyan-fg}Ctrl+O{/cyan-fg}      Orchestrate (send task to agent)
   {cyan-fg}Ctrl+P{/cyan-fg}      Inject protocol into active agent
-  {cyan-fg}F2 then P{/cyan-fg}   Bulk protocol (source addition after npm 0.1.5)
+  {cyan-fg}F2 then P{/cyan-fg}   Bulk protocol (available in 0.1.6)
   {cyan-fg}F12{/cyan-fg}         Routed-message activity
   {cyan-fg}Shift+F12{/cyan-fg}   This guide
   {cyan-fg}Ctrl+K{/cyan-fg}      Kill running session on active panel

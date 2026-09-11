@@ -21,6 +21,22 @@ const researchNames = [
 ];
 
 describe('current-source protocol documentation', () => {
+  it('teaches the same sequenced header and footer in Help and the protocol guide', () => {
+    for (const copy of [help, guide]) {
+      expect(copy).toContain('<session-key>:<N>');
+      expect(copy).toContain('===COMMANDER:END:<session-key>:<N>===');
+      expect(copy).toMatch(/N starts at 1/);
+      expect(copy).toMatch(/across all verbs/);
+      expect(copy).not.toContain('source addition after npm 0.1.5');
+    }
+    for (const verb of ['REPLY', 'BROADCAST', 'STATUS', 'QUERY']) {
+      expect(help).toContain(`${verb}:<session-key>:<N>`);
+    }
+    expect(help).toContain('SEND:agent:panel:<session-key>:<N>');
+    expect(help).toContain('Redraws/retransmissions keep N and do not send again.');
+    expect(help).toContain('Legacy key-only frames');
+  });
+
   it('uses the actual SEND/REPLY ACK format in guide examples', () => {
     // Exercise the production formatter without constructing UI or sessions.
     const formatter = Object.create(Orchestrator.prototype) as {

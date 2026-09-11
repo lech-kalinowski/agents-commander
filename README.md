@@ -42,18 +42,20 @@
 
 ## Quick Start
 
-This README describes **Agents Commander 0.1.5**, under the MIT License.
+This README describes **Agents Commander 0.1.6**, under the MIT License.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
-The [bulk-launch workflow](#launch-one-profile-in-many-new-panels-source-checkout),
-[bulk protocol setup](#enable-protocol-in-many-agents-source-checkout),
-and subsequent QA hardening are unreleased source-checkout changes after
-0.1.5; they are not included in the npm 0.1.5 package. See the
+The [bulk-launch workflow](#launch-one-profile-in-many-new-panels),
+[bulk protocol setup](#enable-protocol-in-many-agents),
+sequenced protocol replay protection and subsequent QA hardening are included
+in 0.1.6, not 0.1.5. See the
 [QA coverage and remaining manual checks](docs/qa.md) when validating a checkout.
+Registry publication is a separate step; check the npm version listing before
+installing, or build the current source below.
 
-### Install version 0.1.5
+### Install version 0.1.6
 
 ```bash
-npm install -g agents-commander@0.1.5
+npm install -g agents-commander@0.1.6
 agents-commander --version
 agents-commander --doctor .
 agents-commander .
@@ -100,12 +102,13 @@ prove that a physical controller or a particular model is ready.
 
 ### Upgrading from 0.1.4
 
-Version 0.1.4 advertised Node.js 18+; **0.1.5 requires Node.js 22+ and Python 3**.
-Upgrade Node before installing 0.1.5. The older package supported only
+Version 0.1.4 advertised Node.js 18+; **0.1.6 requires Node.js 22+ and Python 3**,
+as did 0.1.5. Upgrade Node before installing 0.1.6. The older package supported only
 `--theme`, `--panels` (2, 3, or 4), and `--show-hidden`, plus help/version.
 The doctor, conference/demo modes, adaptive density, 100-panel workspace,
 OpenCode adapter, Codex Micro integration, and capture/dataset commands described
-here are features of 0.1.5, not 0.1.4.
+here arrived in 0.1.5 and remain in 0.1.6, not 0.1.4. Bulk launch, bulk protocol
+setup and sequenced replay protection were added in 0.1.6.
 
 Panel controls have also changed: F4 toggles fullscreen, F6 clones a fresh agent
 panel, F7 reorders panels, and F9 closes a panel. File copy/move/delete remain
@@ -122,7 +125,7 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 
 ## Requirements
 
-For version 0.1.5:
+For version 0.1.6:
 
 - Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
@@ -203,11 +206,12 @@ Supported adapters:
 
 The selector also catalogues five future presets that are not launchable yet: Aider, Cline, Goose, Kiro, and Amp.
 
-### Launch one profile in many new panels (source checkout)
+<a id="launch-one-profile-in-many-new-panels-source-checkout"></a>
 
-**Unreleased: build the current source checkout. npm 0.1.5 does not include
-this workflow.** Start it with `node dist/bin/agents-commander.js .` after
-`npm run build`.
+### Launch one profile in many new panels
+
+**Available in 0.1.6, not 0.1.5.** Run `agents-commander .` from that version,
+or use `npm start` after building the source checkout with `npm run build`.
 
 1. Focus the panel whose working directory the new sessions should use.
 2. Press **F2** and select the desired CLI/profile, such as your prepared
@@ -244,10 +248,12 @@ sixteen-role review council below. Its generated profiles contain different
 missions and fixed P-number expectations; launch each intended role at the
 matching stable panel instead of cloning one role's prompt across the council.
 
-### Enable protocol in many agents (source checkout)
+<a id="enable-protocol-in-many-agents-source-checkout"></a>
 
-**Unreleased: F2 → P is a source addition after npm 0.1.5.** Build this checkout
-with `npm run build` and run `node dist/bin/agents-commander.js .`.
+### Enable protocol in many agents
+
+**F2 → P is available in 0.1.6, not 0.1.5.** Run the selected version or build
+this checkout with `npm run build` and run `npm start`.
 
 1. Launch your agents (for example, 16 copies of an APEX/Pi profile with F2/N).
    Finish login and permission prompts in each, and leave every selected CLI
@@ -321,7 +327,7 @@ This is what makes Agents Commander different from running `tmux` with multiple 
 ### How it works
 
 1. **Launch agents** in different panels (`F2`)
-2. **Send protocol instructions** to each running agent (`Ctrl+P`), or use **F2 → P** for selected/all agents in this source checkout -- each session receives its own instructions and key
+2. **Send protocol instructions** to each running agent (`Ctrl+P`), or use **F2 → P** for selected/all agents in 0.1.6 -- each session receives its own instructions and key
 3. **Give a task** that requires collaboration:
 
 ```
@@ -335,7 +341,7 @@ to fix every vulnerability you find."
 
 Five commands, one session-bound routing capability. `Ctrl+P` generates a fresh private capability for that agent session and teaches the agent the exact marker format. Static or copied markers without the current capability are inert. In the examples below, `<session-key>` stands for the value injected into the agent.
 
-The current source adds a **sequence suffix** (not in npm 0.1.5). Each agent
+Version 0.1.6 adds a **sequence suffix** (not in 0.1.5). Each agent
 starts its own counter at `1` after protocol injection and increments it for
 every new command across all five verbs. Replace `<N>` below with that number;
 the header and footer must contain the same key and number. A redraw keeps the
@@ -403,7 +409,7 @@ Routing is bidirectional between connected supported sessions.
 ### Redraws, repeated actions, and compatibility
 
 Terminal history can reappear after scrolling, fullscreen changes, or a resize.
-The source replay guard retains command identities across these changes; a
+The 0.1.6 replay guard retains command identities across these changes; a
 previously seen sequence cannot become a new action because its body, wrapping,
 destination, or verb changes. Recognized outgoing instruction/prompt echoes stay
 suppressed rather than becoming agent-authored output after repeated redraws.
@@ -440,8 +446,8 @@ suppressed rather than becoming agent-authored output after repeated redraws.
   payloads are represented by metadata and byte counts, not complete message
   bodies. Diagnostics can still contain names and error details; review them
   before sharing.
-- Opt-in semantic recording and reviewed dataset export are available in this
-  source checkout. Nothing is recorded by default. Full terminal transcripts,
+- Opt-in semantic recording and reviewed dataset export are included in 0.1.6
+  (introduced in 0.1.5). Nothing is recorded by default. Full terminal transcripts,
   session restore, replay and model training are **not implemented**. The
   [original design plan](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/session-capture-plan.md)
   retains the broader proposed scope and implementation boundaries.
@@ -610,7 +616,7 @@ These shortcuts work everywhere, including on terminal panels with running agent
 | `Ctrl+B` | Browse prompt template library |
 | `Ctrl+O` | Orchestrate -- send task to any agent |
 | `Ctrl+P` | Send protocol instructions to the active agent |
-| `F2` then `P` | Select/all running agents for bulk protocol setup (source addition after npm 0.1.5) |
+| `F2` then `P` | Select/all running agents for bulk protocol setup (added in 0.1.6) |
 | `Ctrl+T` | Toggle panel: file <-> terminal |
 | `Ctrl+K` | Kill running session on active panel |
 | `Ctrl+W` | Close active panel (same as `F9`) |
@@ -859,8 +865,9 @@ privacy precautions before sharing logs or agent output.
 Open source under the [MIT License](LICENSE), including commercial use. Retain
 the copyright and permission notice when redistributing the software; see
 [third-party notices](THIRD_PARTY_NOTICES.md) for included third-party material.
-Version 0.1.5 uses MIT. Earlier published packages retain the license bundled
-with those versions; updating the source does not relicense older artifacts.
+Version 0.1.6 uses MIT. Version 0.1.5 also used MIT.
+Earlier published packages retain the license bundled with those versions;
+updating the source does not relicense older artifacts.
 
 ---
 

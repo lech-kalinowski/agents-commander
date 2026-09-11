@@ -39,14 +39,15 @@ npm run verify
 
 The current UI uses TypeScript, blessed, chokidar, and tsup. Runtime support is Node.js 22+, Python 3, and macOS/Linux/WSL2.
 
-Package version is 0.1.5, under the MIT License. Version 0.1.4 is the legacy
+Package version is 0.1.6, under the MIT License. Version 0.1.4 is the legacy
 baseline; its runtime requirements, features, and bundled license differ.
 Use `node dist/bin/agents-commander.js` or `npm start --` to exercise this checkout,
 not an older global installation. For the versioned package, the install command
-is `npm install -g agents-commander@0.1.5`. Recheck the registry before changing
+is `npm install -g agents-commander@0.1.6`. Recheck the registry before changing
 release claims. A source push is not an npm release.
-The F2/N bulk-launch and F2/P bulk-protocol workflows are unreleased source
-additions after npm 0.1.5; do not describe them as published 0.1.5 features.
+F2/N bulk launch, F2/P bulk protocol setup and sequenced replay protection are
+included in 0.1.6, not 0.1.5. Package metadata describes that version's contents;
+do not claim registry publication until it has been verified.
 
 ## Key Conventions
 

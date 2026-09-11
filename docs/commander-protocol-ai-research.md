@@ -7,8 +7,8 @@ This is a source implementation description, not a claim about the published
 npm package. The current source now adds [opt-in capture and reviewed dataset
 export](datasets.md); broader research extensions below remain proposals.
 The sequence and replay-protection notes were updated on 2026-09-11 for
-unreleased source changes after npm 0.1.5; the baseline package does not include
-that extension.
+version 0.1.6, which includes the extension absent from 0.1.5. This version scope
+describes implementation contents, not verified npm publication.
 
 ### Abstract
 
@@ -49,7 +49,7 @@ This matters for research because it shifts the protocol from a text trick to a 
 ## 3. Core Message Types
 
 The Commander Protocol exposes five primary commands. The examples below use
-the current source's recommended sequence suffix: `<N>` is one increasing
+version 0.1.6's recommended sequence suffix: `<N>` is one increasing
 counter shared by all five verbs from one armed session, starting at `1` for a
 fresh capability. Both markers use the same number. Original redraws retain
 their number; an intentional new action, including identical text, gets the
@@ -182,7 +182,7 @@ The transport layer operates through terminal I/O rather than a hidden service b
 ### 5.4 Deduplication and echo control
 
 Terminal UIs can repaint historical output long after it was first visible.
-Unreleased source replay protection retains identities across visible-grid and
+Version 0.1.6 replay protection retains identities across visible-grid and
 scrollback scans, elapsed time, fullscreen changes and PTY resize. Sequenced
 frames are identified by capability and number, not by the rendered body: a
 changed verb, target, body or hard line wrapping cannot reuse the same sequence.

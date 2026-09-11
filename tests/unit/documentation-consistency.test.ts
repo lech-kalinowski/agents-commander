@@ -23,9 +23,20 @@ function visibleText(html: string): string {
 }
 
 describe('versioned product documentation', () => {
-  it('documents explicit source-only batch protocol setup separately from launch and active Ctrl+P', () => {
-    expect(readme).toContain('### Enable protocol in many agents (source checkout)');
-    expect(readme).toContain('F2 → P is a source addition after npm 0.1.5');
+  it('keeps the release version synchronized with the lockfile and changelog', () => {
+    const lockfile = JSON.parse(read('package-lock.json'));
+    expect(lockfile.version).toBe(packageVersion);
+    expect(lockfile.packages[''].version).toBe(packageVersion);
+    expect(read('CHANGELOG.md')).toContain(`## ${packageVersion}\n`);
+    for (const copy of [read('src/screen/dialog/help-dialog.ts'), read('src/screen/dialog/protocol-dialog.ts')]) {
+      expect(copy).toContain('available in 0.1.6');
+      expect(copy).not.toContain('source addition after npm 0.1.5');
+    }
+  });
+
+  it('documents released batch protocol setup separately from launch and active Ctrl+P', () => {
+    expect(readme).toContain('### Enable protocol in many agents');
+    expect(readme).toContain('F2 → P is available in 0.1.6, not 0.1.5');
     expect(readme).toContain('Ctrl+P remains active-only');
     expect(readme).toContain('Already-enabled sessions are skipped without rotating their keys');
     expect(readme).toContain('empty, ready input prompt');
@@ -99,12 +110,12 @@ describe('versioned product documentation', () => {
     expect(futurePresets).toContain('Aider, Cline, Goose, Kiro, and Amp');
   });
 
-  it('includes the same session capability in both landing-page format markers', () => {
+  it('includes the same capability and sequence in both landing-page format markers', () => {
     const format = landing.match(/<div class="flow-message-format">([\s\S]*?)<\/div>/)?.[1];
     expect(format).toBeDefined();
     const text = visibleText(format ?? '');
-    expect(text).toContain('===COMMANDER:SEND:{target_agent}:{panel_number}:{session_key}===');
-    expect(text).toContain('===COMMANDER:END:{session_key}===');
+    expect(text).toContain('===COMMANDER:SEND:{target_agent}:{panel_number}:{session_key}:1===');
+    expect(text).toContain('===COMMANDER:END:{session_key}:1===');
     expect(text).toContain('Ctrl+P');
     expect(text).toContain('Static or stale keys do not route');
   });
@@ -158,7 +169,7 @@ describe('versioned product documentation', () => {
     expect(metadata.scripts.verify).toContain('npm run test:dev');
     expect(readme).toContain('docs/qa.md');
     expect(read('docs/README.md')).toContain('(qa.md)');
-    expect(qa).toContain('not in npm 0.1.5');
+    expect(qa).toContain('included in 0.1.6, not 0.1.5');
     expect(qa).toContain('Manual acceptance');
     expect(qa).toContain('not real provider credentials or private captures');
     expect(qa).toContain('Existing captures/exports are **not**');

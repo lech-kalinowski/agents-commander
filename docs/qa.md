@@ -5,8 +5,9 @@ F2/N bulk-launch change, followed by F2/P bulk protocol setup on **2026-09-08**.
 The **2026-09-11** protocol replay hardening adds sequence-aware regression
 fixtures and the manual redraw acceptance procedure below.
 It is not a certification that every possible bug has
-been found. These fixes are **not in npm 0.1.5**; a source push is not an npm
-release. Use the branch and commit under review, not an older global command.
+been found. These fixes are **included in 0.1.6, not 0.1.5**; a source push is
+not an npm release, and publication must be checked separately. Use the branch
+and commit under review, not an older global command.
 
 ## Reproduce the automated checks
 
@@ -182,7 +183,7 @@ reasoning quality, physical USB/Bluetooth operation, every terminal emulator,
 or a successful LoRA training run. No model training, npm publication, controller
 firmware flashing or real-data bulk approval is part of this QA workflow.
 
-### Protocol replay acceptance — source extension after npm 0.1.5
+### Protocol replay acceptance — added in 0.1.6, not 0.1.5
 
 Start the ordinary application with `npm start` from the source checkout after
 building. Use synthetic agents first, then an authorized bounded live task; do

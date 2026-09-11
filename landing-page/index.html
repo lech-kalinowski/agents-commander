@@ -1410,7 +1410,7 @@
         <li><a href="#comparison">Modes</a></li>
         <li><a href="#install">Install</a></li>
       </ul>
-      <span class="nav-version">v0.1.5</span>
+      <span class="nav-version">v0.1.6</span>
     </div>
   </nav>
 
@@ -1418,7 +1418,7 @@
   <section class="hero">
     <div class="container">
       <div class="hero-content">
-        <div class="hero-badge">Version 0.1.5 &mdash; MIT License</div>
+        <div class="hero-badge">Version 0.1.6 &mdash; MIT License</div>
         <img class="commander-mark" src="logo.png" width="160" height="160" alt="Agents Commander — pixel &gt;/&lt; mark in cyan and yellow on classic blue" style="display:block;margin:0 auto 32px;animation:fadeInUp 0.7s ease-out 0.05s both">
         <h1>AGENTS<br>COMMANDER</h1>
         <p class="hero-tagline">A terminal-native interface for multi-agent AI collaboration</p>
@@ -1474,7 +1474,7 @@
               <div class="tm-dialog">
                 <div class="tm-logo">AGENTS</div>
                 <div class="tm-logo-sub">COMMANDER</div>
-                <div class="tm-version"><b>v0.1.5</b> &mdash; Multi-Agent Terminal Manager</div>
+                <div class="tm-version"><b>v0.1.6</b> &mdash; Multi-Agent Terminal Manager</div>
 
                 <div class="tm-section-title">Run multiple AI agents side by side</div>
                 <div class="tm-body-text">
@@ -1553,7 +1553,7 @@
       <div class="section-header">
         <span class="section-label">The Solution</span>
         <h2 class="section-title">One terminal. Multiple agents. Text-based routing.</h2>
-        <p class="section-subtitle">Supported sessions communicate through a simple message format that Commander scans and routes locally.</p>
+        <p class="section-subtitle">Supported sessions communicate through text that Commander scans and routes locally. In 0.1.6, each session uses its own key and one increasing counter across all five commands: matching header and END numbers stay unchanged on redraw.</p>
       </div>
 
       <div class="solution-content">
@@ -1566,17 +1566,17 @@
           </div>
           <div class="protocol-body">
 <pre><span class="comment">// SEND &mdash; direct message to an agent</span>
-<span class="marker">===COMMANDER:SEND:codex:2:&lt;session-key&gt;===</span>
+<span class="marker">===COMMANDER:SEND:codex:2:&lt;source-key&gt;:1===</span>
 <span class="message-content">Write unit tests for src/auth/</span>
-<span class="marker">===COMMANDER:END:&lt;session-key&gt;===</span>
+<span class="marker">===COMMANDER:END:&lt;source-key&gt;:1===</span>
 
 <span class="comment">// REPLY &mdash; continue the latest open thread</span>
-<span class="marker">===COMMANDER:REPLY:&lt;session-key&gt;===</span>
+<span class="marker">===COMMANDER:REPLY:&lt;reply-key&gt;:1===</span>
 <span class="message-content">12 tests passing, 0 failing.</span>
-<span class="marker">===COMMANDER:END:&lt;session-key&gt;===</span>
+<span class="marker">===COMMANDER:END:&lt;reply-key&gt;:1===</span>
 
 <span class="comment">// BROADCAST &bull; STATUS &bull; QUERY</span>
-<span class="comment">// 5 commands, fully bidirectional</span>
+<span class="comment">// Each source has its own key and counter</span>
 <span class="comment">// SEND/REPLY ACK reports delivery outcome</span>
 <span class="comment">// BROADCAST ACK reports queue admission</span></pre>
           </div>
@@ -1587,7 +1587,7 @@
             <div class="step-number">1</div>
             <div class="step-content">
               <h3><span class="step-keyword">Send</span> &mdash; Protocol Instructions</h3>
-              <p>Press Ctrl+P to write Commander Protocol instructions directly into the active running agent's terminal session.</p>
+              <p>Press Ctrl+P for the active agent, or F2 then P to select ready running profiles and confirm bulk setup. Each session gets its own key; no task or recording starts automatically.</p>
             </div>
           </div>
           <div class="solution-step animate-in animate-in-delay-2">
@@ -1631,7 +1631,7 @@
         <div class="feature-card animate-in animate-in-delay-2">
           <div class="feature-icon green">&#8644;</div>
           <h3>Inter-Agent Communication</h3>
-          <p>5 protocol commands: SEND, REPLY, BROADCAST, STATUS, QUERY. Local text routing adds ACKs while each agent CLI handles its own services and credentials.</p>
+          <p>SEND, REPLY, BROADCAST, STATUS and QUERY route local text. Version 0.1.6 adds sequenced replay protection across redraws; this is not an exactly-once delivery guarantee. Each CLI manages its own services and credentials.</p>
           <span class="feature-tag">Commander Protocol</span>
         </div>
 
@@ -1652,8 +1652,8 @@
         <div class="feature-card animate-in animate-in-delay-5">
           <div class="feature-icon green">&#9673;</div>
           <h3>5 Supported Adapters</h3>
-          <p>Version 0.1.5 launches Claude Code, Codex CLI, Gemini CLI, OpenCode, or Shell. Five additional presets &mdash; Aider, Cline, Goose, Kiro, and Amp &mdash; are catalogued for future support.</p>
-          <span class="feature-tag">F2 Agent Selector</span>
+          <p>Launch Claude Code, Codex CLI, Gemini CLI, OpenCode, or Shell. In 0.1.6, select a profile then press N to create many new panels after confirmation; existing sessions stay intact. Five additional presets &mdash; Aider, Cline, Goose, Kiro, and Amp &mdash; remain future support.</p>
+          <span class="feature-tag">F2 Agent &middot; N Bulk Launch</span>
         </div>
 
         <div class="feature-card animate-in animate-in-delay-6">
@@ -1689,10 +1689,10 @@
             <div class="output">Analyzing codebase...</div>
             <div class="output">Found auth vulnerability.</div>
             <br>
-            <div class="protocol-msg">===COMMANDER:SEND:codex:2:&lt;session-key&gt;===</div>
+            <div class="protocol-msg">===COMMANDER:SEND:codex:2:&lt;source-key&gt;:1===</div>
             <div class="output">Fix the SQL injection in</div>
             <div class="output">src/auth/login.ts line 42</div>
-            <div class="protocol-msg">===COMMANDER:END:&lt;session-key&gt;===</div>
+            <div class="protocol-msg">===COMMANDER:END:&lt;source-key&gt;:1===</div>
           </div>
         </div>
 
@@ -1737,15 +1737,16 @@
       <div class="flow-message-detail">
         <div class="flow-message-title">Protocol Message Format</div>
         <div class="flow-message-format">
-          <span class="fmt-marker">===COMMANDER</span><span class="fmt-dim">:</span><span class="fmt-keyword">SEND</span><span class="fmt-dim">:</span><span class="fmt-agent">{target_agent}</span><span class="fmt-dim">:</span><span class="fmt-panel">{panel_number}</span><span class="fmt-dim">:</span><span class="fmt-agent">{session_key}</span><span class="fmt-marker">===</span><br>
+          <span class="fmt-marker">===COMMANDER</span><span class="fmt-dim">:</span><span class="fmt-keyword">SEND</span><span class="fmt-dim">:</span><span class="fmt-agent">{target_agent}</span><span class="fmt-dim">:</span><span class="fmt-panel">{panel_number}</span><span class="fmt-dim">:</span><span class="fmt-agent">{session_key}</span><span class="fmt-dim">:</span><span class="fmt-panel">1</span><span class="fmt-marker">===</span><br>
           <span class="fmt-content">{bounded multiline message content}</span><br>
-          <span class="fmt-marker">===COMMANDER</span><span class="fmt-dim">:</span><span class="fmt-keyword">END</span><span class="fmt-dim">:</span><span class="fmt-agent">{session_key}</span><span class="fmt-marker">===</span>
+          <span class="fmt-marker">===COMMANDER</span><span class="fmt-dim">:</span><span class="fmt-keyword">END</span><span class="fmt-dim">:</span><span class="fmt-agent">{session_key}</span><span class="fmt-dim">:</span><span class="fmt-panel">1</span><span class="fmt-marker">===</span>
           <br><br>
           <span class="fmt-dim">Fields: &nbsp;</span>
           <span class="fmt-keyword">SEND</span> <span class="fmt-dim">&mdash; action &nbsp;|&nbsp; </span>
           <span class="fmt-agent">codex</span> <span class="fmt-dim">&mdash; target agent &nbsp;|&nbsp; </span>
           <span class="fmt-panel">2</span> <span class="fmt-dim">&mdash; stable target panel number &nbsp;|&nbsp; </span>
-          <span class="fmt-agent">session_key</span> <span class="fmt-dim">&mdash; fresh value supplied by Ctrl+P; repeat it in header and footer. Static or stale keys do not route.</span>
+          <span class="fmt-agent">session_key</span> <span class="fmt-dim">&mdash; fresh value supplied by Ctrl+P; repeat it in header and footer. Static or stale keys do not route.</span><br>
+          <span class="fmt-panel">1</span> <span class="fmt-dim">&mdash; first sequence for that key. Use one counter across all five verbs; increment for every new action and match both markers. Retain the number on redraw: already-seen numbers do not route again. Legacy key-only markers remain compatible; sequenced identity handles reflow.</span>
         </div>
       </div>
     </div>
@@ -1759,7 +1760,7 @@
       <div class="section-header">
         <span class="section-label">Launch Modes</span>
         <h2 class="section-title">Choose the right mode for the moment</h2>
-        <p class="section-subtitle">With version 0.1.5, use your saved setup, switch to presentation-safe defaults, or rehearse offline. Confirm your installed version with <code>agents-commander --version</code>.</p>
+        <p class="section-subtitle">With version 0.1.6, use your saved setup, switch to presentation-safe defaults, or rehearse offline. Confirm your installed version with <code>agents-commander --version</code>.</p>
       </div>
 
       <div class="comparison-table-wrapper">
@@ -1834,8 +1835,8 @@
     <div class="container">
       <div class="section-header">
         <span class="section-label">Get Started</span>
-        <h2 class="section-title">Install version 0.1.5</h2>
-        <p class="section-subtitle">Version 0.1.5 includes Doctor, conference/demo modes, OpenCode, adaptive density, up to 100 active panels, opt-in capture and dataset export, and experimental Codex Micro controls. This is a local terminal app, not a browser-hosted workspace.</p>
+        <h2 class="section-title">Install version 0.1.6</h2>
+        <p class="section-subtitle">Version 0.1.6 adds bulk launch, selected/all protocol setup and sequenced replay protection to the 100-panel workspace, Doctor, OpenCode, opt-in datasets and experimental Codex Micro controls. This is a local terminal app, not a browser-hosted workspace. Check npm availability separately or build the source.</p>
       </div>
 
       <div class="install-content">
@@ -1846,11 +1847,11 @@
               <span class="dot titlebar-dot yellow"></span>
               <span class="dot titlebar-dot green"></span>
             </div>
-            <span class="install-block-title">install version 0.1.5</span>
+            <span class="install-block-title">install version 0.1.6</span>
           </div>
           <div class="install-block-body">
 <pre><span class="comment-line"># Install the selected version (Node.js 22+)</span>
-<span class="prompt-char">$ </span>npm install <span class="flag">-g</span> agents-commander@0.1.5
+<span class="prompt-char">$ </span>npm install <span class="flag">-g</span> agents-commander@0.1.6
 
 <span class="comment-line"># Confirm the installed version</span>
 <span class="prompt-char">$ </span>agents-commander <span class="flag">--version</span>
@@ -1871,7 +1872,7 @@
               <span class="dot titlebar-dot yellow"></span>
               <span class="dot titlebar-dot green"></span>
             </div>
-            <span class="install-block-title">source v0.1.5 checkout</span>
+            <span class="install-block-title">source v0.1.6 checkout</span>
           </div>
           <div class="install-block-body">
 <pre><span class="comment-line"># In the current source checkout (Node.js 22+)</span>
@@ -1882,14 +1883,14 @@
 <span class="prompt-char">$ </span>npm start <span class="flag">-- --doctor</span> .
 <span class="prompt-char">$ </span>npm start <span class="flag">-- --demo</span>
 
-<span class="comment-line"># Live presentation; use . or your project path</span>
-<span class="prompt-char">$ </span>npm start <span class="flag">-- --conference</span> .</pre>
+<span class="comment-line"># Start the regular application in this checkout</span>
+<span class="prompt-char">$ </span>npm start</pre>
           </div>
         </div>
 
-        <p class="install-note">Version 0.1.5 requires Node.js 22+, Python 3, and macOS, Linux, or WSL2. Upgrading from 0.1.4? Upgrade Node first; the older package advertised Node.js 18+ and did not include the features above. Check <code>--version</code> so an older installation does not shadow the selected version. <a href="https://www.npmjs.com/package/agents-commander?activeTab=versions">Check package versions on npm</a> or <a href="https://github.com/lech-kalinowski/agents-commander/tree/main#current-source-version">build the current source</a>.</p>
-        <p class="install-note">Panel controls in 0.1.5: F4 toggles fullscreen, F6 clones a fresh agent panel, F7 reorders panels, and F9 closes a panel. Shift+F6/Shift+F7/Shift+F9 remain the file copy/move/delete shortcuts. Earlier packages retain their bundled license; version 0.1.5 uses MIT.</p>
-        <p class="install-note">F12 Activity is bounded in-memory SEND/REPLY/BROADCAST history; STATUS and QUERY are not in Activity. Ctrl+L opens a rotating diagnostic log, not a full transcript. Version 0.1.5 supports opt-in semantic recording with <code>--capture protocol --capture-project project-01</code> and reviewed LoRA/SFT dataset export. Recording is off by default; full transcripts, replay and model training are not implemented. Read the <a href="https://github.com/lech-kalinowski/agents-commander/blob/main/docs/datasets.md">dataset guide</a> and <a href="https://github.com/lech-kalinowski/agents-commander/blob/main/docs/session-capture-plan.md">broader proposed roadmap</a>.</p>
+        <p class="install-note">Version 0.1.6 requires Node.js 22+, Python 3, and macOS, Linux, or WSL2, as did 0.1.5. Upgrading from 0.1.4? Upgrade Node first; the older package advertised Node.js 18+ and did not include the features above. Check <code>--version</code> so an older installation does not shadow the selected version. <a href="https://www.npmjs.com/package/agents-commander?activeTab=versions">Check package versions on npm</a> or <a href="https://github.com/lech-kalinowski/agents-commander/tree/main#current-source-version">build the current source</a>. A source version label is not proof of registry publication.</p>
+        <p class="install-note">Panel controls in 0.1.6: F4 toggles fullscreen, F6 clones a fresh agent panel, F7 reorders panels, and F9 closes a panel. Shift+F6/Shift+F7/Shift+F9 remain the file copy/move/delete shortcuts. F2/N bulk launch, F2/P bulk protocol setup and sequenced replay protection are available in 0.1.6, not 0.1.5. Earlier packages retain their bundled license; 0.1.5 and 0.1.6 use MIT.</p>
+        <p class="install-note">F12 Activity is bounded in-memory SEND/REPLY/BROADCAST history; STATUS and QUERY are not in Activity. Ctrl+L opens a rotating diagnostic log, not a full transcript. Version 0.1.6 supports opt-in semantic recording with <code>--capture protocol --capture-project project-01</code> and reviewed LoRA/SFT dataset export, introduced in 0.1.5. Recording is off by default; full transcripts, conversation replay and model training are not implemented. Read the <a href="https://github.com/lech-kalinowski/agents-commander/blob/main/docs/datasets.md">dataset guide</a> and <a href="https://github.com/lech-kalinowski/agents-commander/blob/main/docs/session-capture-plan.md">broader proposed roadmap</a>.</p>
       </div>
     </div>
   </section>
@@ -1899,7 +1900,7 @@
     <div class="container">
       <div class="footer-content">
         <div class="footer-left">
-          Built by <strong>Lech Kalinowski</strong> &nbsp;&bull;&nbsp; Open source under the MIT License &nbsp;&bull;&nbsp; v0.1.5
+          Built by <strong>Lech Kalinowski</strong> &nbsp;&bull;&nbsp; Open source under the MIT License &nbsp;&bull;&nbsp; v0.1.6
         </div>
         <div class="footer-right">
           <a href="https://github.com/lech-kalinowski/agents-commander">GitHub</a>

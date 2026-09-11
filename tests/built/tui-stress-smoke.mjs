@@ -99,8 +99,16 @@ for (const theme of ['classic-blue', 'midnight']) {
     await key('\x1b[20~', () => /99 panels/u.test(screen()), 'F9 closes P50');
     await navigate(100);
     assert.match(screen(), /Position #99/u, 'Closing P50 must not renumber P100');
-    await key('\x1bOR', () => screen().includes('#100 P101')
-      && screen().slice(screen().indexOf('#100 P101')).includes('synthetic.txt'), 'F3 creates fresh P101');
+    await key('\x1bOR', () => {
+      const view = screen();
+      // P101 is in the bottom-right cell; text after its header includes later
+      // rows of neighbouring panels. Count all visible, loaded fixture lists
+      // instead of mistaking a neighbour's contents for P101 readiness.
+      // Each panel has one fixture file; the status selection remains '..'.
+      const visible = [...view.matchAll(/#\d+ P\d+ /gu)].length;
+      const loaded = [...view.matchAll(/synthetic\.txt/gu)].length;
+      return view.includes('#100 P101') && visible > 0 && loaded === visible;
+    }, 'F3 creates and loads fresh P101');
     await key('\x1bOS', () => screen().includes('F4 Back'), 'new P101 fullscreen');
     await key('\x1bOS', () => !screen().includes('F4 Back'), 'new P101 back');
   });

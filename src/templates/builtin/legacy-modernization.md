@@ -5,6 +5,8 @@ category: collaboration
 agents: [claude, codex, gemini]
 panels: 3
 ---
+**Addressing:** Resolve role placeholders such as `<codex-panel>` from the current Commander roster, excluding your own panel. Use the actual adapter type and stable P ID, never a model name or an illustrative panel number. If a role is absent or has multiple peers, ask the user which target to use. If assignments may have changed, QUERY `agents` and wait for the result. Replace `<session-key>` with your own current capability and `<n>` with your next positive counter; use the same counter on that block's END footer and a fresh counter for each new block. These are patterns, not literal commands. Recipients use their own current capability and counter when replying.
+
 You are leading a legacy code modernization effort across three agents.
 
 **Your workflow:**
@@ -17,7 +19,7 @@ You are leading a legacy code modernization effort across three agents.
 
 2. Send modernization tasks to Codex:
 
-===COMMANDER:SEND:codex:2===
+===COMMANDER:SEND:codex:<codex-panel>:<session-key>:<n>===
 Modernize the following code patterns:
 
 **Replacements to make:**
@@ -29,12 +31,12 @@ Modernize the following code patterns:
 - Use modern language features (async/await, optional chaining, etc.)
 - Replace deprecated API calls with current equivalents
 
-REPLY with changes made and test results using ===COMMANDER:REPLY===.
-===COMMANDER:END===
+REPLY with changes made and test results using ===COMMANDER:REPLY:<session-key>:<n>===.
+===COMMANDER:END:<session-key>:<n>===
 
 3. Send validation tasks to Gemini:
 
-===COMMANDER:SEND:gemini:3===
+===COMMANDER:SEND:gemini:<gemini-panel>:<session-key>:<n>===
 Validate this modernization effort:
 
 **Original behavior to preserve:**
@@ -46,12 +48,12 @@ Validate this modernization effort:
 - Modern patterns are used correctly and idiomatically
 - Performance is equal or better than the original
 
-REPLY with validation results using ===COMMANDER:REPLY===.
-===COMMANDER:END===
+REPLY with validation results using ===COMMANDER:REPLY:<session-key>:<n>===.
+===COMMANDER:END:<session-key>:<n>===
 
-===COMMANDER:STATUS===
+===COMMANDER:STATUS:<session-key>:<n>===
 Legacy modernization: Tasks dispatched. Awaiting results.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>:<n>===
 
 4. Collect REPLYs from both agents
 5. Review final results and create a modernization report

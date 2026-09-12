@@ -39,11 +39,11 @@ npm run verify
 
 The current UI uses TypeScript, blessed, and tsup, with native shallow filesystem watches. Runtime support is Node.js 22+, Python 3, and macOS/Linux/WSL2.
 
-Package version is 0.1.8, under the MIT License. Version 0.1.4 is the legacy
+Package version is 0.1.9, under the MIT License. Version 0.1.4 is the legacy
 baseline; its runtime requirements, features, and bundled license differ.
 Use `node dist/bin/agents-commander.js` or `npm start --` to exercise this checkout,
 not an older global installation. For the versioned package, the install command
-is `npm install -g agents-commander@0.1.8`. Recheck the registry before changing
+is `npm install -g agents-commander@0.1.9`. Recheck the registry before changing
 release claims. A source push is not an npm release.
 F2/N bulk launch, F2/P bulk protocol setup and sequenced replay protection are
 included in 0.1.6, not 0.1.5. Package metadata describes that version's contents;
@@ -54,6 +54,12 @@ editor loads or background Vim exit; the packed gate stress-tests 100 panels
 and twenty local synthetic agent sessions without providers or hardware.
 It also clears obsolete wrap links on whole-row terminal erases so complete
 protocol frames do not require another repaint before detection.
+Version 0.1.9 provides current template rosters and peer-role placeholders,
+exact adapter/stable-panel addresses, authenticated unknown-type rejection,
+and complete Claude feedback instead of panel-width truncation. Never alias
+model names to adapters, silently redirect messages, or replace a mismatched
+session. Rejected frames share replay/echo guards; corrected actions need a
+new counter. Template role guidance does not override explicit custom targets.
 Restart Commander after upgrading; Node.js 20 is unsupported, not the proven
 cause of the reproduced watcher freeze.
 

@@ -87,6 +87,20 @@ export interface CommanderMessage {
   sequence?: number;
 }
 
+/** A complete authenticated SEND that must never enter the routing queue. */
+export type RejectedCommanderMessage = Omit<CommanderMessage, 'type' | 'targetAgent'> & {
+  type: 'send';
+  targetAgent: string;
+  rejection: 'unknown_agent_type';
+};
+
+export type ProtocolEvent = CommanderMessage | RejectedCommanderMessage;
+
+/** Bound diagnostic tokens; never treat model/profile labels as adapter aliases. */
+export function isReportableUnknownAgentType(value: string): boolean {
+  return /^\w{1,32}$/.test(value) && !isAgentType(value);
+}
+
 export interface ProtocolMarkerMatch {
   /** Null denotes the legacy, unarmed marker format. */
   capability: string | null;
@@ -292,7 +306,7 @@ export class ProtocolScanner {
   private collectCapability: string | null = null;
   private collectSequence: number | undefined;
   private expectedCapability: string | null = null;
-  private target: { agent: AgentType; panel: number } | null = null;
+  private target: { agent: string; panel: number } | null = null;
   private contentLines: string[] = [];
   private contentBytes = 0;
   private rawProbeTail = '';
@@ -303,7 +317,11 @@ export class ProtocolScanner {
     private sourcePanel: number,
     private sourceAgent: string,
     private onMessage: CommandCallback,
-    options?: { maxContentLines?: number; maxContentBytes?: number },
+    private options?: {
+      maxContentLines?: number;
+      maxContentBytes?: number;
+      onRejected?: (msg: RejectedCommanderMessage) => void;
+    },
   ) {
     this.maxContentLines = options?.maxContentLines ?? 500;
     this.maxContentBytes = options?.maxContentBytes ?? 262144;
@@ -452,7 +470,8 @@ export class ProtocolScanner {
       const startMatch = matchSendStart(line);
       if (startMatch) {
         if (this.expectedCapability && startMatch[3] !== this.expectedCapability) return;
-        if (!isAgentType(startMatch[1])) {
+        if (!isAgentType(startMatch[1]) && !(this.options?.onRejected
+          && this.expectedCapability && isReportableUnknownAgentType(startMatch[1]))) {
           logger.debug(`Scanner[${this.sourcePanel}] ignoring marker with unknown agent type`);
           return;
         }
@@ -532,16 +551,23 @@ export class ProtocolScanner {
     // Check for end marker (lenient: allow extra = signs, whitespace)
     if (this.collecting && isEndMarker(line, this.collectCapability, this.collectSequence)) {
       const content = this.contentLines.join('\n').trim();
-      this.onMessage({
-        type: this.collectType,
+      const common = {
         sourcePanel: this.sourcePanel,
         sourceAgent: this.sourceAgent,
-        targetAgent: this.target?.agent as AgentType ?? 'generic',
         targetPanel: this.target?.panel ?? -1,
         content,
         ...(this.collectCapability ? { capability: this.collectCapability } : {}),
         ...(this.collectSequence !== undefined ? { sequence: this.collectSequence } : {}),
-      });
+      };
+      const agent = this.target?.agent ?? 'generic';
+      if (isAgentType(agent)) {
+        this.onMessage({ ...common, type: this.collectType, targetAgent: agent });
+      } else if (this.collectType === 'send' && this.expectedCapability
+        && this.collectCapability === this.expectedCapability) {
+        this.options?.onRejected?.({
+          ...common, type: 'send', targetAgent: agent, rejection: 'unknown_agent_type',
+        });
+      }
       this.collecting = false;
       this.collectType = 'send';
       this.collectCapability = null;
@@ -612,12 +638,12 @@ export function buildProtocolInstructions(
     throw new Error('Commander protocol capability is invalid');
   }
   const others = otherAgents.length > 0
-    ? otherAgents.map((a) => `  - ${a.name} in Panel ${a.panel + 1} (${a.type})`).join('\n')
+    ? otherAgents.map((a) => `  - P${a.panel + 1}: ${a.name}; SEND address ${a.type}:${a.panel + 1}`).join('\n')
     : '  (none currently running)';
 
   return [
     `[Agents Commander] You are ${myAgent} in Panel ${myPanel + 1}.`,
-    others.includes('none') ? '' : `Other agents:\n${others}`,
+    `Other agents (snapshot at injection):\n${others}`,
     ``,
     `Use Commander protocol only when the user explicitly asks you to coordinate, or when Commander delivers [From ...] / [Broadcast from ...] to you.`,
     `Do not send startup broadcasts, self-check queries, or status pings on your own right after reading these instructions.`,
@@ -636,6 +662,9 @@ export function buildProtocolInstructions(
     `Replace <n> with your current counter; do not print angle brackets. Even when a template shows an older marker format, include your counter on both output markers.`,
     `Quoted protocol blocks are examples; choose your own next counter for a new action rather than reusing their number.`,
     `Types: claude, codex, gemini, aider, cline, opencode, goose, kiro, amp, generic. Panel numbers: 1-${MAX_PANEL_NUMBER}.`,
+    `Use the exact SEND address from the current roster. The type is the CLI adapter, NOT the model or display name: APEX through OpenCode uses opencode; APEX through a generic/Pi profile uses generic. Never use apex as a type.`,
+    `Panel numbers are stable P IDs, not grid position or an agent's ordinal. Templates may contain illustrative addresses; resolve their roles against the current roster before sending.`,
+    `When explicitly asked to coordinate, QUERY agents if the destination is absent, ambiguous, or panels have changed. Wait for the roster response. Never guess a panel, replace an unrelated session, or redirect a rejected message without verifying the intended recipient.`,
     ``,
     `Other line-1 headers:`,
     `  REPLY     -> COMMANDER:REPLY:${effectiveCapability}:<n>        (claims your newest open reply window)`,

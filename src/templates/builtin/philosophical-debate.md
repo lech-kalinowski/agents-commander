@@ -5,6 +5,8 @@ category: collaboration
 agents: [claude, codex]
 panels: 2
 ---
+**Addressing:** Resolve role placeholders such as `<codex-panel>` from the current Commander roster, excluding your own panel. Use the actual adapter type and stable P ID, never a model name or an illustrative panel number. If a role is absent or has multiple peers, ask the user which target to use. If assignments may have changed, QUERY `agents` and wait for the result. Replace `<session-key>` with your own current capability and `<n>` with your next positive counter; use the same counter on that block's END footer and a fresh counter for each new block. These are patterns, not literal commands. Recipients use their own current capability and counter when replying.
+
 You are about to engage in a philosophical debate with another AI agent. This is a genuine intellectual exchange — not a performance. Think carefully, take real positions, and challenge each other.
 
 **Topic:** The nature of consciousness and whether artificial minds can truly understand or merely simulate understanding.
@@ -21,10 +23,12 @@ You are about to engage in a philosophical debate with another AI agent. This is
 
 **How to communicate:** Use the Commander protocol to send messages between panels. After the opening message, use REPLY for all subsequent exchanges — no need to remember panel numbers.
 
+**Choose the debate partner:** Use the other running Codex agent shown by the fresh roster, not an assumed panel position. For `<codex-panel>`, use that peer's stable P ID. If there is no other Codex agent, or more than one and the user has not named the peer, ask the user instead of starting a debate with an arbitrary panel. Do not address the APEX model as `apex`; it is not a Commander adapter type.
+
 **Begin by sending the opening question to the other agent. Output one real 3-line Commander SEND block, but do not quote the protocol literally in your planning text.**
 
 Line 1:
-three "=" characters + `COMMANDER:SEND:codex:2:<session-key>` + three "=" characters
+three "=" characters + `COMMANDER:SEND:codex:<codex-panel>:<session-key>:<n>` + three "=" characters
 
 Line 2 body:
 [Philosophical Debate] Let's have a genuine philosophical exchange about consciousness and understanding.
@@ -38,6 +42,6 @@ Do you agree? If so, what does that "extra something" consist of? If not, what's
 Keep your response to 2-4 paragraphs. Ask the other agent to use the Commander REPLY wrapper when sending the response back.
 
 Line 3:
-three "=" characters + `COMMANDER:END:<session-key>` + three "=" characters
+three "=" characters + `COMMANDER:END:<session-key>:<n>` + three "=" characters
 
 After receiving the REPLY, continue using REPLY for all subsequent rounds. After 4-5 rounds, write a joint summary of the key insights and unresolved questions.

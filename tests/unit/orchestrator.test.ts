@@ -453,7 +453,8 @@ describe('Orchestrator', () => {
 
   // ── QUERY handling ──────────────────────────────────────────────
 
-  it('responds to QUERY with list of running agents', () => {
+  it('responds to QUERY with list of running agents', async () => {
+    vi.useFakeTimers();
     const tp0 = mockTerminalPanel(0);
     const layout = mockLayout({ 0: tp0 });
     const agents = mockAgentManager({ 0: 'claude', 1: 'codex' });
@@ -469,10 +470,11 @@ describe('Orchestrator', () => {
     };
 
     orchestrator.handleAgentMessage(msg);
+    await vi.runAllTimersAsync();
 
     // Should send response back to the querying panel
     expect(tp0.sendInput).toHaveBeenCalled();
-    const response = tp0.sendInput.mock.calls[0][0];
+    const response = tp0.sendInput.mock.calls.map(([text]) => text).join('');
     expect(response).toContain('Running agents');
   });
 
@@ -855,7 +857,7 @@ describe('Orchestrator', () => {
     });
     expect(orchestrator.sendTextToAgent).toHaveBeenLastCalledWith(
       tp,
-      `===COMMANDER:QUERY:${deliveryCapability}===\nagents\n===COMMANDER:END:${deliveryCapability}===`,
+      expect.stringContaining(`===COMMANDER:QUERY:${deliveryCapability}===\nagents\n===COMMANDER:END:${deliveryCapability}===`),
       expect.any(Function),
     );
   });
@@ -1008,7 +1010,7 @@ describe('Orchestrator', () => {
       orchestrator.executeTask('codex', 0, 'automatic route', undefined, undefined, false),
     ).resolves.toEqual({
       success: false,
-      error: 'Protocol routing refused to replace claude in Panel 1 with codex',
+      error: expect.stringContaining('Protocol routing refused to replace claude in Panel 1 with codex. Current SEND address is claude:1'),
     });
 
     expect(layout.convertToTerminal).not.toHaveBeenCalled();
@@ -1028,7 +1030,7 @@ describe('Orchestrator', () => {
       orchestrator.executeTask('codex', 0, 'automatic route', undefined, undefined, false),
     ).resolves.toEqual({
       success: false,
-      error: 'Protocol routing requires Panel 1 to already run codex',
+      error: expect.stringContaining('Protocol routing requires Panel 1 to already run codex. Nothing was delivered; use QUERY agents'),
     });
 
     expect(layout.convertToTerminal).not.toHaveBeenCalled();

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.9
+
+### Fixed
+
+- Resolve built-in collaboration template roles against a fresh running-agent
+  roster instead of hardcoded panel positions (including Philosophical Debate
+  incorrectly addressing Codex in P2 when it is running in P4). Preserve custom
+  template bodies and require clarification for missing or ambiguous peers.
+- Teach exact stable SEND addresses and distinguish CLI adapters from model
+  names: APEX through OpenCode is `opencode`, not `apex`.
+- Return authenticated, bounded, replay-deduplicated feedback for unknown SEND
+  types instead of silently dropping them. Never alias, redirect, or replace a
+  session to make an invalid address succeed.
+- Preserve full Claude error/roster feedback using the existing session-bound
+  paste/submit lane instead of truncating it to the panel width.
+
+This section describes version contents; verify npm publication separately.
+
 ## 0.1.8
 
 ### Fixed

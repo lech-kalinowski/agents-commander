@@ -36,6 +36,16 @@ describe('collaboration template routing context', () => {
     expect(prepared).not.toContain('<codex-panel> =');
   });
 
+  it('does not invent a Codex requirement for adapter-independent broadcast or protocol templates', () => {
+    const openCodeOnly = roster.filter((agent) => agent.type === 'opencode');
+    for (const id of ['broadcast-kickoff', 'broadcast-standup', 'protocol-demo', 'fast-collaboration-loop']) {
+      const prepared = withTemplateRoutingContext(readBuiltin(id), 0, openCodeOnly);
+      expect(prepared, id).not.toContain('Role placeholders in the selected template:');
+      expect(prepared, id).not.toContain('no other running codex');
+      expect(prepared, id).toContain('adapter=opencode');
+    }
+  });
+
   it('excludes self and refuses to invent a peer for an absent role', () => {
     const prepared = withTemplateRoutingContext('SEND role: <codex-panel>', 3, roster);
     expect(prepared).toContain('<codex-panel>: no other running codex agent. Ask the user');

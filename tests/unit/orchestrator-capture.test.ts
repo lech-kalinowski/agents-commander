@@ -217,18 +217,18 @@ describe('Orchestrator semantic capture', () => {
     expect(f.events[1].content).toBe('START');
   });
 
-  it('captures Claude feedback after flattening/truncation and marks context incomplete', async () => {
+  it('captures complete Claude feedback even in a narrow panel', async () => {
     const f = fixture(['claude', 'codex']);
     await f.arm(0);
     f.panels[0].cols = 32;
     f.emit('query', 0, 'agents');
     await vi.runAllTimersAsync();
     const feedback = f.events.find((event) => event.type === 'controller.feedback')!;
-    expect(feedback.content).not.toContain('\n');
-    expect(feedback.content).toHaveLength(30);
-    expect(feedback.coverage).toBe('truncated');
-    expect(f.panels[0].sendInput).toHaveBeenCalledWith(`${feedback.content}\r`);
-    expect(f.events.at(-1)).toMatchObject({ type: 'input.unknown', reason: 'feedback_truncated' });
+    expect(feedback.content).toContain('\n');
+    expect(feedback.content).toContain('SEND address codex:2');
+    expect(feedback.coverage).toBe('commander-visible');
+    expect(f.panels[0].sendInput.mock.calls.map(([text]) => text).join('')).toContain(`\x1b[200~${feedback.content}\x1b[201~\r`);
+    expect(f.events.some(event => event.type === 'input.unknown')).toBe(false);
   });
 
   it('never records queued intent as submitted input after a partial write failure', async () => {

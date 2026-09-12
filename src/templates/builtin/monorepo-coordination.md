@@ -5,6 +5,8 @@ category: collaboration
 agents: [claude, codex, gemini]
 panels: 3
 ---
+**Addressing:** Resolve role placeholders such as `<adapter-panel>` from the current Commander roster, excluding your own panel. Use the actual adapter type and stable P ID, never a model name or an illustrative panel number. If a role is absent or has multiple peers, ask the user which target to use. If assignments may have changed, QUERY `agents` and wait for the result. Replace `<session-key>` with your own current capability and `<n>` with your next positive counter; use the same counter on that block's END footer and a fresh counter for each new block. These are patterns, not literal commands. Recipients use their own current capability and counter when replying.
+
 You are coordinating changes across a monorepo. Each agent handles a different package.
 
 **Your workflow:**
@@ -13,7 +15,7 @@ You are coordinating changes across a monorepo. Each agent handles a different p
 2. Define the shared interface contract that all packages must follow
 3. Assign packages:
 
-===COMMANDER:SEND:codex:2===
+===COMMANDER:SEND:codex:<codex-panel>:<session-key>:<n>===
 Implement changes in package: [PACKAGE_B]
 
 **Shared interface contract:**
@@ -28,10 +30,10 @@ Implement changes in package: [PACKAGE_B]
 
 **Dependencies:** Wait for shared types to be published before testing.
 
-REPLY when done with a summary of changes using ===COMMANDER:REPLY===.
-===COMMANDER:END===
+REPLY when done with a summary of changes using ===COMMANDER:REPLY:<session-key>:<n>===.
+===COMMANDER:END:<session-key>:<n>===
 
-===COMMANDER:SEND:gemini:3===
+===COMMANDER:SEND:gemini:<gemini-panel>:<session-key>:<n>===
 Implement changes in package: [PACKAGE_C]
 
 **Shared interface contract:**
@@ -44,12 +46,12 @@ Implement changes in package: [PACKAGE_C]
 **Requirements:**
 [Package-specific requirements]
 
-REPLY when done with a summary of changes using ===COMMANDER:REPLY===.
-===COMMANDER:END===
+REPLY when done with a summary of changes using ===COMMANDER:REPLY:<session-key>:<n>===.
+===COMMANDER:END:<session-key>:<n>===
 
-===COMMANDER:STATUS===
+===COMMANDER:STATUS:<session-key>:<n>===
 Monorepo coordination: 2 packages delegated, working on PACKAGE_A.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>:<n>===
 
 4. Implement changes in PACKAGE_A yourself
 5. Collect REPLYs from both agents

@@ -5,6 +5,8 @@ category: collaboration
 agents: [claude, codex, gemini]
 panels: 3
 ---
+**Addressing:** Resolve role placeholders such as `<adapter-panel>` from the current Commander roster, excluding your own panel. Use the actual adapter type and stable P ID, never a model name or an illustrative panel number. If a role is absent or has multiple peers, ask the user which target to use. If assignments may have changed, QUERY `agents` and wait for the result. Replace `<session-key>` with your own current capability and `<n>` with your next positive counter; use the same counter on that block's END footer and a fresh counter for each new block. These are patterns, not literal commands. Recipients use their own current capability and counter when replying.
+
 You are the incident commander for a production issue. Coordinate diagnosis, fix, and postmortem.
 
 **Your workflow:**
@@ -16,11 +18,11 @@ You are the incident commander for a production issue. Coordinate diagnosis, fix
 
 2. Send fix to Codex:
 
-===COMMANDER:STATUS===
+===COMMANDER:STATUS:<session-key>:<n>===
 Incident response: Diagnosis complete. Dispatching fix and postmortem.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>:<n>===
 
-===COMMANDER:SEND:codex:2===
+===COMMANDER:SEND:codex:<codex-panel>:<session-key>:<n>===
 Apply this emergency fix:
 
 **Root cause:** [detailed explanation]
@@ -33,12 +35,12 @@ Requirements:
 - Ensure backward compatibility
 - Test the fix thoroughly before reporting done
 
-REPLY with fix details and test results using ===COMMANDER:REPLY===.
-===COMMANDER:END===
+REPLY with fix details and test results using ===COMMANDER:REPLY:<session-key>:<n>===.
+===COMMANDER:END:<session-key>:<n>===
 
 3. Send postmortem task to Gemini:
 
-===COMMANDER:SEND:gemini:3===
+===COMMANDER:SEND:gemini:<gemini-panel>:<session-key>:<n>===
 Write an incident postmortem based on this analysis:
 
 **Timeline:** [when detected, diagnosed, fixed]
@@ -52,12 +54,12 @@ Include:
 - Action items to prevent recurrence
 - Lessons learned
 
-REPLY with the postmortem using ===COMMANDER:REPLY===.
-===COMMANDER:END===
+REPLY with the postmortem using ===COMMANDER:REPLY:<session-key>:<n>===.
+===COMMANDER:END:<session-key>:<n>===
 
 4. Wait for REPLYs from both agents
 5. Verify fix is correct and postmortem is complete
 
-===COMMANDER:STATUS===
+===COMMANDER:STATUS:<session-key>:<n>===
 Incident response: Fix applied, postmortem complete.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>:<n>===

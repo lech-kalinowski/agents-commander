@@ -18,7 +18,8 @@ import {
   isEndMarker,
   isWithinProtocolContentBudget,
   looksLikeInstructionEcho,
-  type CommandCallback,
+  isReportableUnknownAgentType,
+  type ProtocolEvent,
   type CommanderMessage,
   type MessageType,
 } from '../orchestration/protocol.js';
@@ -226,7 +227,7 @@ export class TerminalPanel {
   private commanderActivityTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Set by the Orchestrator to receive inter-agent messages. */
-  public onCommanderMessage: CommandCallback | null = null;
+  public onCommanderMessage: ((msg: ProtocolEvent) => void) | null = null;
 
   /** Called when the process exits. Useful for AgentManager to track lifecycle. */
   public onExit: ((
@@ -669,6 +670,7 @@ export class TerminalPanel {
           {
             maxContentLines: this.orchConfig.maxContentLines,
             maxContentBytes: this.orchConfig.maxContentBytes,
+            onRejected: (msg) => this.emitDeduped(msg, 'scrollback'),
           },
         )
         : null;
@@ -773,7 +775,7 @@ export class TerminalPanel {
    * ProtocolScanner would detect it again.  This gate prevents the
    * duplicate from reaching the Orchestrator.
    */
-  private emitDeduped(msg: CommanderMessage, origin: ProtocolScannerOrigin): void {
+  private emitDeduped(msg: ProtocolEvent, origin: ProtocolScannerOrigin): void {
     if (!this.onCommanderMessage) return;
     if (this.protocolCapability && msg.capability !== this.protocolCapability) return;
     const canonical = TerminalPanel.canonicalizeContent(msg.content);
@@ -874,7 +876,8 @@ export class TerminalPanel {
       if (startIdx < 0) {
         // ── SEND:agent:panel ──
         const startMatch = matchSendStart(line);
-        if (startMatch && isAgentType(startMatch[1])
+        if (startMatch && (isAgentType(startMatch[1])
+          || (this.protocolCapability && isReportableUnknownAgentType(startMatch[1])))
           && (!this.protocolCapability || startMatch[3] === this.protocolCapability)) {
           const panelNum = parseProtocolPanelId(startMatch[2]);
           if (panelNum !== null) {
@@ -945,7 +948,7 @@ export class TerminalPanel {
         const canonical = TerminalPanel.canonicalizeContent(content);
         const key = this.buildEmissionKey(
           msgType,
-          (target?.agent as any) ?? 'generic',
+          target?.agent ?? 'generic',
           target?.panel ?? -1,
           canonical,
           capability,
@@ -963,16 +966,22 @@ export class TerminalPanel {
         );
 
         if (!this.activeGridProtocolKeys.has(key)) {
-          this.emitDeduped({
-            type: msgType,
+          const common = {
             sourcePanel: this.panelIndex,
             sourceAgent: this.agentName,
-            targetAgent: (target?.agent as any) ?? 'generic',
             targetPanel: target?.panel ?? -1,
             content,
             ...(capability ? { capability } : {}),
             ...(sequence === undefined ? {} : { sequence }),
-          }, 'grid');
+          };
+          const agent = target?.agent ?? 'generic';
+          if (isAgentType(agent)) {
+            this.emitDeduped({ ...common, type: msgType, targetAgent: agent }, 'grid');
+          } else if (msgType === 'send' && this.protocolCapability) {
+            this.emitDeduped({
+              ...common, type: 'send', targetAgent: agent, rejection: 'unknown_agent_type',
+            }, 'grid');
+          }
           if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
         } else {
           this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
@@ -1434,7 +1443,8 @@ export class TerminalPanel {
 
       if (startIdx < 0) {
         const startMatch = matchSendStart(line);
-        if (startMatch && isAgentType(startMatch[1])
+        if (startMatch && (isAgentType(startMatch[1])
+          || (this.protocolCapability && isReportableUnknownAgentType(startMatch[1])))
           && (!this.protocolCapability || startMatch[3] === this.protocolCapability)) {
           const panelNum = parseProtocolPanelId(startMatch[2]);
           if (panelNum !== null) {
@@ -1461,7 +1471,7 @@ export class TerminalPanel {
         const canonical = TerminalPanel.canonicalizeContent(content);
         const key = this.buildEmissionKey(
           msgType,
-          (target?.agent as any) ?? 'generic',
+          target?.agent ?? 'generic',
           target?.panel ?? -1,
           canonical,
           capability,
@@ -1495,7 +1505,8 @@ export class TerminalPanel {
 
       if (startIdx < 0) {
         const startMatch = matchSendStart(line);
-        if (startMatch && isAgentType(startMatch[1])
+        if (startMatch && (isAgentType(startMatch[1])
+          || (this.protocolCapability && isReportableUnknownAgentType(startMatch[1])))
           && (!this.protocolCapability || startMatch[3] === this.protocolCapability)) {
           const panelNum = parseProtocolPanelId(startMatch[2]);
           if (panelNum !== null) {
@@ -1522,7 +1533,7 @@ export class TerminalPanel {
         const canonical = TerminalPanel.canonicalizeContent(content);
         const key = this.buildEmissionKey(
           msgType,
-          (target?.agent as any) ?? 'generic',
+          target?.agent ?? 'generic',
           target?.panel ?? -1,
           canonical,
           capability,

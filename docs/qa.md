@@ -1,5 +1,37 @@
 # QA coverage and validation checklist
 
+### Addressing and feedback regression checkpoint — 2026-09-12
+
+The source fix for the mixed P1/P2 OpenCode + P3 Claude + P4 Codex layout passed
+`npm run verify` on macOS/Node.js 24: **1,390 application tests across 108 files**,
+**28 Python tests**, typecheck, development watch, build, built CLI isolation,
+packed keyboard/template checks, both 100-panel themes and twenty local PTYs.
+Native metadata/watch checks require normal host permissions; a restricted
+sandbox run was not treated as the release result. Independent review covered
+rejection authentication/replay, feedback delivery, and template integration.
+
+New regressions distinguish `apex:2` (unknown adapter), `codex:2` (wrong running
+adapter), `opencode:2` and `codex:4` (valid addresses). Invalid targets never
+replace sessions. Rejections share raw/grid/scrollback replay and prompt-echo
+protection. Narrow Claude panels receive complete rosters/errors; queued
+templates read a fresh roster and preserve custom content. All 29 collaboration
+templates use peer-role placeholders with capability/sequence patterns.
+
+Manual live acceptance remains separate from these synthetic checks:
+
+1. Start the normal application with fresh empty prompts; keep capture off.
+2. Launch two OpenCode/APEX profiles, inject protocol explicitly into both, and
+   request a short P1 → P2 exchange. Verify a delivered SEND and matching REPLY
+   in F12, not merely a token echoed in an input prompt.
+3. With Claude in P3 and Codex in P4, select Philosophical Debate through Ctrl+B
+   for P3. Verify the opening SEND addresses `codex:4` and Codex replies on the
+   same thread; P2 must remain untouched.
+4. Verify wrong/unknown address feedback without silent replacement or retry.
+   Corrected actions need a fresh sequence; old redraws remain inert.
+
+Do not infer live-provider, hardware, npm publication, or all-model acceptance
+from the automated suite. Restart installed Commander after an upgrade.
+
 This records the source hardening pass started on **2026-09-07**, on top of the
 F2/N bulk-launch change, followed by F2/P bulk protocol setup on **2026-09-08**.
 The **2026-09-11** protocol replay hardening adds sequence-aware regression

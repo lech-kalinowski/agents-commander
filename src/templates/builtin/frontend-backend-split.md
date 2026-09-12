@@ -5,6 +5,8 @@ category: collaboration
 agents: [claude, codex, gemini]
 panels: 3
 ---
+**Addressing:** Resolve role placeholders such as `<adapter-panel>` from the current Commander roster, excluding your own panel. Use the actual adapter type and stable P ID, never a model name or an illustrative panel number. If a role is absent or has multiple peers, ask the user which target to use. If assignments may have changed, QUERY `agents` and wait for the result. Replace `<session-key>` with your own current capability and `<n>` with your next positive counter; use the same counter on that block's END footer and a fresh counter for each new block. These are patterns, not literal commands. Recipients use their own current capability and counter when replying.
+
 You are coordinating a full-stack feature across three agents. You handle the frontend.
 
 **Your workflow:**
@@ -12,7 +14,7 @@ You are coordinating a full-stack feature across three agents. You handle the fr
 1. Define the feature contract (API types, endpoints, data flow)
 2. Send backend work to Codex:
 
-===COMMANDER:SEND:codex:2===
+===COMMANDER:SEND:codex:<codex-panel>:<session-key>:<n>===
 Implement the backend for this feature:
 
 **API endpoints needed:**
@@ -25,12 +27,12 @@ Implement the backend for this feature:
 [Rules and validations]
 
 Use the existing backend patterns. Expose the API endpoints and export types.
-REPLY with endpoint details and test results using ===COMMANDER:REPLY===.
-===COMMANDER:END===
+REPLY with endpoint details and test results using ===COMMANDER:REPLY:<session-key>:<n>===.
+===COMMANDER:END:<session-key>:<n>===
 
 3. Send test requirements to Gemini:
 
-===COMMANDER:SEND:gemini:3===
+===COMMANDER:SEND:gemini:<gemini-panel>:<session-key>:<n>===
 Write comprehensive tests for this feature:
 
 **API contract:**
@@ -43,12 +45,12 @@ Write comprehensive tests for this feature:
 - Edge cases: [list specific scenarios]
 
 Wait for backend implementation to complete before running tests.
-REPLY with test results using ===COMMANDER:REPLY===.
-===COMMANDER:END===
+REPLY with test results using ===COMMANDER:REPLY:<session-key>:<n>===.
+===COMMANDER:END:<session-key>:<n>===
 
-===COMMANDER:STATUS===
+===COMMANDER:STATUS:<session-key>:<n>===
 Full-stack split: Backend and tests dispatched. Building frontend.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>:<n>===
 
 4. Implement the frontend (UI components, state management, API calls)
 5. Collect REPLYs and coordinate integration once all parts are ready

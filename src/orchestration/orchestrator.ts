@@ -12,6 +12,8 @@ import {
   hasLegacyProtocolMarkers,
   isProtocolCapability,
   type CommanderMessage,
+  type ProtocolEvent,
+  type RejectedCommanderMessage,
   type MessageType,
 } from './protocol.js';
 import {
@@ -23,6 +25,7 @@ import {
 import { showToast } from '../screen/toast.js';
 import { logger } from '../utils/logger.js';
 import { isDialogActive } from '../utils/dialog-state.js';
+import { withTemplateRoutingContext } from '../templates/routing-context.js';
 import blessed from 'blessed';
 import {
   detectCodexDecision,
@@ -253,7 +256,7 @@ export class Orchestrator {
     // Always (re-)set the callback — the TerminalPanel instance may have
     // been recreated (e.g. after a file↔terminal conversion) even though
     // the panel index stayed the same.
-    tp.onCommanderMessage = (msg: CommanderMessage) => {
+    tp.onCommanderMessage = (msg: ProtocolEvent) => {
       this.handlePanelAgentMessage(tp, msg);
     };
     tp.onUserInput = () => {
@@ -600,7 +603,7 @@ export class Orchestrator {
     return context;
   }
 
-  private captureRejectedFrame(msg: CommanderMessage, reason: string, emissionId?: string): void {
+  private captureRejectedFrame(msg: Pick<CommanderMessage, 'sourcePanel' | 'type'>, reason: string, emissionId?: string): void {
     const source = this.resolveSessionRefForPanel(msg.sourcePanel);
     this.recordCapture({
       type: 'frame.rejected', ...(source ? { actor: this.captureActor(source) } : {}),
@@ -626,7 +629,7 @@ export class Orchestrator {
    * legacy markers for display compatibility, but routing remains inert until
    * the current managed session has been explicitly armed with its capability.
    */
-  private handlePanelAgentMessage(tp: TerminalPanel, msg: CommanderMessage): void {
+  private handlePanelAgentMessage(tp: TerminalPanel, msg: ProtocolEvent): void {
     if (msg.sourcePanel !== tp.panelIndex || !this.isCurrentTarget(tp.panelIndex, tp)) return;
     if (this.sealed) {
       this.captureRejectedFrame(msg, 'shutdown');
@@ -648,7 +651,28 @@ export class Orchestrator {
       this.captureRejectedFrame(msg, 'unauthorized');
       return;
     }
-    this.handleAgentMessage(msg, `emit_${this.nextEmissionId++}`);
+    const emissionId = `emit_${this.nextEmissionId++}`;
+    if ('rejection' in msg) {
+      this.handleRejectedMessage(msg, emissionId);
+      return;
+    }
+    this.handleAgentMessage(msg, emissionId);
+  }
+
+  /** Authenticated malformed addresses receive feedback, never a guessed route. */
+  private handleRejectedMessage(msg: RejectedCommanderMessage, emissionId: string): void {
+    this.captureRejectedFrame(msg, msg.rejection, emissionId);
+    const requestedType = msg.targetAgent.slice(0, 32).replace(/[^\w-]/gu, '?');
+    const target = this.findRunningAgent(msg.targetPanel);
+    const actualAddress = target && this.layout.getTerminalPanel(msg.targetPanel)?.isRunning
+      ? `Panel ${msg.targetPanel + 1} currently uses SEND address ${target.type}:${msg.targetPanel + 1}.`
+      : `Panel ${msg.targetPanel + 1} has no running agent to receive this message.`;
+    this.sendInfoToPanel(msg.sourcePanel, [
+      `[CommanderError] Unknown SEND type "${requestedType}". Nothing was delivered.`,
+      actualAddress,
+      'Use the CLI/harness type, not a model or profile name such as APEX.',
+      'QUERY agents for current SEND addresses, then choose the intended recipient and use a new counter for a corrected message.',
+    ].join('\n'));
   }
 
   private handleAgentMessage(msg: CommanderMessage, emissionId?: string): void {
@@ -968,8 +992,8 @@ export class Orchestrator {
         response = '[Commander] No agents currently running.';
       } else {
         const lines = agents.map((a) =>
-          `  Panel ${a.panelIndex + 1}: ${a.name} (${a.type}) — running (uptime: ${a.uptime}s)`);
-        response = `[Commander] Running agents:\n${lines.join('\n')}`;
+          `  Panel ${a.panelIndex + 1}: ${a.name} (${a.type}) — SEND address ${a.type}:${a.panelIndex + 1} — running (uptime: ${a.uptime}s)`);
+        response = `[Commander] Running agents:\n${lines.join('\n')}\nUse the exact SEND address (CLI/harness type and stable Panel ID), not a model/profile name or workspace position. Refresh with QUERY agents after panel changes.`;
       }
     } else if (query === 'panels') {
       const info: string[] = [];
@@ -978,7 +1002,7 @@ export class Orchestrator {
         const tp = this.layout.getTerminalPanel(panelId);
         const agent = this.agentManager.getAgentType(panelId);
         if (tp && agent) {
-          info.push(`  Panel ${panelId + 1}: ${agent} (${tp.isRunning ? 'running' : 'stopped'})`);
+          info.push(`  Panel ${panelId + 1}: ${agent} (${tp.isRunning ? 'running' : 'stopped'})${tp.isRunning ? ` — SEND address ${agent}:${panelId + 1}` : ' — not a running SEND target'}`);
         } else if (tp) {
           info.push(`  Panel ${panelId + 1}: terminal (no agent)`);
         } else {
@@ -1172,8 +1196,9 @@ export class Orchestrator {
   /**
    * Send an informational message to a panel (ACK, NACK, QUERY response, etc.).
    *
-   * Claude Code: typed directly (NO bracketed paste) to avoid the
-   * "bypass permissions" prompt.  Multi-line text is flattened.
+   * Claude Code: short feedback is typed directly. Longer feedback uses the
+   * same chunked paste and delayed submit as tasks; never truncate a roster
+   * or error to the visible panel width.
    * Other agents: bracketed paste for atomic multi-line delivery.
    */
   private sendInfoToPanel(panelIndex: number, text: string, capture?: CaptureContext): void {
@@ -1197,34 +1222,38 @@ export class Orchestrator {
     const target = this.captureManagedTaskTarget(panelIndex, tp, agentType);
     if (!target) { failed('feedback_target_unavailable'); return; }
 
-    void this.withSessionInputLane(target, () => {
-      if (!this.isManagedTaskTargetCurrent(target)) {
+    void this.withSessionInputLane(target, async () => {
+      const targetIsCurrent = () => this.isManagedTaskTargetCurrent(target);
+      if (!targetIsCurrent()) {
         failed('feedback_session_changed', this.captureActor(target));
         return false;
       }
       let sent: boolean;
       let submittedText = text;
-      let truncated = false;
       if (agentType === 'claude') {
-        // Type directly — no bracketed paste = no bypass permissions prompt.
-        // Flatten newlines so \n doesn't get misinterpreted by Ink.
-        // Truncate to terminal width to prevent line-wrap ghost artifacts:
-        // when Claude's Ink TUI redraws, it doesn't clear wrapped overflow
-        // rows from injected text, leaving ghost characters on screen.
         const flat = text.replace(/\n/g, ' ');
         const maxCols = tp.cols ?? 120;
-        const trimmed = flat.length > maxCols - 2 ? flat.slice(0, maxCols - 5) + '...' : flat;
-        submittedText = trimmed;
-        truncated = trimmed !== flat;
-        sent = tp.sendInput(trimmed + '\r');
+        if (flat.length <= Math.max(0, maxCols - 2)) {
+          // Newlines must not become premature submits in direct typing.
+          submittedText = flat;
+          sent = tp.sendInput(flat + '\r');
+        } else {
+          sent = false;
+          try {
+            const pasted = await this.sendTextToAgent(tp, text, targetIsCurrent);
+            sent = pasted !== false && targetIsCurrent()
+              && await this.submitInput(tp, targetIsCurrent) !== false;
+          } finally {
+            if (!sent) this.captureUnknownInput(this.captureActor(target), 'partial_controller_feedback', 'truncated');
+          }
+        }
       } else {
         sent = tp.sendInput(`\x1b[200~${text}\x1b[201~\r`);
       }
       if (sent) {
         this.recordCapture({ ...capture, type: 'controller.feedback', actor: this.captureActor(target),
           target: undefined, content: submittedText, inputKind: 'controller', outcome: 'submitted',
-          coverage: truncated ? 'truncated' : 'commander-visible' });
-        if (truncated) this.captureUnknownInput(this.captureActor(target), 'feedback_truncated', 'truncated');
+          coverage: 'commander-visible' });
         logger.info(
           `Orchestrator: info → panel ${panelIndex} (${Buffer.byteLength(text, 'utf8')} payload bytes)`,
         );
@@ -1873,7 +1902,7 @@ export class Orchestrator {
       if (!existingTerminal || !existingTerminal.isRunning || !existingAgent) {
         return {
           success: false,
-          error: `Protocol routing requires Panel ${panelIndex + 1} to already run ${agentType}`,
+          error: `Protocol routing requires Panel ${panelIndex + 1} to already run ${agentType}. Nothing was delivered; use QUERY agents for current SEND addresses and choose the intended recipient.`,
         };
       }
       const actualTarget = existingProfile && existingProfile !== existingAgent
@@ -1881,7 +1910,7 @@ export class Orchestrator {
         : existingAgent;
       return {
         success: false,
-        error: `Protocol routing refused to replace ${actualTarget} in Panel ${panelIndex + 1} with ${agentType}`,
+        error: `Protocol routing refused to replace ${actualTarget} in Panel ${panelIndex + 1} with ${agentType}. Current SEND address is ${existingAgent}:${panelIndex + 1}; use QUERY agents to find the intended recipient, then use a new counter for a corrected message.`,
       };
     }
     const launchError = reusesExisting
@@ -1996,7 +2025,9 @@ export class Orchestrator {
               error: `Collaboration template requires the current agent in Panel ${panelIndex + 1} to be armed with Ctrl+P`,
             };
           }
-          task = bindTemplateProtocolCapability(task, capability);
+          task = bindTemplateProtocolCapability(withTemplateRoutingContext(
+            task, panelIndex, this.agentManager.getRunningAgents(),
+          ), capability);
         }
         tp.reserveProtocolTextForEcho(task);
         inputAttempted = true;

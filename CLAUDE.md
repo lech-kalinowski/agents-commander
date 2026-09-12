@@ -10,10 +10,10 @@ npm run build
 npm start
 ```
 
-Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.8,
+Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.9,
 under the MIT License. Version 0.1.4 is the legacy baseline with different
 runtime requirements, features, and bundled license. The versioned install is
-`npm install -g agents-commander@0.1.8`. Run the local build with
+`npm install -g agents-commander@0.1.9`. Run the local build with
 `node dist/bin/agents-commander.js` or `npm start -- <options> <directory>`.
 Do not confuse an older global installation with this checkout; pushing source
 does not publish npm. See `AGENTS.md` and README for the current conventions.
@@ -25,6 +25,12 @@ Version 0.1.8 fixes refresh/navigation races, cancellable slow editor loading,
 and modal focus when Vim exits in the background. Preserve these input owners.
 Whole-row terminal erases must remove obsolete adjacent soft-wrap links;
 partial edits and genuine protocol wraps must remain intact.
+Version 0.1.9 provides current template rosters and peer-role placeholders,
+exact adapter/stable-panel addresses, authenticated unknown-type rejection,
+and complete Claude feedback instead of panel-width truncation. Never alias
+model names to adapters, silently redirect messages, or replace a mismatched
+session. Rejected frames share replay/echo guards; corrected actions need a
+new counter. Template role guidance does not override explicit custom targets.
 Restart after upgrading. Do not attribute the reproduced watcher freeze to
 Node.js 20; it remains unsupported, while Node.js 22+ is required.
 

@@ -42,7 +42,7 @@
 
 ## Quick Start
 
-This README describes **Agents Commander 0.1.8**, under the MIT License.
+This README describes **Agents Commander 0.1.9**, under the MIT License.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
 The [bulk-launch workflow](#launch-one-profile-in-many-new-panels),
 [bulk protocol setup](#enable-protocol-in-many-agents),
@@ -54,13 +54,15 @@ installed prompt templates; the 0.1.6 collaboration features remain unchanged.
 Version 0.1.8 fixes folder-navigation and modal-focus races found by deeper
 release QA, repairs delayed protocol detection after terminal-row redraws,
 and adds packaged 100-panel / 20-agent stress checks.
+Version 0.1.9 fixes collaboration-template panel addressing and missing error
+feedback, and teaches exact routing addresses for model-labelled profiles.
 Registry publication is a separate step; check the npm version listing before
 installing, or build the current source below.
 
-### Install version 0.1.8
+### Install version 0.1.9
 
 ```bash
-npm install -g agents-commander@0.1.8
+npm install -g agents-commander@0.1.9
 agents-commander --version
 agents-commander --doctor .
 agents-commander .
@@ -142,12 +144,12 @@ prove that a physical controller or a particular model is ready.
 
 ### Upgrading from 0.1.4
 
-Version 0.1.4 advertised Node.js 18+; **0.1.8 requires Node.js 22+ and Python 3**,
-as did 0.1.5–0.1.7. Upgrade Node before installing 0.1.8. The older package supported only
+Version 0.1.4 advertised Node.js 18+; **0.1.9 requires Node.js 22+ and Python 3**,
+as did 0.1.5–0.1.8. Upgrade Node before installing 0.1.9. The older package supported only
 `--theme`, `--panels` (2, 3, or 4), and `--show-hidden`, plus help/version.
 The doctor, conference/demo modes, adaptive density, 100-panel workspace,
 OpenCode adapter, Codex Micro integration, and capture/dataset commands described
-here arrived in 0.1.5 and remain in 0.1.8, not 0.1.4. Bulk launch, bulk protocol
+here arrived in 0.1.5 and remain in 0.1.9, not 0.1.4. Bulk launch, bulk protocol
 setup and sequenced replay protection were added in 0.1.6.
 
 Panel controls have also changed: F4 toggles fullscreen, F6 clones a fresh agent
@@ -165,7 +167,7 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 
 ## Requirements
 
-For version 0.1.8:
+For version 0.1.9:
 
 - Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
@@ -377,6 +379,22 @@ to fix every vulnerability you find."
 
 4. **Watch it happen.** Claude analyzes, finds issues, sends them to Codex. Codex fixes, reports back.
 
+### Choose the actual panel address
+
+A SEND address combines the **CLI adapter** and the **stable P ID**. It is not
+the model name, grid position, or the second instance of an agent. For example,
+if P2 runs OpenCode with APEX and P4 runs Codex, use `opencode:2` and `codex:4`.
+`apex:2` is not a supported address; `codex:2` must not replace OpenCode in P2.
+APEX through a generic/Pi profile uses `generic:<P ID>`.
+
+Version 0.1.9 supplies explicit addresses during protocol injection and
+`QUERY agents`. Refresh the roster when panels change. Authenticated, complete
+SEND frames with an unknown short type return a `CommanderError`; mismatched
+known types return a failed ACK. Nothing is silently redirected or replaced.
+Read the feedback, verify the intended recipient, then use a **new counter** for
+a corrected message. Repainting the old frame does not retry it. Malformed,
+unauthorized, oversized, or replayed frames can remain inert without feedback.
+
 ### The Protocol
 
 Five commands, one session-bound routing capability. `Ctrl+P` generates a fresh private capability for that agent session and teaches the agent the exact marker format. Static or copied markers without the current capability are inert. In the examples below, `<session-key>` stands for the value injected into the agent.
@@ -540,6 +558,14 @@ approvals still require the device; terminal input cannot approve them.
 3. Press `Enter` to select a template
 4. Pick a live target panel by its stable panel number and press `Enter` to confirm
 5. Ordinary templates can launch an agent automatically. Collaboration templates first require a running agent armed with `Ctrl+P`; Commander then binds their protocol examples to that session before sending.
+
+Version 0.1.9 also attaches a fresh roster immediately before submitting a
+collaboration template. Built-in role placeholders such as `<codex-panel>` refer
+to another running agent of that adapter type, not a fixed panel number. For
+example, Philosophical Debate launched from Claude in P3 targets the unique
+Codex peer in P4. Missing or ambiguous peers require a user choice; this is model
+guidance, not an automatic router remap. Custom template bodies and explicit
+targets are preserved. Finish current CLI input before submitting a template.
 
 #### Categories
 
@@ -905,7 +931,7 @@ privacy precautions before sharing logs or agent output.
 Open source under the [MIT License](LICENSE), including commercial use. Retain
 the copyright and permission notice when redistributing the software; see
 [third-party notices](THIRD_PARTY_NOTICES.md) for included third-party material.
-Version 0.1.8 uses MIT. Versions 0.1.5–0.1.7 also used MIT.
+Version 0.1.9 uses MIT. Versions 0.1.5–0.1.8 also used MIT.
 Earlier published packages retain the license bundled with those versions;
 updating the source does not relicense older artifacts.
 

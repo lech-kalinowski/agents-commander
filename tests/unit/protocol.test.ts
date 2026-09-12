@@ -584,7 +584,29 @@ describe('buildProtocolInstructions', () => {
       { name: 'Codex CLI', type: 'codex', panel: 1 },
     ], TEST_CAPABILITY);
     expect(text).toContain('Codex CLI');
-    expect(text).toContain('Panel 2');
+    expect(text).toContain('P2: Codex CLI; SEND address codex:2');
+  });
+
+  it('teaches exact stable addresses rather than model labels or panel positions', () => {
+    const text = buildProtocolInstructions(2, 'Claude Code', [
+      { name: 'OpenCode (APEX)', type: 'opencode', panel: 1 },
+      { name: 'Codex CLI', type: 'codex', panel: 3 },
+      { name: 'APEX Pi', type: 'generic', panel: 17 },
+    ], TEST_CAPABILITY);
+    expect(text).toContain('P2: OpenCode (APEX); SEND address opencode:2');
+    expect(text).toContain('P4: Codex CLI; SEND address codex:4');
+    expect(text).toContain('P18: APEX Pi; SEND address generic:18');
+    expect(text).toContain('Never use apex as a type');
+    expect(text).toContain('stable P IDs, not grid position');
+    expect(text).toContain('QUERY agents if the destination is absent, ambiguous, or panels have changed');
+    expect(text).not.toContain('===COMMANDER:');
+  });
+
+  it('does not hide the roster when an agent name contains none', () => {
+    const text = buildProtocolInstructions(0, 'Claude', [
+      { name: 'none-special', type: 'generic', panel: 2 },
+    ], TEST_CAPABILITY);
+    expect(text).toContain('SEND address generic:3');
   });
 
   it('does not include literal parseable protocol markers in the instructions', () => {

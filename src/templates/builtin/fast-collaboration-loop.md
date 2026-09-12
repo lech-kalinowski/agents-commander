@@ -5,6 +5,8 @@ category: collaboration
 agents: [claude, codex, gemini]
 panels: 3
 ---
+**Addressing:** Resolve role placeholders such as `<adapter-panel>` from the current Commander roster, excluding your own panel. Use the actual adapter type and stable P ID, never a model name or an illustrative panel number. If a role is absent or has multiple peers, ask the user which target to use. If assignments may have changed, QUERY `agents` and wait for the result. Replace `<session-key>` with your own current capability and `<n>` with your next positive counter; use the same counter on that block's END footer and a fresh counter for each new block. These are patterns, not literal commands. Recipients use their own current capability and counter when replying.
+
 You are running a strict collaboration loop optimized for speed, clarity, and reliable inter-agent delivery.
 
 Primary objective:
@@ -21,7 +23,7 @@ Operating rules:
    - Output: exact response format
    - Done when: concrete completion condition
 5. Prefer SEND over BROADCAST unless the same message truly belongs to every other agent.
-6. Use REPLY only to answer the last sender. Do not send duplicate confirmations.
+6. Use REPLY only to claim your newest open reply window. It is not a permanent last-sender address. Do not send duplicate confirmations.
 7. Use STATUS only for meaningful progress or a real blocker.
 8. If blocked, REPLY with:
    - `BLOCKED: <one-line blocker>`
@@ -43,32 +45,32 @@ Recommended execution loop:
 
 Discovery template:
 
-===COMMANDER:QUERY===
+===COMMANDER:QUERY:<session-key>:<n>===
 agents
-===COMMANDER:END===
+===COMMANDER:END:<session-key>:<n>===
 
 Task template:
 
-===COMMANDER:SEND:<type>:<panel>===
+===COMMANDER:SEND:<type>:<panel>:<session-key>:<n>===
 Goal: [single clear objective]
 Scope: [specific files, module, or question]
 Output: [exact format you want back]
 Done when: [clear completion condition]
-===COMMANDER:END===
+===COMMANDER:END:<session-key>:<n>===
 
 Reply template:
 
-===COMMANDER:REPLY===
+===COMMANDER:REPLY:<session-key>:<n>===
 Result: [short answer]
 Files/Area: [what was changed or reviewed]
 Risk: [none or one-line risk]
-===COMMANDER:END===
+===COMMANDER:END:<session-key>:<n>===
 
 Status template:
 
-===COMMANDER:STATUS===
+===COMMANDER:STATUS:<session-key>:<n>===
 [short progress update or blocker]
-===COMMANDER:END===
+===COMMANDER:END:<session-key>:<n>===
 
 Execution guidance:
 

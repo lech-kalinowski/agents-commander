@@ -5,6 +5,8 @@ category: collaboration
 agents: [claude, codex]
 panels: 2
 ---
+**Addressing:** Resolve role placeholders such as `<adapter-panel>` from the current Commander roster, excluding your own panel. Use the actual adapter type and stable P ID, never a model name or an illustrative panel number. If a role is absent or has multiple peers, ask the user which target to use. If assignments may have changed, QUERY `agents` and wait for the result. Replace `<session-key>` with your own current capability and `<n>` with your next positive counter; use the same counter on that block's END footer and a fresh counter for each new block. These are patterns, not literal commands. Recipients use their own current capability and counter when replying.
+
 You are running an iterative refinement loop. You will review code, send improvements to Codex, review again, and repeat until quality standards are met.
 
 **Your workflow:**
@@ -12,7 +14,7 @@ You are running an iterative refinement loop. You will review code, send improve
 1. Analyze the current code and identify the top 3 improvements
 2. Send the first round of improvements to Codex:
 
-===COMMANDER:SEND:codex:2===
+===COMMANDER:SEND:codex:<codex-panel>:<session-key>:<n>===
 Apply these improvements to the codebase:
 
 **Round 1 improvements:**
@@ -23,12 +25,12 @@ Apply these improvements to the codebase:
 After applying changes:
 - Run the test suite and report results
 - List any new issues you notice
-- REPLY back to me with your changes using ===COMMANDER:REPLY===
-===COMMANDER:END===
+- REPLY back to me with your changes using ===COMMANDER:REPLY:<session-key>:<n>===
+===COMMANDER:END:<session-key>:<n>===
 
 3. When you receive the REPLY, review and send the next round:
 
-===COMMANDER:REPLY===
+===COMMANDER:REPLY:<session-key>:<n>===
 Round 1 review: [assessment of changes]
 
 **Round 2 improvements:**
@@ -37,13 +39,13 @@ Round 1 review: [assessment of changes]
 3. [Next improvement]
 
 Apply and REPLY with results.
-===COMMANDER:END===
+===COMMANDER:END:<session-key>:<n>===
 
 4. Report progress after each round:
 
-===COMMANDER:STATUS===
+===COMMANDER:STATUS:<session-key>:<n>===
 Iterative refinement: Round [N]/3 complete
-===COMMANDER:END===
+===COMMANDER:END:<session-key>:<n>===
 
 5. Repeat until:
    - All critical issues are resolved

@@ -31,7 +31,7 @@ SEND/REPLY bodies and thread identity. A substring in a prompt is insufficient.
 These source changes are **not published in npm 0.1.9**; restart after building
 the checkout or installing a future release.
 
-Validation on macOS / Node.js 24 (2026-09-14): the full gate passed 1,468
+Validation on macOS / Node.js 24 (2026-09-14): the full gate passed 1,471
 application tests across 112 files, 28 Python tests, typecheck, development
 watch, build, built CLI isolation, packaged keyboard/template checks,
 100-panel stress in both themes and twenty synthetic PTYs with cleanup.
@@ -39,6 +39,21 @@ The restricted-sandbox run could not perform macOS metadata copying/native
 watches; the complete host-permission run, not that failed run, is the gate.
 Independent code review checked redraw provenance, authorization, nested
 frames, echo reservations, malformed-input complexity and sidebar projection.
+
+Real OpenCode/APEX acceptance used the normal welcome/F2/protocol workflow in
+isolated owned PTYs with model tools denied and recording off. Fixed 213×57
+with both sidebars visible delivered an exact SEND/REPLY pair in 4.006 s.
+The final 118×57 run delivered an exact pair in 3.628 s without any intervening
+input or resize; after resizing wide and back, both layout blockers cleared
+and a **new** exact pair delivered in 2.663 s. Old messages did not replay.
+Owned processes were stopped and Commander configuration remained unchanged.
+
+Earlier acceptance attempts are not counted as passes: one narrow attempt
+timed out without sufficient diagnostics; a subsequent run exposed the
+three-cell idle footer now covered by regressions, and also produced a
+mismatched model footer that was correctly rejected. These tests demonstrate
+the reproduced fixes, not universal model compliance or live Claude/Codex
+acceptance. Claude-shaped cursor redraws are covered by deterministic tests.
 
 ### Addressing and feedback regression checkpoint — 2026-09-12
 

@@ -8,6 +8,7 @@ import {
   resolveBuiltinTemplateDirectory,
   resolveCodexMicroBridgePath,
   resolveDemoAgentPath,
+  resolveOpenCodeProtocolPluginPath,
   resolvePtyHelperPath,
   runtimeAssetLookupForModule,
   type RuntimeAssetLookupOptions,
@@ -32,6 +33,7 @@ describe('runtime asset resolution', () => {
     const root = temporaryDirectory();
     const entryPath = path.join(root, 'dist', 'bin', 'agents-commander.js');
     const helperPath = path.join(root, 'dist', 'agents', 'pty-helper.py');
+    const protocolPluginPath = path.join(root, 'dist', 'agents', 'opencode-protocol-plugin.js');
     const microBridgePath = path.join(root, 'dist', 'hardware', 'codex-micro-bridge.py');
     const templatesPath = path.join(root, 'dist', 'templates');
     const demoPath = path.join(root, 'dist', 'demo', 'demo-agent.mjs');
@@ -43,6 +45,7 @@ describe('runtime asset resolution', () => {
     fs.mkdirSync(path.dirname(demoPath), { recursive: true });
     fs.writeFileSync(entryPath, '');
     fs.writeFileSync(helperPath, '#!/usr/bin/env python3\n');
+    fs.writeFileSync(protocolPluginPath, 'export default async function plugin() { return {}; }\n');
     fs.writeFileSync(microBridgePath, '#!/usr/bin/env python3\n');
     fs.writeFileSync(path.join(templatesPath, 'z-last.md'), '# Last\n');
     fs.writeFileSync(path.join(templatesPath, 'a-first.md'), '# First\n');
@@ -55,6 +58,7 @@ describe('runtime asset resolution', () => {
     };
 
     expect(resolvePtyHelperPath(options)).toBe(helperPath);
+    expect(resolveOpenCodeProtocolPluginPath(options)).toBe(protocolPluginPath);
     expect(resolveCodexMicroBridgePath(options)).toBe(microBridgePath);
     expect(resolveBuiltinTemplateDirectory(options)).toBe(templatesPath);
     expect(listBuiltinTemplateFiles(templatesPath)).toEqual([
@@ -69,6 +73,7 @@ describe('runtime asset resolution', () => {
     const entryPath = path.join(root, 'dist', 'bin', 'agents-commander.js');
     fs.mkdirSync(path.dirname(entryPath), { recursive: true });
     fs.mkdirSync(path.join(root, 'dist', 'agents', 'pty-helper.py'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'dist', 'agents', 'opencode-protocol-plugin.js'), { recursive: true });
     fs.mkdirSync(path.join(root, 'dist', 'hardware', 'codex-micro-bridge.py'), { recursive: true });
     fs.mkdirSync(path.join(root, 'dist', 'demo', 'demo-agent.mjs'), { recursive: true });
 
@@ -78,6 +83,7 @@ describe('runtime asset resolution', () => {
     };
 
     expect(resolvePtyHelperPath(options)).toBeNull();
+    expect(resolveOpenCodeProtocolPluginPath(options)).toBeNull();
     expect(resolveCodexMicroBridgePath(options)).toBeNull();
     expect(resolveDemoAgentPath(options)).toBeNull();
   });
@@ -85,6 +91,7 @@ describe('runtime asset resolution', () => {
   it('resolves every development asset only from an explicit source root', () => {
     const root = temporaryDirectory();
     const helperPath = path.join(root, 'src', 'agents', 'pty-helper.py');
+    const protocolPluginPath = path.join(root, 'src', 'agents', 'opencode-protocol-plugin.js');
     const microBridgePath = path.join(root, 'src', 'hardware', 'codex-micro-bridge.py');
     const templatesPath = path.join(root, 'src', 'templates', 'builtin');
     const demoPath = path.join(root, 'src', 'demo', 'demo-agent.mjs');
@@ -93,6 +100,7 @@ describe('runtime asset resolution', () => {
     fs.mkdirSync(templatesPath, { recursive: true });
     fs.mkdirSync(path.dirname(demoPath), { recursive: true });
     fs.writeFileSync(helperPath, '#!/usr/bin/env python3\n');
+    fs.writeFileSync(protocolPluginPath, 'export default async function plugin() { return {}; }\n');
     fs.writeFileSync(microBridgePath, '#!/usr/bin/env python3\n');
     fs.writeFileSync(path.join(templatesPath, 'source.md'), '# Source\n');
     fs.writeFileSync(demoPath, '#!/usr/bin/env node\n');
@@ -102,6 +110,7 @@ describe('runtime asset resolution', () => {
       sourceRoot: root,
     };
     expect(resolvePtyHelperPath(sourceLookup)).toBe(helperPath);
+    expect(resolveOpenCodeProtocolPluginPath(sourceLookup)).toBe(protocolPluginPath);
     expect(resolveCodexMicroBridgePath(sourceLookup)).toBe(microBridgePath);
     expect(resolveBuiltinTemplateDirectory(sourceLookup)).toBe(templatesPath);
     expect(resolveDemoAgentPath(sourceLookup)).toBe(demoPath);
@@ -142,10 +151,12 @@ describe('runtime asset resolution', () => {
     const packageRoot = path.join(root, 'node_modules', 'agents-commander');
     const workspaceRoot = path.join(root, 'workspace');
     const workspaceHelper = path.join(workspaceRoot, 'src', 'agents', 'pty-helper.py');
+    const workspaceProtocolPlugin = path.join(workspaceRoot, 'src', 'agents', 'opencode-protocol-plugin.js');
     const workspaceDemo = path.join(workspaceRoot, 'src', 'demo', 'demo-agent.js');
     fs.mkdirSync(path.dirname(workspaceHelper), { recursive: true });
     fs.mkdirSync(path.dirname(workspaceDemo), { recursive: true });
     fs.writeFileSync(workspaceHelper, '#!/usr/bin/env python3\n');
+    fs.writeFileSync(workspaceProtocolPlugin, 'export default async function plugin() { return {}; }\n');
     fs.writeFileSync(workspaceDemo, '#!/usr/bin/env node\n');
 
     const installedLookup = {
@@ -157,6 +168,7 @@ describe('runtime asset resolution', () => {
     } as RuntimeAssetLookupOptions;
 
     expect(resolvePtyHelperPath(installedLookup)).toBeNull();
+    expect(resolveOpenCodeProtocolPluginPath(installedLookup)).toBeNull();
     expect(resolveCodexMicroBridgePath(installedLookup)).toBeNull();
     expect(resolveDemoAgentPath(installedLookup)).toBeNull();
   });
@@ -165,14 +177,20 @@ describe('runtime asset resolution', () => {
     const root = temporaryDirectory();
     const externalHelper = path.join(root, 'workspace-helper.py');
     const helperPath = path.join(root, 'package', 'dist', 'agents', 'pty-helper.py');
+    const pluginPath = path.join(root, 'package', 'dist', 'agents', 'opencode-protocol-plugin.js');
     const bridgePath = path.join(root, 'package', 'dist', 'hardware', 'codex-micro-bridge.py');
     fs.writeFileSync(externalHelper, '#!/usr/bin/env python3\n');
     fs.mkdirSync(path.dirname(helperPath), { recursive: true });
     fs.mkdirSync(path.dirname(bridgePath), { recursive: true });
     fs.symlinkSync(externalHelper, helperPath);
+    fs.symlinkSync(externalHelper, pluginPath);
     fs.symlinkSync(externalHelper, bridgePath);
 
     expect(resolvePtyHelperPath({
+      mode: 'installed',
+      packageRoot: path.join(root, 'package'),
+    })).toBeNull();
+    expect(resolveOpenCodeProtocolPluginPath({
       mode: 'installed',
       packageRoot: path.join(root, 'package'),
     })).toBeNull();
@@ -181,6 +199,10 @@ describe('runtime asset resolution', () => {
       packageRoot: path.join(root, 'package'),
     })).toBeNull();
     expect(resolvePtyHelperPath({
+      mode: 'installed',
+      packageRoot: 'relative-package-root',
+    })).toBeNull();
+    expect(resolveOpenCodeProtocolPluginPath({
       mode: 'installed',
       packageRoot: 'relative-package-root',
     })).toBeNull();

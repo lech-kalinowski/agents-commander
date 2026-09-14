@@ -172,6 +172,33 @@ describe('TerminalPanel input isolation', () => {
     expect(panel.onUserInput).toHaveBeenCalledOnce();
   });
 
+  it('preserves supplementary Unicode across Blessed UTF-16 key events and complete code points', () => {
+    const { panel, outputBox, stdin } = createInputHarness();
+    const key = { name: undefined, full: undefined };
+    outputBox.emit('keypress', '\uD83D', key);
+    expect(stdin.write).not.toHaveBeenCalled();
+    outputBox.emit('keypress', '\uDC4B', key);
+    outputBox.emit('keypress', '🚀', key);
+    outputBox.emit('keypress', '界', key);
+    const bytes = Buffer.concat(stdin.write.mock.calls.map(([text]: [string]) => Buffer.from(text)));
+    expect(bytes.toString('utf8')).toBe('👋🚀界');
+    expect(panel.inputGeneration).toBe(3n);
+  });
+
+  it('does not carry an incomplete Unicode key across Commander controls or dialogs', () => {
+    const { outputBox, stdin } = createInputHarness();
+    const key = { name: undefined };
+    outputBox.emit('keypress', '\uD83D', key);
+    outputBox.emit('keypress', undefined, { name: 'f4', full: 'f4' });
+    outputBox.emit('keypress', 'a', key);
+    outputBox.emit('keypress', '\uD83D', key);
+    enterDialog();
+    outputBox.emit('keypress', 'x', key);
+    leaveDialog();
+    outputBox.emit('keypress', 'b', key);
+    expect(stdin.write.mock.calls).toEqual([['a'], ['b']]);
+  });
+
   it('reserves Codex Micro chords only in explicit keyboard fallback mode', () => {
     const cases = [
       [{ name: 'pageup', full: 'C-S-pageup', ctrl: true, shift: true }, '\x1b[5;6~'],

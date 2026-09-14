@@ -9,6 +9,10 @@ export](datasets.md); broader research extensions below remain proposals.
 The sequence and replay-protection notes were updated on 2026-09-11 for
 version 0.1.6, which includes the extension absent from 0.1.5. This version scope
 describes implementation contents, not verified npm publication.
+The explicitly labelled unreleased notes below describe the new OpenCode
+completion-hook transport and failure feedback after 0.1.10. Its full live
+acceptance is a separate gate; 0.1.10's short-exchange tests did not validate long
+messages or multi-agent broadcast workflows. See [QA scope](qa.md).
 
 ### Abstract
 
@@ -80,6 +84,9 @@ I agree with the refactor direction, but the caching layer still leaks concerns.
 ```
 
 In source `0.1.5`, `REPLY` claims the newest open reply window for the current session and resolves its return session, thread and prior message. Claiming consumes that window; failed delivery restores it only if both sessions remain active. With no open window, the reply is dropped. The route is explicit runtime state, not a model-selected thread ID or a reconstruction from the last visible sender.
+
+Unreleased source retains that routing rule but returns a failed ACK when no
+window or return session exists. It never guesses another recipient.
 
 ### 3.3 BROADCAST
 
@@ -161,7 +168,18 @@ For example:
 [Commander ACK] status=delivered msg=msg_000001 thread=thr_000001 target="Codex CLI" panel=2
 ```
 
-`delivered` means input submitted to the target PTY, not model acceptance or task completion. Failed SEND/REPLY delivery uses `status=failed` and an error. BROADCAST produces one combined queue-admission ACK, not per-target delivery ACKs; STATUS uses `kind=status status=accepted`. QUERY returns controller information. Unarmed, suppressed or orphaned frames may have no ACK. These are distinct observation points, not interchangeable quality labels.
+`delivered` means input submitted to the target PTY, not model acceptance or
+task completion. Failed SEND/REPLY delivery uses `status=failed` and an error.
+BROADCAST produces one combined queue-admission ACK; STATUS uses
+`kind=status status=accepted`. QUERY returns controller information. Unarmed,
+replayed or startup-suppressed frames may have no ACK. These are distinct
+observation points, not interchangeable quality labels.
+
+Unreleased source additionally reports a later failed broadcast recipient with
+`kind=broadcast status=failed scope=recipient stage=delivery`, identifying its
+message, thread and panel. This is not an aggregate completion report. Empty
+broadcasts and orphan REPLYs return failed ACKs; queued recipient cancellation
+notifies a still-valid source once, never a replacement or a shutdown session.
 
 ## 5. Execution Model in Source
 
@@ -177,7 +195,24 @@ When Commander successfully delivers a user-selected collaboration task or route
 
 ### 5.3 Terminal-native transport
 
-The transport layer operates through terminal I/O rather than a hidden service bus. Protocol output and controller feedback are visible in panels, but the screen, diagnostic log and bounded Activity history are not a complete transcript. Private provider prompts, reasoning, tool calls and directly typed context are not reconstructed by Commander.
+The 0.1.5–0.1.10 transport detects output through terminal I/O. Unreleased
+OpenCode source instead loads a bundled plugin for that launch and receives
+completed assistant text parts through private inherited fd4 IPC. Existing
+inline JSON settings are preserved; user configuration files are not edited.
+An authenticated arm plus exact injected instructions binds one OpenCode
+conversation. Native transport failure never enables a rendered-output fallback.
+Other adapters continue terminal scanning, and all recipient delivery uses PTY
+input. Protocol output and controller feedback can be visible in panels, but
+the screen, diagnostic log and bounded Activity history are not a complete
+transcript. Provider history, reasoning, tools and raw keyboard input are not
+reconstructed or recorded by the plugin; capture still requires launch consent.
+
+OpenCode framing is validated within each completed text part, not assembled
+across parts/messages/tools. Default body limits are 500 lines and 256 KiB; the
+native complete-part cap is 1 MiB. Incomplete/invalid authored frames are not
+partially routed; recognized rejected counters remain spent. Ordinary protocol
+whitespace/control normalization still applies, so transport fidelity is not a
+claim of arbitrary binary or exact surrounding-whitespace preservation.
 
 ### 5.4 Deduplication and echo control
 
@@ -245,9 +280,14 @@ Unlike opaque agent pipelines, the Commander Protocol is legible. Researchers ca
 
 The protocol also has clear limitations, which are themselves useful from a research perspective.
 
-### 7.1 It is still transport-coupled to terminal behavior
+### 7.1 Transport-specific limitations remain
 
-The protocol operates through terminal rendering, PTY input, and screen scanning. This makes it realistic for command-line agents, but also vulnerable to prompt echo, UI formatting quirks, and timing issues.
+Terminal-scanned adapters remain vulnerable to output rendering and prompt-echo
+quirks. The unreleased OpenCode path avoids viewport virtualization but depends
+on the OpenCode 1.18.30 completion-hook contract and a working inherited channel;
+future CLI versions require validation. All adapters still depend on PTY input
+submission and model compliance. A delivery ACK is not evidence that the model
+read, understood or completed the requested task.
 
 ### 7.2 Human-readable syntax still requires containment
 
@@ -271,7 +311,10 @@ Opt-in messages and delivery events can support offline analysis and benchmark c
 
 ### 8.2 Alternative transports
 
-A future version could keep the Commander protocol semantics while moving transport to a local bus, JSONL event stream, or lightweight database queue. This would help isolate transport effects from protocol effects.
+Unreleased OpenCode source begins separating authored output from the display
+with a private local completion channel. A shared durable bus, database queue,
+multi-client transport or history replay remains future work. Such experiments
+must preserve the existing session, consent and replay boundaries.
 
 ### 8.3 Automated evaluation
 

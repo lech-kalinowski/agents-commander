@@ -145,7 +145,8 @@ describe('Orchestrator semantic capture', () => {
     expect(reply).toMatchObject({ target: { sessionId: 'session_0', panel: 1 },
       threadId: sent.threadId, replyToMessageId: sent.messageId });
     f.emit('reply', 1, 'duplicate reply without another open window');
-    expect(f.events.at(-1)).toMatchObject({ type: 'route.failed', reason: 'no_reply_window' });
+    expect(f.events.at(-2)).toMatchObject({ type: 'route.failed', reason: 'no_reply_window' });
+    expect(f.events.at(-1)).toMatchObject({ type: 'controller.feedback', outcome: 'submitted' });
   });
 
   it('captures actual STATUS and QUERY feedback without pretending they are routed deliveries', async () => {

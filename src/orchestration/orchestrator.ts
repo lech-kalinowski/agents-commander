@@ -259,6 +259,20 @@ export class Orchestrator {
     tp.onCommanderMessage = (msg: ProtocolEvent) => {
       this.handlePanelAgentMessage(tp, msg);
     };
+    const connectedSessionId = this.agentManager.getAgentSessionId(tp.panelIndex);
+    const connectedGeneration = tp.sessionGeneration;
+    tp.onCommanderProtocolError = (reason: 'invalid-frame' | 'oversized-frame') => {
+      if (this.sealed || !tp.isRunning || !connectedSessionId
+        || !this.isCurrentTarget(tp.panelIndex, tp)
+        || tp.sessionGeneration !== connectedGeneration
+        || this.agentManager.getAgentSessionId(tp.panelIndex) !== connectedSessionId
+        || !this.protocolInjected.has(tp.panelIndex)
+        || !this.protocolCapabilities.has(connectedSessionId)) return;
+      const text = reason === 'oversized-frame'
+        ? '[Commander protocol error] Message was not sent: protocol frame is too large. Shorten or split the message, using a complete header and matching END footer with a fresh counter for each message.'
+        : '[Commander protocol error] Message was not sent: incomplete or invalid protocol frame. Use complete header and matching END footer with a fresh counter.';
+      this.sendInfoToPanel(tp.panelIndex, text);
+    };
     tp.onUserInput = () => {
       const source = this.resolveSessionRefForPanel(tp.panelIndex);
       if (source) this.captureUnknownInput(this.captureActor(source), 'manual_input', 'missing-manual-input');
@@ -293,6 +307,7 @@ export class Orchestrator {
     const tp = this.layout.getTerminalPanel(panelIndex);
     if (tp) {
       tp.onCommanderMessage = null;
+      tp.onCommanderProtocolError = null;
       tp.onUserInput = null;
     }
   }
@@ -316,6 +331,7 @@ export class Orchestrator {
       const tp = this.layout.getTerminalPanel(panelId);
       if (tp) {
         tp.onCommanderMessage = null;
+        tp.onCommanderProtocolError = null;
         tp.onUserInput = null;
       }
     }
@@ -771,6 +787,8 @@ export class Orchestrator {
       const capture = this.captureFrame(msg, source, emissionId);
       this.captureRoute(capture, 'route.failed', 'no_reply_window');
       logger.warn(`Orchestrator: REPLY from panel ${msg.sourcePanel} but no open reply thread — dropped`);
+      this.sendCommandFailure(source, 'reply',
+        'No open reply window. Wait for an incoming message or use SEND to an explicit recipient with a new counter.', capture);
       return;
     }
 
@@ -783,6 +801,8 @@ export class Orchestrator {
       logger.warn(
         `Orchestrator: REPLY from panel ${msg.sourcePanel} but return session ${replyRoute.returnToSessionId} is gone`,
       );
+      this.sendCommandFailure(source, 'reply',
+        'The reply recipient session is no longer available. Nothing was delivered; use QUERY agents to choose an explicit recipient.', capture);
       return;
     }
 
@@ -862,6 +882,7 @@ export class Orchestrator {
     if (targets.length === 0) {
       this.captureRoute(capture, 'route.failed', 'no_broadcast_targets');
       logger.warn(`Orchestrator: BROADCAST from panel ${msg.sourcePanel} but no other agents — dropped`);
+      this.sendCommandFailure(source, 'broadcast', 'No other connected agents are available. Nothing was queued.', capture);
       return;
     }
 
@@ -928,6 +949,7 @@ export class Orchestrator {
       this.sendInfoToPanel(msg.sourcePanel, ack, capture);
     } else {
       this.captureRoute(capture, 'route.failed', 'no_broadcast_targets');
+      this.sendCommandFailure(source, 'broadcast', 'No other connected agents are available. Nothing was queued.', capture);
     }
   }
 
@@ -1193,6 +1215,43 @@ export class Orchestrator {
     this.sendInfoToPanel(sourcePanelIndex, ack, capture);
   }
 
+  /** Rejections without a routable target still settle the sender's ACK wait. */
+  private sendCommandFailure(
+    source: SessionRef,
+    kind: 'reply' | 'broadcast',
+    error: string,
+    capture?: CaptureContext,
+  ): void {
+    if (this.sealed || this.agentManager.getAgentSessionId(source.panelIndex) !== source.sessionId) return;
+    this.sendInfoToPanel(source.panelIndex,
+      `[Commander ACK] kind=${kind} status=failed error="${error}"`, capture);
+  }
+
+  /** One post-admission result per task; admission rejections use rejectTask. */
+  private notifyTaskOutcome(
+    task: QueuedTask,
+    targetPanel: number,
+    result: { success: boolean; error?: string },
+  ): void {
+    if (this.sealed || !task.source || !this.isSourceSessionStillActive(task.source)) return;
+    const record = task.messageId ? this.ledger.getMessage(task.messageId) : null;
+    const targetName = record?.target.agentName ?? this.findRunningAgent(targetPanel)?.name ?? task.agentType;
+    if (task.skipAck) {
+      if (task.kind !== 'broadcast' || result.success) return;
+      // The original broadcast ACK means admission, not completed delivery.
+      // Report a later failed recipient without claiming the rest have settled.
+      this.sendInfoToPanel(task.source.panel,
+        `[Commander ACK] kind=broadcast status=failed scope=recipient stage=delivery `
+          + `msg=${task.messageId ?? 'n/a'} thread=${task.threadId ?? 'n/a'} `
+          + `target="${targetName}" panel=${targetPanel + 1} error="${result.error ?? 'unknown error'}". `
+          + 'This reports one recipient, not completion of the broadcast. Check Activity for other recipients.',
+        task.capture);
+      return;
+    }
+    this.sendAck(task.source.panel, targetName, targetPanel, result.success,
+      task.messageId, task.threadId, result.error, task.capture);
+  }
+
   /**
    * Send an informational message to a panel (ACK, NACK, QUERY response, etc.).
    *
@@ -1404,6 +1463,10 @@ export class Orchestrator {
         if (this.sealed || options.shouldCancel?.()) return 'cancelled';
         if (!targetIsCurrent()) return 'stale';
         if (options.skipIfArmed && this.isProtocolArmed(targetGeneration)) return 'already-armed';
+        // A configured semantic transport must be ready before rotating an
+        // existing key or teaching a key that cannot receive agent output.
+        const setupError = tp.getProtocolSetupError?.();
+        if (setupError) throw new Error(setupError);
         const others = this.agentManager.getRunningAgents()
           .filter((a) => a.panelIndex !== panelIndex)
           .map((a) => ({ name: a.name, type: a.type, panel: a.panelIndex }));
@@ -1675,24 +1738,9 @@ export class Orchestrator {
         } : undefined, result.success ? 'route.delivered' : 'route.failed',
         result.success ? undefined : this.sealed ? 'shutdown' : 'delivery_failed');
 
-        if (task.source && this.isSourceSessionStillActive(task.source) && !task.skipAck) {
-          const targetInfo = this.findRunningAgent(effectivePanelIndex);
-          const targetName = targetInfo?.name ?? task.agentType;
-
-          this.sendAck(
-            task.source.panel,
-            targetName,
-            effectivePanelIndex,
-            result.success,
-            task.messageId,
-            task.threadId,
-            result.error,
-            task.capture,
-          );
-
-          if (!result.success) {
-            logger.error(`Orchestrator: failed to route message to panel ${effectivePanelIndex}: ${result.error}`);
-          }
+        this.notifyTaskOutcome(task, effectivePanelIndex, result);
+        if (!result.success) {
+          logger.error(`Orchestrator: failed to route message to panel ${effectivePanelIndex}: ${result.error}`);
         }
 
         this.releaseTask(task);
@@ -2325,6 +2373,11 @@ export class Orchestrator {
       }
       if (task.claimedReplyRoute) this.restoreReplyWindowIfActive(task.claimedReplyRoute);
       this.captureRoute(task.capture, 'route.failed', this.sealed ? 'shutdown' : 'queue_cancelled');
+      // disconnectPanel removes the source from connectedPanels before this
+      // path runs. Do not inject an error into a panel being closed itself.
+      if (task.source && this.connectedPanels.has(task.source.panel)) {
+        this.notifyTaskOutcome(task, task.queuePanelIndex, { success: false, error });
+      }
       try {
         task.onComplete?.({ success: false, error });
       } catch (err) {

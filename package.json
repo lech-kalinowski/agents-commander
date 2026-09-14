@@ -36,7 +36,7 @@
     "README.md"
   ],
   "scripts": {
-    "copy:runtime-assets": "mkdir -p dist/agents dist/templates dist/demo dist/hardware && cp src/agents/pty-helper.py dist/agents/ && cp src/templates/builtin/*.md dist/templates/ && cp src/demo/demo-agent.js dist/demo/ && cp src/hardware/codex-micro-bridge.py dist/hardware/",
+    "copy:runtime-assets": "mkdir -p dist/agents dist/templates dist/demo dist/hardware && cp src/agents/pty-helper.py src/agents/opencode-protocol-plugin.js dist/agents/ && cp src/templates/builtin/*.md dist/templates/ && cp src/demo/demo-agent.js dist/demo/ && cp src/hardware/codex-micro-bridge.py dist/hardware/",
     "build": "tsup && npm run copy:runtime-assets",
     "dev": "tsup --watch --onSuccess \"npm run copy:runtime-assets\"",
     "start": "node dist/bin/agents-commander.js",
@@ -47,6 +47,7 @@
     "test:dev": "node tests/built/dev-watch-smoke.mjs",
     "test:pack": "node tests/built/packed-install-smoke.mjs",
     "test:watch": "vitest",
+    "test:live:apex": "node tests/live/opencode-communication.mjs",
     "verify": "npm run typecheck && npm test && npm run test:hardware && npm run test:dev && npm run build && npm run test:built && npm run test:pack",
     "prepack": "npm run verify"
   },

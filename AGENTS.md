@@ -71,6 +71,20 @@ recognized sidebar is projected by display columns; unknown/partial layouts
 defer with a panel-header indicator, never raw-row fallback. These fixes are
 not in 0.1.9. Verify publication separately; see docs/qa.md for acceptance cases.
 
+Unreleased source replaces OpenCode viewport routing with a bundled per-launch
+completion-hook plugin and private inherited fd4 IPC. This is not in 0.1.10;
+that release's live evidence was short-message-only. Full live acceptance and
+the complete release gate are required independently; see docs/qa.md. Preserve existing inline
+JSON configuration/plugin entries without writing user config files. Completed
+assistant text parts from the explicitly bound conversation are the only source;
+never stitch across parts or fall back to rendered output when IPC is unavailable.
+Transport readiness must be checked before protocol capability creation/rotation.
+Keep session/epoch checks, bounded framing and replay/echo reservations on every
+path. Normal content limits and capture consent still apply. Orphan REPLYs and
+empty broadcasts NACK; broadcast admission ACKs are not final completion, and
+later failed recipients get explicitly scoped delivery notices. Shutdown and
+gone/replaced senders must not receive new failure feedback.
+
 ## Key Conventions
 
 - All imports use `.js` extension (ESM)

@@ -1,12 +1,13 @@
 import blessed from 'blessed';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import type { Writable } from 'node:stream';
+import type { Writable, Duplex } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import type { Theme, AppConfig, OrchestrationConfig } from '../config/types.js';
 import type { AgentType } from '../agents/types.js';
 import { VTerm } from './vterm.js';
 import { OpenCodeRegionDetector, projectOpenCodeRows } from './opencode-region.js';
+import { OpenCodeProtocolChannel, withOpenCodeProtocolPlugin } from '../agents/opencode-protocol-channel.js';
 import {
   ProtocolScanner,
   isAgentType,
@@ -30,6 +31,7 @@ import { resolveExecutablePath } from '../utils/command-resolution.js';
 import { logger } from '../utils/logger.js';
 import {
   resolvePtyHelperPath,
+  resolveOpenCodeProtocolPluginPath,
   runtimeAssetLookupForModule,
 } from '../utils/runtime-assets.js';
 import { sanitizeUserText } from '../utils/user-facing-errors.js';
@@ -91,7 +93,7 @@ interface PendingReplyEmission {
   timer: ReturnType<typeof setTimeout>;
 }
 
-type ProtocolScannerOrigin = 'scrollback' | 'grid' | 'tail';
+type ProtocolScannerOrigin = 'scrollback' | 'grid' | 'tail' | 'opencode';
 
 interface ChildCloseObserver {
   closed: boolean;
@@ -187,6 +189,9 @@ export class TerminalPanel {
   private proc: ChildProcess | null = null;
   /** Dedicated fd 3 pipe used only for framed PTY control messages. */
   private resizeControl: Writable | null = null;
+  /** Selected for the whole OpenCode launch, even when unavailable: never fall back to screen scraping. */
+  private openCodeChannel: OpenCodeProtocolChannel | null = null;
+  private nativeProtocolIssue: string | null = null;
   private lastPtySize: string | null = null;
   private stdoutDecoder: StringDecoder | null = null;
   private stderrDecoder: StringDecoder | null = null;
@@ -201,6 +206,8 @@ export class TerminalPanel {
   /** Latest input generation followed by process output applied to VTerm. */
   private _outputObservedInputGeneration = 0n;
   private lastInputAt = Number.NEGATIVE_INFINITY;
+  /** Blessed can emit a supplementary Unicode character as two UTF-16 key events. */
+  private pendingInputSurrogate = '';
   private cwd: string;
   // renderTimer/renderPending removed — rendering is now coalesced globally via static scheduleScreenRender
   private scanner: ProtocolScanner | null = null;
@@ -233,6 +240,7 @@ export class TerminalPanel {
 
   /** Set by the Orchestrator to receive inter-agent messages. */
   public onCommanderMessage: ((msg: ProtocolEvent) => void) | null = null;
+  public onCommanderProtocolError: ((reason: 'invalid-frame' | 'oversized-frame') => void) | null = null;
 
   /** Called when the process exits. Useful for AgentManager to track lifecycle. */
   public onExit: ((
@@ -361,7 +369,7 @@ export class TerminalPanel {
 
     // Forward all other keypresses directly to the agent process
     this.outputBox.on('keypress', (ch: string | undefined, key: BlessedKeyEvent | undefined) => {
-      if (isDialogActive()) return;
+      if (isDialogActive()) { this.pendingInputSurrogate = ''; return; }
       if (!this.proc?.stdin?.writable) return;
       if (!key) return;
 
@@ -377,10 +385,18 @@ export class TerminalPanel {
             && isCodexMicroKey(keyId)
           )
         )
-      ) return;
+      ) { this.pendingInputSurrogate = ''; return; }
 
-      const data = this.keyToAnsi(ch, key);
+      let data = this.keyToAnsi(ch, key);
       if (data) {
+        const pending = this.pendingInputSurrogate;
+        this.pendingInputSurrogate = '';
+        if (pending) {
+          data = /^[\uDC00-\uDFFF]$/.test(data) ? pending + data : '\uFFFD' + data;
+        } else if (/^[\uD800-\uDBFF]$/.test(data)) {
+          this.pendingInputSurrogate = data;
+          return;
+        }
         this.proc.stdin.write(data);
         this.recordUserInput();
       }
@@ -458,7 +474,7 @@ export class TerminalPanel {
   /** Map a blessed keypress event to the ANSI byte sequence a real terminal would send. */
   private keyToAnsi(ch: string | undefined, key: BlessedKeyEvent): string | null {
     // Regular printable character (no ctrl/meta modifier)
-    if (ch && ch.length === 1 && !key.ctrl && !key.meta) {
+    if (ch && (ch.length === 1 || /^[\uD800-\uDBFF][\uDC00-\uDFFF]$/.test(ch)) && !key.ctrl && !key.meta) {
       return ch;
     }
 
@@ -603,7 +619,7 @@ export class TerminalPanel {
     this.vterm.write(`  CWD:     ${this.cwd}\r\n---\r\n\r\n`);
     this.scheduleRender();
 
-    const spawnEnv = buildTerminalSpawnEnvironment(process.env, env, {
+    let spawnEnv: Record<string, string | undefined> = buildTerminalSpawnEnvironment(process.env, env, {
       policy: environmentPolicy,
       cwd: this.cwd,
       cols,
@@ -620,11 +636,35 @@ export class TerminalPanel {
         throw new Error('python3 is required to launch terminal sessions');
       }
 
+      this.openCodeChannel?.dispose();
+      this.openCodeChannel = null;
+      this.nativeProtocolIssue = null;
+      if (enableProtocolScanner && this.agentType === 'opencode') {
+        const pluginPath = resolveOpenCodeProtocolPluginPath(runtimeAssetLookupForModule(import.meta.url));
+        if (!pluginPath) throw new Error('OpenCode protocol plugin not found in the installed package');
+        const channel = new OpenCodeProtocolChannel(
+          (event) => {
+            if (this.openCodeChannel === channel && this.proc === launchedChild) {
+              this.processOpenCodeText(event.text);
+            }
+          },
+          () => {
+            if (this.openCodeChannel !== channel || this.proc !== launchedChild) return;
+            this.updateHeader();
+            this.scheduleRender();
+          },
+        );
+        this.openCodeChannel = channel;
+        spawnEnv = withOpenCodeProtocolPlugin(spawnEnv, pluginPath, channel.token);
+      }
+
       this.proc = spawn(pythonPath, [helperPath, '--cwd', this.cwd, '--', resolvedPath, ...args], {
-        stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+        stdio: this.openCodeChannel ? ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe', 'pipe'],
         env: spawnEnv,
       });
+      const launchedChild = this.proc;
       this._sessionGeneration += 1;
+      this.pendingInputSurrogate = '';
       this._inputGeneration = 0n;
       this._outputObservedInputGeneration = 0n;
       this.lastInputAt = Number.NEGATIVE_INFINITY;
@@ -682,6 +722,10 @@ export class TerminalPanel {
         )
         : null;
 
+      if (this.openCodeChannel) {
+        this.openCodeChannel.attach(this.proc.stdio[4] as Duplex);
+      }
+
       this.proc.stdout?.on('data', (data: Buffer) => {
         this.handleProcessData(thisProc, stdoutDecoder, data);
       });
@@ -696,6 +740,7 @@ export class TerminalPanel {
           this.vterm.write(`\r\nProcess error: ${err.message}\r\n`);
           this.updateHeader();
           this.proc = null;
+          this.openCodeChannel?.dispose();
           this.closeResizeControl();
           this.stdoutDecoder = null;
           this.stderrDecoder = null;
@@ -722,6 +767,7 @@ export class TerminalPanel {
           this.vterm.write(`\r\n--- ${this.agentName} exited (code=${code}, signal=${signal ?? 'none'}) ---\r\n`);
           this.updateHeader();
           this.proc = null;
+          this.openCodeChannel?.dispose();
           this.closeResizeControl();
           this.stdoutDecoder = null;
           this.stderrDecoder = null;
@@ -745,6 +791,8 @@ export class TerminalPanel {
       this.updateHeader();
       return true;
     } catch (err) {
+      this.openCodeChannel?.dispose();
+      if (this.proc) void this.killAgent(true);
       this.closeResizeControl();
       this._status = 'error';
       this.vterm.write(`\r\nFAILED: ${(err as Error).message}\r\n`);
@@ -817,6 +865,7 @@ export class TerminalPanel {
    *     SEND…END blocks (handles alt-screen / TUI agents).
    */
   private feedScannerFromVTerm(newData = false): void {
+    if (this.openCodeChannel) return;
     if (!this.scannerEnabled || !this.scanner) return;
     const child = this.proc;
     const scanner = this.scanner;
@@ -862,6 +911,7 @@ export class TerminalPanel {
    * Detects SEND, REPLY, BROADCAST, STATUS, and QUERY markers.
    */
   private scanGridForProtocol(): void {
+    if (this.openCodeChannel) return;
     if (!this.onCommanderMessage) return;
     if (this.scanner?.isMuted) return;
     const child = this.proc;
@@ -910,6 +960,7 @@ export class TerminalPanel {
   }
 
   private getProtocolGridRows(): ProtocolTerminalRow[] {
+    if (this.openCodeChannel) return [];
     if (this.agentType !== 'opencode' || !this.vterm.inAltScreen) return this.vterm.getGridPlainRows();
     this.openCodeRegion ??= new OpenCodeRegionDetector();
     const rows = this.vterm.getGridCellRows();
@@ -925,6 +976,7 @@ export class TerminalPanel {
   }
 
   private getProtocolTailRows(): ProtocolTerminalRow[] {
+    if (this.openCodeChannel) return [];
     if (this.vterm.inAltScreen) return this.getProtocolGridRows();
     return this.vterm.getTailPlainRows();
   }
@@ -984,6 +1036,8 @@ export class TerminalPanel {
     const pid = this.proc ? ` pid=${this.proc.pid}` : '';
     const activity = this.protocolReplayWarningShown
       ? '  |  {red-fg}Protocol limit: restart agent{/red-fg}'
+      : this.nativeProtocolIssue || this.openCodeChannel?.status
+      ? `  |  {yellow-fg}Protocol: ${this.nativeProtocolIssue ?? this.openCodeChannel?.status}{/yellow-fg}`
       : this.protocolLayoutBlocked
       ? '  |  {yellow-fg}Protocol waiting for OpenCode layout{/yellow-fg}'
       : this.commanderActivityLabel
@@ -1215,6 +1269,8 @@ export class TerminalPanel {
     suppressExitHandler: boolean,
     options: TerminalShutdownOptions,
   ): Promise<void> {
+    this.openCodeChannel?.dispose();
+    this.pendingInputSurrogate = '';
     if (suppressExitHandler) {
       this.exitHandler = null;
     }
@@ -1349,6 +1405,7 @@ export class TerminalPanel {
    * commands when the scanner unmutes.
    */
   private snapshotGridAsProcessed(): void {
+    if (this.openCodeChannel) return;
     if (!this.scannerEnabled) return;
     const mark = (messages: ProtocolEvent[]) => new Set(messages.map((message) => {
       const key = this.buildEmissionKey(message.type, message.targetAgent, message.targetPanel,
@@ -1357,8 +1414,7 @@ export class TerminalPanel {
       return key;
     }));
     this.activeGridProtocolKeys = mark(this.parseProtocolRows(this.getProtocolGridRows()));
-    this.activeTailReplyKeys = mark(this.parseProtocolRows(this.getProtocolTailRows())
-      .filter((message) => message.type === 'reply'));
+    this.activeTailReplyKeys = mark(this.parseProtocolRows(this.getProtocolTailRows()));
   }
 
   private markProtocolLinesAsProcessed(lines: string[], ttlMs: number): Set<string> {
@@ -1482,6 +1538,7 @@ export class TerminalPanel {
   }
 
   private scanRenderedTailForReplies(): void {
+    if (this.openCodeChannel) return;
     if (!this.onCommanderMessage) return;
     if (this.scanner?.isMuted) return;
     const child = this.proc;
@@ -1491,13 +1548,13 @@ export class TerminalPanel {
     const messages = this.parseProtocolRows(this.getProtocolTailRows());
     const visibleKeys = new Set<string>();
     for (const message of messages) {
-      if (message.type !== 'reply') continue;
       const canonical = TerminalPanel.canonicalizeContent(message.content);
-      const key = this.buildEmissionKey('reply', 'generic', -1, canonical, message.capability ?? null, message.sequence);
+      const key = this.buildEmissionKey(message.type, message.targetAgent, message.targetPanel,
+        canonical, message.capability ?? null, message.sequence);
       visibleKeys.add(key);
       this.cancelPendingReplyEmission(key);
       if (!this.activeTailReplyKeys.has(key) && !this.activeGridProtocolKeys.has(key)) {
-        logger.info(`TailScan[${this.panelIndex}]: detected reply (${message.content.length} chars)`);
+        logger.info(`TailScan[${this.panelIndex}]: detected ${message.type} (${message.content.length} chars)`);
         this.emitDeduped(message, 'tail');
         if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
       } else {
@@ -1594,12 +1651,54 @@ export class TerminalPanel {
     if (!isProtocolCapability(capability)) throw new Error('Invalid protocol capability');
     if (this.protocolCapability === capability) return;
     this.protocolCapability = capability;
+    this.nativeProtocolIssue = null;
+    this.openCodeChannel?.arm(capability);
     this.scanner?.setProtocolCapability?.(capability);
     this.replayGuard = new ProtocolReplayGuard();
     this.protocolReplayWarningShown = false;
     this.activeGridProtocolKeys.clear();
     this.activeTailReplyKeys.clear();
     this.clearPendingReplyEmissions();
+    this.updateHeader();
+    this.scheduleRender();
+  }
+
+  getProtocolSetupError(): string | null {
+    return this.openCodeChannel?.setupError ?? null;
+  }
+
+  /** Parse immutable authored text, never a rendered viewport or a guessed partial repaint. */
+  private processOpenCodeText(text: string): void {
+    const capability = this.protocolCapability;
+    if (!capability || !this.scannerEnabled || this.scanner?.isMuted) return;
+    const child = this.proc;
+    const channel = this.openCodeChannel;
+    const messages: ProtocolEvent[] = [];
+    const parser = new ProtocolScanner(this.panelIndex, this.agentName, (msg) => messages.push(msg), {
+      maxContentLines: this.orchConfig.maxContentLines,
+      maxContentBytes: this.orchConfig.maxContentBytes,
+      onRejected: (msg) => messages.push(msg),
+      logPotentialMarkers: false,
+    });
+    parser.setProtocolCapability(capability);
+    parser.feed(text + '\n');
+    for (const message of messages) {
+      this.nativeProtocolIssue = null;
+      this.emitDeduped(message, 'opencode');
+      if (this.proc !== child || this.openCodeChannel !== channel || this.protocolCapability !== capability) return;
+    }
+    if (messages.length === 0 && text.includes(capability) && text.includes('COMMANDER:')) {
+      // Rejected authored frames spend their authenticated counters too. A
+      // later correction must not turn a previously rejected identity executable.
+      for (const sequence of promptProtocolSequences(text, capability)) {
+        this.claimProtocolIdentity(`seq:${capability}:${sequence}`);
+      }
+      const digest = createHash('sha256').update(text, 'utf8').digest('base64url');
+      if (this.claimProtocolIdentity(`${capability}:invalid:${digest}`)) {
+        this.nativeProtocolIssue = 'invalid frame — not sent';
+        this.onCommanderProtocolError?.('invalid-frame');
+      }
+    }
     this.updateHeader();
     this.scheduleRender();
   }
@@ -1749,6 +1848,7 @@ export class TerminalPanel {
 
   /** Finalize only the naturally closing, still-current session's output. */
   private flushFinalProtocolOutput(child: ChildProcess): void {
+    if (this.openCodeChannel) return;
     if (this.proc !== child || !this.scannerEnabled || !this.scanner) return;
     this.feedScannerFromVTerm();
     if (this.proc !== child) return;

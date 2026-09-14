@@ -1,6 +1,6 @@
 # QA coverage and validation checklist
 
-## Resize-independent routing — unreleased
+## Resize-independent routing — 0.1.10
 
 The source fix recovers a strict, current-capability sequenced header that a
 CLI explicitly redraws at column zero without erasing an old incoming wrap
@@ -19,6 +19,10 @@ sidebar is a separate 42-cell region. Its recognized footer, background and
 padding determine a consistent display-cell crop for header, body, footer,
 tail and snapshots. Unknown/partial layouts defer rather than stripping
 arbitrary suffixes. A narrow sidebar overlay is not a complete transcript.
+Even a fresh narrow session requires a recognized full-width prompt footer.
+A partial 42-cell sidebar background invalidates a stale full-width footer;
+six additional regressions check that clipped bodies neither route nor become
+echo snapshots, and that a complete repaint can deliver the original body once.
 Nonstandard themes, footer plugins or future layout changes may require a
 follow-up adaptation; a panel header reports `Protocol waiting for OpenCode
 layout`. Wait for the prompt to finish drawing or manually hide the sidebar
@@ -28,10 +32,10 @@ old action after changing the layout: check Activity first.
 Live acceptance must keep geometry fixed between task submission and delivery,
 assert that the wide OpenCode sidebar is actually visible, and compare exact
 SEND/REPLY bodies and thread identity. A substring in a prompt is insufficient.
-These source changes are **not published in npm 0.1.9**; restart after building
-the checkout or installing a future release.
+These fixes are included in **0.1.10**, not 0.1.9. Verify registry publication
+separately; restart Commander after building or upgrading.
 
-Validation on macOS / Node.js 24 (2026-09-14): the full gate passed 1,471
+The initial validation on macOS / Node.js 24 (2026-09-14) passed 1,471
 application tests across 112 files, 28 Python tests, typecheck, development
 watch, build, built CLI isolation, packaged keyboard/template checks,
 100-panel stress in both themes and twenty synthetic PTYs with cleanup.
@@ -39,6 +43,12 @@ The restricted-sandbox run could not perform macOS metadata copying/native
 watches; the complete host-permission run, not that failed run, is the gate.
 Independent code review checked redraw provenance, authorization, nested
 frames, echo reservations, malformed-input complexity and sidebar projection.
+
+The final 0.1.10 host-permission gate repeated the same checks successfully
+with **1,477 application tests across 112 files** after partial-overlay
+hardening and release-documentation corrections. Runtime dependency audit
+reported zero advisories on 2026-09-14. These are automated/source checks;
+the exact release archive and registry publication are verified separately.
 
 Real OpenCode/APEX acceptance used the normal welcome/F2/protocol workflow in
 isolated owned PTYs with model tools denied and recording off. Fixed 213×57
@@ -50,8 +60,9 @@ Owned processes were stopped and Commander configuration remained unchanged.
 
 Earlier acceptance attempts are not counted as passes: one narrow attempt
 timed out without sufficient diagnostics; a subsequent run exposed the
-three-cell idle footer now covered by regressions, and also produced a
-mismatched model footer that was correctly rejected. These tests demonstrate
+three-cell idle footer now covered by regressions, and also displayed a
+mismatched footer that was correctly rejected (its origin was not established).
+These tests demonstrate
 the reproduced fixes, not universal model compliance or live Claude/Codex
 acceptance. Claude-shaped cursor redraws are covered by deterministic tests.
 

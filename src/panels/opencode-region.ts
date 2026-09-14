@@ -34,19 +34,15 @@ function cellText(cells: readonly OpenCodeRegionCell[]): string {
 
 /**
  * A session-local layout recognizer, used ONLY for OpenCode's alternate screen.
- * Wide unrecognized/partially painted layouts fail closed. Sidebar visibility
+ * Unrecognized/partially painted layouts fail closed at every width. Sidebar visibility
  * is not a TUI config option: its toggle persists KV state, which we never edit.
  * The caller must reset this recognizer when the child session changes.
  */
 export class OpenCodeRegionDetector {
   private overlaySeen = false;
-  private lastColumns: number | null = null;
-  private awaitingResizeChrome = false;
 
   reset(): void {
     this.overlaySeen = false;
-    this.lastColumns = null;
-    this.awaitingResizeChrome = false;
   }
 
   detect(rows: readonly OpenCodeRegionRow[], columns: number): OpenCodeProtocolRegion {
@@ -54,9 +50,6 @@ export class OpenCodeRegionDetector {
       || rows.some((row) => row.cells.length !== columns)) {
       return { kind: 'ambiguous', reason: 'incomplete-grid' };
     }
-    if (this.lastColumns !== null && this.lastColumns !== columns) this.awaitingResizeChrome = true;
-    this.lastColumns = columns;
-
     const footerRows = rows.slice(-4);
     const sidebarStart = columns - SIDEBAR_COLUMNS;
     const sidebarFooterSeen = sidebarStart >= 2 && footerRows.some((row) => (
@@ -84,7 +77,6 @@ export class OpenCodeRegionDetector {
       ));
       if (hasSidebarGeometry && hasBackgroundBoundary) {
         this.overlaySeen = false;
-        this.awaitingResizeChrome = false;
         return { kind: 'sidebar', endColumn: sidebarStart };
       }
       return { kind: 'ambiguous', reason: 'unverified-layout' };
@@ -94,14 +86,27 @@ export class OpenCodeRegionDetector {
     // the physical edge. A sidebar puts that hint 42 columns farther left.
     // Require this positive evidence rather than assuming an absent footer
     // means a sidebar was disabled halfway through an incremental repaint.
+    // A previously valid full-width footer can survive while an overlay is
+    // painted above it. Even one complete sidebar-shaped background row makes
+    // that old footer insufficient proof: routing could otherwise truncate a
+    // body hidden under the overlay. Do not require a blank left gutter here;
+    // an overlay can cut through text. Unusual themes with this same shape
+    // deliberately defer rather than guessing whether the transcript is whole.
+    const sidebarBackgroundSeen = sidebarStart >= 2 && rows.some((row) => {
+      const background = row.cells[sidebarStart].bg;
+      return row.cells[sidebarStart - 1].bg !== background
+        && row.cells.slice(sidebarStart).every((cell) => cell.bg === background);
+    });
+    if (sidebarBackgroundSeen) {
+      if (columns <= WIDE_COLUMNS) this.overlaySeen = true;
+      return { kind: 'ambiguous', reason: this.overlaySeen ? 'sidebar-overlay' : 'unverified-layout' };
+    }
     if (fullPromptFooterSeen) {
       this.overlaySeen = false;
-      this.awaitingResizeChrome = false;
       return { kind: 'full', endColumn: columns };
     }
-    if (columns <= WIDE_COLUMNS && !this.overlaySeen && !this.awaitingResizeChrome) {
-      return { kind: 'full', endColumn: columns };
-    }
+    // Narrow layouts also need positive full-width chrome. A fresh session can
+    // start with a saved overlay before its sidebar footer has been painted.
     return { kind: 'ambiguous', reason: this.overlaySeen ? 'sidebar-overlay' : 'unverified-layout' };
   }
 }

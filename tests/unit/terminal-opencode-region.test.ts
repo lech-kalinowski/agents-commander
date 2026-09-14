@@ -193,6 +193,41 @@ describe('TerminalPanel OpenCode sidebar routing integration', () => {
     } finally { f.dispose(); }
   });
 
+  it.each([false, true])(
+    'does not emit a body clipped by a fresh narrow overlay, stale full footer=%s', (staleFooter) => {
+      vi.useFakeTimers();
+      const f = fixture();
+      try {
+        const width = 120;
+        const body = 'x'.repeat(100);
+        f.panel.vterm.resize(width, height);
+        if (staleFooter) {
+          f.output(draw('', false, { width }));
+          vi.advanceTimersByTime(50);
+          expect(f.panel.protocolLayoutBlocked).toBe(false);
+        }
+        // The body is at row 12 (1-based). One newly painted overlay row is
+        // enough to hide its final 24 characters while the header/END survive.
+        const partialOverlay = `\x1b[12;${width - 42 + 1}H\x1b[48;5;16m${' '.repeat(42)}\x1b[0m`;
+        f.output(draw(frame('REPLY', body), false, { width, chrome: staleFooter }) + partialOverlay);
+        vi.advanceTimersByTime(50);
+        f.panel.scanRenderedTailForReplies();
+        f.panel.snapshotVisibleProtocolAsProcessed();
+        expect(f.panel.protocolLayoutBlocked).toBe(true);
+        expect(f.panel.getProtocolGridRows()).toEqual([]);
+        expect(f.emitted).not.toHaveBeenCalled();
+
+        // A complete fresh layout may deliver the original identity once. The
+        // ambiguous snapshot must not execute or reserve a truncated version.
+        f.output(draw(frame('REPLY', body), false, { width, footerPadding: 3 }));
+        vi.advanceTimersByTime(50);
+        expect(f.panel.protocolLayoutBlocked).toBe(false);
+        expect(f.emitted).toHaveBeenCalledOnce();
+        expect(f.emitted.mock.calls[0][0].content).toBe(body);
+      } finally { f.dispose(); }
+    },
+  );
+
   it('continues routing after wide-to-narrow resize with the real three-cell idle footer', () => {
     vi.useFakeTimers();
     const f = fixture();

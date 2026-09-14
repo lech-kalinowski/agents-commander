@@ -166,7 +166,10 @@ describe('OpenCode protocol conversation region', () => {
     const detector = new OpenCodeRegionDetector();
     detector.detect(sidebarGrid(110), 110);
     detector.reset();
-    expect(detector.detect(grid(110), 110)).toEqual({ kind: 'full', endColumn: 110 });
+    expect(detector.detect(grid(110), 110)).toEqual({ kind: 'ambiguous', reason: 'unverified-layout' });
+    const full = grid(110);
+    put(full, 22, 110 - 'ctrl+p commands  '.length, 'ctrl+p commands');
+    expect(detector.detect(full, 110)).toEqual({ kind: 'full', endColumn: 110 });
   });
 
   it('waits for fresh chrome after resizing rather than reading clipped old content', () => {
@@ -195,12 +198,52 @@ describe('OpenCode protocol conversation region', () => {
     expect(new OpenCodeRegionDetector().detect(rows, columns).kind).toBe('ambiguous');
   });
 
-  it('does not alter ordinary narrow output without an overlay', () => {
+  it('requires positive full-width chrome even in a fresh narrow session', () => {
     const rows = grid(110);
     addFrame(rows);
     const result = scan(rows, 110);
-    expect(result.region).toEqual({ kind: 'full', endColumn: 110 });
-    expect(result.received).toHaveBeenCalledOnce();
+    expect(result.region).toEqual({ kind: 'ambiguous', reason: 'unverified-layout' });
+    expect(result.received).not.toHaveBeenCalled();
+    put(rows, 22, 110 - 'ctrl+p commands  '.length, 'ctrl+p commands');
+    expect(scan(rows, 110).received).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('defers a fresh narrow partial overlay with stale full footer=%s', (staleFooter) => {
+    const width = 120;
+    const rows = grid(width);
+    addFrame(rows, 'x'.repeat(100));
+    if (staleFooter) put(rows, 22, width - 'ctrl+p commands  '.length, 'ctrl+p commands');
+    // The overlay has started painting, but its footer has not arrived. Header
+    // and END still fit; the rightmost 24 body characters are now obscured.
+    for (let y = 0; y < 20; y++) {
+      for (let x = width - 42; x < width; x++) rows[y].cells[x] = { char: ' ', bg: 16 };
+    }
+    put(rows, 4, width - 40, 'Context');
+    const result = scan(rows, width);
+    expect(result.region).toEqual({ kind: 'ambiguous', reason: 'sidebar-overlay' });
+    expect(result.projected).toBeNull();
+    expect(result.received).not.toHaveBeenCalled();
+  });
+
+  it('rejects a single sidebar-shaped body row while a full-width footer survives', () => {
+    const width = 120;
+    const rows = grid(width);
+    put(rows, 22, width - 'ctrl+p commands  '.length, 'ctrl+p commands');
+    const detector = new OpenCodeRegionDetector();
+    expect(detector.detect(rows, width).kind).toBe('full');
+    addFrame(rows, 'x'.repeat(100));
+    // No blank gutter: the overlay cuts directly through the body mid-word.
+    for (let x = width - 42; x < width; x++) rows[11].cells[x] = { char: ' ', bg: 16 };
+    expect(rows[11].cells[width - 43].char).toBe('x');
+    expect(detector.detect(rows, width)).toEqual({ kind: 'ambiguous', reason: 'sidebar-overlay' });
+    expect(scan(rows, width).received).not.toHaveBeenCalled();
+  });
+
+  it('defers ambiguous theme geometry instead of trusting a wide full-width footer', () => {
+    const rows = grid();
+    put(rows, 22, columns - 'ctrl+p commands  '.length, 'ctrl+p commands');
+    for (let x = sidebarStart; x < columns; x++) rows[2].cells[x] = { char: ' ', bg: 16 };
+    expect(scan(rows).region).toEqual({ kind: 'ambiguous', reason: 'unverified-layout' });
   });
 
   it('uses physical columns, not JS string offsets, for wide and combined glyphs', () => {
@@ -226,6 +269,7 @@ describe('OpenCode protocol conversation region', () => {
     const rows = grid(80);
     put(rows, 0, 0, 'abc');
     rows[0].wrapsToNext = true;
+    put(rows, 22, 80 - 'ctrl+p commands  '.length, 'ctrl+p commands');
     const result = scan(rows, 80);
     expect(result.projected?.[0]).toEqual({ text: 'abc' + ' '.repeat(77), wrapsToNext: true });
   });

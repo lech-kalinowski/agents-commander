@@ -42,7 +42,7 @@
 
 ## Quick Start
 
-This README describes **Agents Commander 0.1.9**, under the MIT License.
+This README describes **Agents Commander 0.1.10**, under the MIT License.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
 The [bulk-launch workflow](#launch-one-profile-in-many-new-panels),
 [bulk protocol setup](#enable-protocol-in-many-agents),
@@ -59,16 +59,16 @@ feedback, and teaches exact routing addresses for model-labelled profiles.
 Registry publication is a separate step; check the npm version listing before
 installing, or build the current source below.
 
-The current **unreleased source** additionally fixes resize-dependent protocol
-detection and OpenCode sidebar contamination. This is not part of npm 0.1.9.
+Version **0.1.10** additionally fixes resize-dependent protocol detection and
+OpenCode sidebar contamination. These fixes are not part of 0.1.9.
 For OpenCode, an unrecognized or partially painted layout pauses routing with
 `Protocol waiting for OpenCode layout`; it never guesses which text to send.
-See the [redraw QA and limitations](docs/qa.md#resize-independent-routing--unreleased).
+See the [redraw QA and limitations](docs/qa.md#resize-independent-routing--0110).
 
-### Install version 0.1.9
+### Install version 0.1.10
 
 ```bash
-npm install -g agents-commander@0.1.9
+npm install -g agents-commander@0.1.10
 agents-commander --version
 agents-commander --doctor .
 agents-commander .
@@ -150,12 +150,12 @@ prove that a physical controller or a particular model is ready.
 
 ### Upgrading from 0.1.4
 
-Version 0.1.4 advertised Node.js 18+; **0.1.9 requires Node.js 22+ and Python 3**,
-as did 0.1.5–0.1.8. Upgrade Node before installing 0.1.9. The older package supported only
+Version 0.1.4 advertised Node.js 18+; **0.1.10 requires Node.js 22+ and Python 3**,
+as did 0.1.5–0.1.9. Upgrade Node before installing 0.1.10. The older package supported only
 `--theme`, `--panels` (2, 3, or 4), and `--show-hidden`, plus help/version.
 The doctor, conference/demo modes, adaptive density, 100-panel workspace,
 OpenCode adapter, Codex Micro integration, and capture/dataset commands described
-here arrived in 0.1.5 and remain in 0.1.9, not 0.1.4. Bulk launch, bulk protocol
+here arrived in 0.1.5 and remain in 0.1.10, not 0.1.4. Bulk launch, bulk protocol
 setup and sequenced replay protection were added in 0.1.6.
 
 Panel controls have also changed: F4 toggles fullscreen, F6 clones a fresh agent
@@ -173,7 +173,7 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 
 ## Requirements
 
-For version 0.1.9:
+For version 0.1.10:
 
 - Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
@@ -937,7 +937,7 @@ privacy precautions before sharing logs or agent output.
 Open source under the [MIT License](LICENSE), including commercial use. Retain
 the copyright and permission notice when redistributing the software; see
 [third-party notices](THIRD_PARTY_NOTICES.md) for included third-party material.
-Version 0.1.9 uses MIT. Versions 0.1.5–0.1.8 also used MIT.
+Version 0.1.10 uses MIT. Versions 0.1.5–0.1.9 also used MIT.
 Earlier published packages retain the license bundled with those versions;
 updating the source does not relicense older artifacts.
 

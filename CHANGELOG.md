@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.10
 
 ### Fixed
 
@@ -10,11 +10,14 @@
 - Isolate the OpenCode 1.x transcript from its verified right sidebar so sidebar
   labels cannot block headers or enter message bodies. Unknown/partial layouts
   defer routing and show a waiting indicator instead of guessing a text region.
+  Require positive layout evidence at every width; partial sidebar overlays
+  cannot use a stale footer to route clipped message bodies.
 - Share physical-row parsing across live scans, history and echo snapshots;
   preserve capability, nested-frame, sequence and replay checks. Reserve inline
   prompt examples conservatively and bound malformed-marker scanning.
 
-These changes are not included in the published 0.1.9 package.
+This section describes version contents; verify npm publication separately.
+These fixes are not included in 0.1.9.
 
 ## 0.1.9
 

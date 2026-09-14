@@ -39,11 +39,11 @@ npm run verify
 
 The current UI uses TypeScript, blessed, and tsup, with native shallow filesystem watches. Runtime support is Node.js 22+, Python 3, and macOS/Linux/WSL2.
 
-Package version is 0.1.9, under the MIT License. Version 0.1.4 is the legacy
+Package version is 0.1.10, under the MIT License. Version 0.1.4 is the legacy
 baseline; its runtime requirements, features, and bundled license differ.
 Use `node dist/bin/agents-commander.js` or `npm start --` to exercise this checkout,
 not an older global installation. For the versioned package, the install command
-is `npm install -g agents-commander@0.1.9`. Recheck the registry before changing
+is `npm install -g agents-commander@0.1.10`. Recheck the registry before changing
 release claims. A source push is not an npm release.
 F2/N bulk launch, F2/P bulk protocol setup and sequenced replay protection are
 included in 0.1.6, not 0.1.5. Package metadata describes that version's contents;
@@ -63,13 +63,13 @@ new counter. Template role guidance does not override explicit custom targets.
 Restart Commander after upgrading; Node.js 20 is unsupported, not the proven
 cause of the reproduced watcher freeze.
 
-Unreleased source additionally recovers cursor-addressed, authenticated
+Version 0.1.10 additionally recovers cursor-addressed, authenticated
 sequenced headers across stale wrap links without resize. Generic terminal
 wraps remain unchanged; inline prompt identities are reserved conservatively.
 Grid, tail and snapshots share physical-row protocol parsing. OpenCode's
 recognized sidebar is projected by display columns; unknown/partial layouts
 defer with a panel-header indicator, never raw-row fallback. These fixes are
-not in npm 0.1.9. See docs/qa.md for the acceptance cases and limitations.
+not in 0.1.9. Verify publication separately; see docs/qa.md for acceptance cases.
 
 ## Key Conventions
 

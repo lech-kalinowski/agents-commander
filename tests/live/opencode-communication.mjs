@@ -20,6 +20,7 @@ const { createRequire, syncBuiltinESMExports } = await import('node:module');
 const { promisify } = await import('node:util');
 const { fileURLToPath, pathToFileURL } = await import('node:url');
 const { DatabaseSync } = await import('node:sqlite');
+const { oneCommandAccepted, wholeRunAccepted, settledReadySince } = await import('./acceptance-checks.mjs');
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const packageRoot = process.env.COMMANDER_QA_PACKAGE_ROOT ? path.resolve(process.env.COMMANDER_QA_PACKAGE_ROOT) : root;
@@ -100,7 +101,34 @@ const view = () => screenTerm.getGridPlainLines().join('\n');
 const panels = () => app.layout?.allPanels.filter(panel => panel.vterm) ?? [];
 const activity = () => [...(app.orchestrator?.getRecentActivity(1000) ?? [])].reverse();
 const body = panel => panel.vterm.getGridPlainLines().join('\n');
-const ready = panel => /ctrl\+p commands/u.test(body(panel)) && !/esc[^\n]*interrupt/iu.test(body(panel));
+function readiness(panel) {
+  const text = body(panel);
+  const interrupted = /esc[^\n]*interrupt/iu.test(text);
+  // The ordinary Home prompt is still visible at 85x13, but its shortcut footer
+  // can be clipped. Require the EMPTY prompt placeholder AND selected model,
+  // never just a timeout or absence of an interrupt label.
+  // https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/routes/home.tsx#L64-L79
+  // https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/component/prompt/index.tsx#L1236-L1245
+  // https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/component/prompt/index.tsx#L1363-L1393
+  const freshPromptChrome = /Ask anything…/u.test(text) && /(?:Build|Plan)\s+·\s+APEX/u.test(text);
+  const channelReady = !!panel.openCodeChannel && panel.getProtocolSetupError?.() === null;
+  const sessionID = sessionIds.get(panel.panelIndex) ?? panel.openCodeChannel?.sessionID;
+  if (!sessionID) return { ready: panel.isRunning && !interrupted && (expectNative ? channelReady && freshPromptChrome
+    : /ctrl\+p commands/u.test(text)), freshPromptChrome, latestUserCompleted: false };
+  // Query ONLY the exact native-bound/mapped session in this owned fresh CWD.
+  // This also works for hidden panels and does not infer idleness from pixels.
+  const messages = db.prepare(`SELECT m.id,m.data,m.time_created FROM session s JOIN message m ON m.session_id=s.id
+    WHERE s.id=? AND s.directory=? AND s.time_created>=? ORDER BY m.time_created,m.id`)
+    .all(sessionID, workspace, started - 1000).map(row => ({ ...row, data: JSON.parse(row.data) }));
+  const user = messages.findLast(row => row.data.role === 'user');
+  const response = messages.findLast(row => row.data.role === 'assistant' && row.data.parentID === user?.id);
+  const latestPaste = wirePastes.get(panel.panelIndex)?.at(-1);
+  const latestUserCompleted = !!user && !!response?.data.time?.completed && !response.data.error
+    && response.data.finish === 'stop' && (!latestPaste || user.time_created >= latestPaste.at);
+  return { ready: panel.isRunning && !interrupted && (!expectNative || channelReady) && latestUserCompleted,
+    freshPromptChrome, latestUserCompleted };
+}
+const ready = panel => readiness(panel).ready;
 const write = bytes => { inputWrites++; input.write(bytes); };
 // Strictly reduce all evidence before logging; never accept arbitrary strings.
 const stringEnums = new Set(['startup','welcome','dismiss-welcome','focus','picker','launch','prompt','protocol-picker',
@@ -124,7 +152,9 @@ const keys = new Set(['event','stage','elapsedSeconds','trial','passed','failure
   'launchEnvironments','pluginConfigured','tokenConfigured','fdConfigured','fifthDescriptorConfigured',
   'channelConnecting','channelFailed','ownedDescriptorMetadata','processCount','fd4Open','directChild',
   'stressResults','baselinePassed','stressPassed','distinctThreads','stableIdentities','hiddenTargets','visiblePanels',
-  'wireBodyExactCount','receiverAddedOneSpaceCount','receiverByteExactCount','knownOpenCodePasteBehavior','naturalQuitPassed','channelOpenBeforeQuit']);
+  'wireBodyExactCount','receiverAddedOneSpaceCount','receiverByteExactCount','knownOpenCodePasteBehavior','naturalQuitPassed','channelOpenBeforeQuit',
+  'freshPromptChrome','latestUserCompleted','settled','settledElapsedMs','matchingEvents','fullRunPassed',
+  'actualEvents','expectedEvents','actualRoutes','expectedRoutes','allRoutesDelivered']);
 function guard(value) {
   if (value === null || value === undefined || typeof value === 'boolean') return true;
   if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0;
@@ -135,7 +165,7 @@ function guard(value) {
 }
 function report(value) { check(guard(value), 'metadata-rejected'); console.log(JSON.stringify(value)); }
 function panelMetadata() { return panels().map(panel => ({ panel: panel.panelIndex + 1, columns: panel.vterm.colCount,
-  rows: panel.vterm.getGridPlainLines().length, running: panel.isRunning, ready: ready(panel), layoutBlocked: panel.protocolLayoutBlocked,
+  rows: panel.vterm.getGridPlainLines().length, running: panel.isRunning, ...readiness(panel), layoutBlocked: panel.protocolLayoutBlocked,
   alt: panel.vterm.inAltScreen, channelPresent: !!panel.openCodeChannel,
   channelReady: panel.getProtocolSetupError?.() === null,
   channelBound: !!panel.openCodeChannel?.sessionID && panel.openCodeChannel?.status === null,
@@ -261,6 +291,7 @@ function installWireObserver(panel) {
   let pending = '';
   const original = panel.sendInput.bind(panel);
   panel.sendInput = (text, ...args) => {
+    const observedAt = Date.now();
     const accepted = original(text, ...args);
     if (!accepted || typeof text !== 'string') return accepted;
     pending += text;
@@ -271,7 +302,7 @@ function installWireObserver(panel) {
       if (start > 0) pending = pending.slice(start);
       const end = pending.indexOf('\x1b[201~', 6);
       if (end < 0) break;
-      writes.push({ at: Date.now(), text: pending.slice(6, end) });
+      writes.push({ at: observedAt, text: pending.slice(6, end) });
       if (writes.length > 100) writes.shift();
       pending = pending.slice(end + 6);
     }
@@ -299,10 +330,13 @@ function inspectTrial(spec, since, routeStart, eventStart, feedbackStart, sentAt
   const panel = panels().find(item => item.panelIndex === spec.source);
   const messages = sourceMessages(spec.source, since);
   const texts = messages.map(item => item.text);
-  const parsed = texts.flatMap(text => parseSource(text, panel)).filter(item => item.type === spec.kind);
+  const allParsed = texts.flatMap(text => parseSource(text, panel));
+  const parsed = allParsed.filter(item => item.type === spec.kind);
   const routes = activity().slice(routeStart);
-  const emitted = events.slice(eventStart).filter(item => item.type === spec.kind && item.sourcePanel === spec.source);
-  const delivered = routes.filter(item => item.kind === spec.kind && item.status === 'delivered' && item.content === spec.body);
+  const allEvents = events.slice(eventStart);
+  const emitted = allEvents.filter(item => item.type === spec.kind && item.sourcePanel === spec.source && item.content === spec.body);
+  const delivered = routes.filter(item => item.kind === spec.kind && item.status === 'delivered' && item.content === spec.body
+    && item.source.panelIndex === spec.source && spec.targets.includes(item.target.panelIndex));
   const naturalFrameAt = emitted.find(item => item.content === spec.body)?.observedAt;
   const transportLatencyMs = naturalFrameAt !== undefined && delivered.length
     ? Math.max(0, ...delivered.map(item => item.updatedAt - naturalFrameAt)) : null;
@@ -325,19 +359,23 @@ function inspectTrial(spec, since, routeStart, eventStart, feedbackStart, sentAt
     && item.replyToMessageId === priorSend?.messageId);
   const expectedReceiveCount = spec.targets.length;
   const actualReceiveCount = received.reduce((sum, n) => sum + n, 0);
-  const passed = sourceBodyExact && emitted.some(item => item.content === spec.body)
-    && (expectedReceiveCount ? delivered.length === expectedReceiveCount && received.every(n => n === 1)
-      && wireBodyExactCount === expectedReceiveCount : feedbackMatches >= 1 && feedbackReceived)
-    && sameThread && inputWrites === writesAt && resizeEvents === resizesAt;
+  const ledgerExact = delivered.length === expectedReceiveCount
+    && spec.targets.every(index => delivered.filter(record => record.target.panelIndex === index).length === 1);
+  const generationErrors = messages.filter(item => item.errors).length;
+  const passed = oneCommandAccepted({ sourceComplete, generationErrors, sourceFrames: allParsed.length,
+    allEventCount: allEvents.length, matchingEventCount: emitted.length, allRouteCount: routes.length,
+    expectedRouteCount: expectedReceiveCount, bodyExact: sourceBodyExact && promptedBody === spec.body && ledgerExact,
+    wireBodyExactCount, receiptCounts: received, feedbackAccepted: feedbackMatches === 1 && feedbackReceived,
+    sameThread, untouched: inputWrites === writesAt && resizeEvents === resizesAt });
   return { event: 'trial', trial: spec.id, kind: spec.kind, source: spec.source + 1, passed,
-    sourceComplete, sourceMessages: messages.length, sourceFrames: parsed.length, sourceBodyExact,
+    sourceComplete, sourceMessages: messages.length, sourceFrames: allParsed.length, sourceBodyExact,
     promptedBodyExact: promptedBody === spec.body, promptedBodyBytes: Buffer.byteLength(promptedBody),
     promptedReplacementCharacters: [...promptedBody].filter(char => char === '\uFFFD').length,
     sourceEqualsPromptedBody: parsed.some(item => item.content === promptedBody),
     sourceFooterPresent: texts.some(text => text.includes('===COMMANDER:END:')),
-    generationErrors: messages.filter(item => item.errors).length,
+    generationErrors,
     headerVisible: body(panel).includes(`COMMANDER:${spec.kind.toUpperCase()}:`), footerVisible: body(panel).includes('COMMANDER:END:'),
-    contentBytes: Buffer.byteLength(spec.body), newEvents: emitted.length, newRoutes: routes.length,
+    contentBytes: Buffer.byteLength(spec.body), newEvents: allEvents.length, matchingEvents: emitted.length, newRoutes: routes.length,
     expectedTargets: spec.targets.map(n => n + 1), deliveredTargets: delivered.map(item => item.target.panelIndex + 1),
     expectedReceiveCount, actualReceiveCount, wireBodyExactCount, receiverAddedOneSpaceCount, receiverByteExactCount,
     knownOpenCodePasteBehavior: spec.targets.every(index => sessionVersions.get(index) === '1.18.30'),
@@ -355,18 +393,22 @@ async function trial(spec) {
   write(`\x1b[200~${task}\x1b[201~\r`);
   const sentAt = Date.now(), writesAt = inputWrites, resizesAt = resizeEvents;
   stage = 'trial-running';
-  let result;
+  let result, settledSince = null, settled = false, firstProofLatencyMs = null;
   const deadline = sentAt + 90000;
   do {
     await delay(500);
     result = inspectTrial(spec, since, routeStart, eventStart, feedbackStart, sentAt, writesAt, resizesAt);
-    if (result.passed) break;
+    if (result.passed && firstProofLatencyMs === null) firstProofLatencyMs = result.latencyMs;
+    const quiet = settledReadySince(settledSince, { accepted: result.passed, allReady: panels().every(ready), now: Date.now() });
+    settledSince = quiet.since; settled = quiet.settled;
+    if (settled) break;
     // A finished valid source frame without delivery remains untouched for a
     // bounded 15s evidence window; there is no resize, scroll or auto-repair.
-    if (result.sourceComplete && Date.now() - sentAt > 20000 && panels().every(ready)) break;
+    if (!result.passed && result.sourceComplete && Date.now() - sentAt > 20000 && panels().every(ready)) break;
   } while (Date.now() < deadline);
+  result = { ...result, passed: result.passed && settled, settled, settledElapsedMs: Date.now() - sentAt,
+    latencyMs: firstProofLatencyMs ?? result.latencyMs };
   trials.push(result); report(result);
-  await delay(2500);
   return result;
 }
 const stressResults = [];
@@ -374,38 +416,62 @@ async function runStress(longBody) {
   await waitFor(() => panels().every(ready), 'trial-ready', 45000);
   const target = count - 1;
   const specs = [1,2].map(source => ({ source, body: `APEX_SIMULTANEOUS_FROM_P${source + 1}_EXACT_20260914` }));
-  const since = Date.now(), routeStart = activity().length;
+  const since = Date.now(), routeStart = activity().length, eventStart = events.length;
   for (const spec of specs) await submit(spec.source,
     `Send exactly one Commander SEND to exact adapter opencode in stable panel ${target + 1}. Entire body exactly ${spec.body}. Use current capability and NEW matching positive sequence in header and END. Do not use tools. After ACK or messages do not emit further protocol frames.`);
   const sentAt = Date.now(), writesAt = inputWrites, resizesAt = resizeEvents;
   let exactRoutes = [];
   let sourceValid = false;
   let actualReceiveCount = 0;
-  let simultaneousReceipts = [];
+  let simultaneousReceipts = [], settledSince = null, settled = false, firstProofLatencyMs = null;
+  let allEventCount = 0, matchingEventCount = 0, totalSourceFrames = 0;
+  let sourceComplete = false, generationErrors = 0;
   const deadline = sentAt + 90000;
   do {
     await delay(500);
     exactRoutes = activity().slice(routeStart).filter(record => record.status === 'delivered' && record.kind === 'send'
       && record.target.panelIndex === target && specs.some(spec => spec.source === record.source.panelIndex && spec.body === record.content));
-    sourceValid = specs.every(spec => sourceMessages(spec.source, since)
-      .flatMap(message => parseSource(message.text, panels().find(panel => panel.panelIndex === spec.source)))
-      .some(message => message.type === 'send' && message.content === spec.body));
+    const sources = specs.map(spec => {
+      const messages = sourceMessages(spec.source, since);
+      const frames = messages.flatMap(message => parseSource(message.text, panels().find(panel => panel.panelIndex === spec.source)));
+      return { messages, frames, complete: messages.some(message => message.completed && message.text.includes('===COMMANDER:')),
+        exact: frames.length === 1 && frames[0].type === 'send' && frames[0].content === spec.body };
+    });
+    sourceComplete = sources.every(item => item.complete);
+    generationErrors = sources.reduce((sum, item) => sum + item.messages.filter(message => message.errors).length, 0);
+    totalSourceFrames = sources.reduce((sum, item) => sum + item.frames.length, 0);
+    sourceValid = sourceComplete && generationErrors === 0 && sources.every(item => item.exact);
+    const allEvents = events.slice(eventStart);
+    allEventCount = allEvents.length;
+    matchingEventCount = specs.filter(spec => allEvents.filter(message => message.type === 'send'
+      && message.sourcePanel === spec.source && message.content === spec.body).length === 1).length;
     simultaneousReceipts = specs.map(spec => receiptEvidence(target, spec.body, since));
     actualReceiveCount = simultaneousReceipts.reduce((sum, item) => sum + item.total, 0);
-    if (exactRoutes.length === 2 && simultaneousReceipts.every(item => item.total === 1 && item.wire === 1) && sourceValid) break;
+    const accepted = exactRoutes.length === 2 && activity().length === routeStart + 2
+      && allEventCount === 2 && matchingEventCount === 2 && sourceValid
+      && specs.every(spec => exactRoutes.filter(record => record.source.panelIndex === spec.source && record.content === spec.body).length === 1)
+      && simultaneousReceipts.every(item => item.total === 1 && item.wire === 1)
+      && new Set(exactRoutes.map(record => record.threadId)).size === 2 && inputWrites === writesAt && resizeEvents === resizesAt;
+    if (accepted && firstProofLatencyMs === null) firstProofLatencyMs = Date.now() - sentAt;
+    const quiet = settledReadySince(settledSince, { accepted, allReady: panels().every(ready), now: Date.now() });
+    settledSince = quiet.since; settled = quiet.settled;
+    if (settled) break;
   } while (Date.now() < deadline);
   const simultaneous = { event: 'trial', trial: 'simultaneous', kind: 'send', source: [2,3],
-    passed: exactRoutes.length === 2 && activity().length === routeStart + 2
+    passed: settled && exactRoutes.length === 2 && activity().length === routeStart + 2
+      && allEventCount === 2 && matchingEventCount === 2
       && simultaneousReceipts.every(item => item.total === 1 && item.wire === 1) && sourceValid
       && new Set(exactRoutes.map(record => record.threadId)).size === 2 && inputWrites === writesAt && resizeEvents === resizesAt,
-    distinctThreads: new Set(exactRoutes.map(record => record.threadId)).size === 2, sourceValid,
+    distinctThreads: new Set(exactRoutes.map(record => record.threadId)).size === 2, sourceValid, sourceComplete,
+    generationErrors, sourceFrames: totalSourceFrames, newEvents: allEventCount, matchingEvents: matchingEventCount,
     expectedReceiveCount: 2, actualReceiveCount, newRoutes: activity().length - routeStart,
     wireBodyExactCount: simultaneousReceipts.reduce((sum, item) => sum + item.wire, 0),
     receiverAddedOneSpaceCount: simultaneousReceipts.reduce((sum, item) => sum + item.separator, 0),
     receiverByteExactCount: simultaneousReceipts.reduce((sum, item) => sum + item.exact, 0),
     transportLatencyMs: exactRoutes.length === 2 ? Math.max(0, ...exactRoutes.map(record => record.updatedAt
       - (events.find(item => item.sourcePanel === record.source.panelIndex && item.content === record.content)?.observedAt ?? record.updatedAt))) : null,
-    inputDuringPending: inputWrites - writesAt, resizeDuringPending: resizeEvents - resizesAt, latencyMs: Date.now() - sentAt };
+    inputDuringPending: inputWrites - writesAt, resizeDuringPending: resizeEvents - resizesAt,
+    settled, settledElapsedMs: Date.now() - sentAt, latencyMs: firstProofLatencyMs ?? Date.now() - sentAt };
   stressResults.push(simultaneous); report(simultaneous); if (!simultaneous.passed) return false;
   // Sender arrival order can differ; the last actually delivered message owns
   // the newest open reply window. Assert its original message/thread identity.
@@ -473,11 +539,11 @@ try {
   write('a'); await delay(100); write('\r'); await waitFor(() => view().includes('Enable Commander Protocol'), 'protocol-confirmation');
   write('\t'); await delay(80); write('\r');
   await waitFor(() => panels().every(panel => panel.protocolCapability), 'protocol-submit', 90000);
-  await delay(10000); await waitFor(() => panels().every(ready), 'protocol-ready', 45000);
   if (expectNative) await waitFor(() => panels().every(panel => panel.openCodeChannel?.sessionID
-    && panel.openCodeChannel.status === null), 'protocol-ready', 15000);
+    && panel.openCodeChannel.status === null), 'protocol-ready', 45000);
   await waitFor(mapSessions, 'session-map', 10000);
-  check(activity().length === 0, 'unexpected-startup-route');
+  await waitFor(() => panels().every(ready), 'protocol-ready', 45000);
+  check(activity().length === 0 && events.length === 0, 'unexpected-startup-route');
   for (let index = 0; index < count; index++) {
     await submit(index, `This is an isolated communication transport check, not a coding task. Never use tools. For all incoming Commander messages or broadcasts, say RECEIVED as ordinary text only; never send a protocol reply unless a later local user prompt explicitly asks for REPLY. Never emit a protocol frame to acknowledge Commander ACK, QUERY results, or setup. For this setup only say READY.`);
     await delay(1200);
@@ -530,7 +596,11 @@ try {
   report({ event: 'final', failure, stage, panels: panelMetadata(), trialResults: trials,
     launchEnvironments, ownedDescriptorMetadata: descriptorMetadata });
 } finally {
-  stage = 'cleanup'; clearInterval(heartbeat); await collectOwned(); await app.dispose(); clearInterval(tracker); await collecting;
+  stage = 'cleanup'; clearInterval(heartbeat); await collectOwned();
+  // Snapshot the complete ledger before disposal can reset application state.
+  // Keep observing the independent event array until every owned child stops.
+  const finalRouteRecords = activity();
+  await app.dispose(); clearInterval(tracker); await collecting;
   for (const signal of ['SIGTERM','SIGKILL']) {
     for (const record of (await remainingOwned()).reverse()) {
       if (!same(record, (await processTable()).get(record.pid))) continue;
@@ -540,12 +610,20 @@ try {
   }
   const ownedProcessesStopped = !(await remainingOwned()).length;
   const globalConfigUnchanged = await configDigest() === beforeDigest;
+  // Count from before the first protocol injection, not from individual trial
+  // offsets: late or different-verb actions in setup/gaps/quit cannot disappear.
+  const fullRun = { actualEvents: events.length, expectedEvents: 14 + (stressEnabled ? 7 : 0),
+    actualRoutes: finalRouteRecords.length, expectedRoutes: 5 + 3 * (count - 1) + (stressEnabled ? 6 + count - 1 : 0),
+    allRoutesDelivered: finalRouteRecords.every(record => record.status === 'delivered') };
+  const fullRunPassed = wholeRunAccepted({ ...fullRun, allChecksPassed: baselinePassed && stressPassed && naturalQuitPassed
+    && trials.length === (stressEnabled ? 19 : 14) && trials.every(item => item.passed) });
   db.close(); input.destroy(); output.destroy(); blessed.screen = originalScreen;
   childProcessModule.spawn = originalSpawn; syncBuiltinESMExports();
-  report({ event: 'final', passed: !failure && baselinePassed && stressPassed && naturalQuitPassed && trials.every(item => item.passed) && ownedProcessesStopped && globalConfigUnchanged,
+  report({ event: 'final', passed: !failure && fullRunPassed && ownedProcessesStopped && globalConfigUnchanged,
     failure, liveTrialsCompleted: trials.length, trialResults: trials, stressResults, baselinePassed, stressPassed,
+    fullRunPassed, ...fullRun,
     realAgentPTYs: launchedCount, ownedProcessesStopped, naturalQuitPassed,
     globalConfigUnchanged, toolsDenied: verifiedLaunches === launchedCount && launchedCount > 0,
     rawOutputPrinted: false, rawOutputRecorded: false, resizeEvents });
-  process.exitCode = !failure && baselinePassed && stressPassed && naturalQuitPassed && trials.every(item => item.passed) && ownedProcessesStopped && globalConfigUnchanged ? 0 : 1;
+  process.exitCode = !failure && fullRunPassed && ownedProcessesStopped && globalConfigUnchanged ? 0 : 1;
 }

@@ -1,5 +1,45 @@
 # QA coverage and validation checklist
 
+## Resize-independent routing — unreleased
+
+The source fix recovers a strict, current-capability sequenced header that a
+CLI explicitly redraws at column zero without erasing an old incoming wrap
+link. Regression cases require the first scheduled scan (50 ms), with no later
+output, resize, panel switch or scroll. They cover all five commands, 25–104
+column headers, exact Unicode/space-preserving bodies, history boundaries,
+hidden panels, echo reservations and no re-execution after repaint/resize.
+
+Natural soft wraps are not treated as new commands. Nested markers remain
+content: an incomplete outer frame is deliberately not reset by a later
+header. Fresh actions still require a fresh sequence. Terminal cursor
+provenance is not a new authorization mechanism.
+
+OpenCode's known 1.x layout is checked against the 1.18.30 source: the right
+sidebar is a separate 42-cell region. Its recognized footer, background and
+padding determine a consistent display-cell crop for header, body, footer,
+tail and snapshots. Unknown/partial layouts defer rather than stripping
+arbitrary suffixes. A narrow sidebar overlay is not a complete transcript.
+Nonstandard themes, footer plugins or future layout changes may require a
+follow-up adaptation; a panel header reports `Protocol waiting for OpenCode
+layout`. Wait for the prompt to finish drawing or manually hide the sidebar
+(OpenCode's default leader Ctrl+X, release, then B). Never blindly resend an
+old action after changing the layout: check Activity first.
+
+Live acceptance must keep geometry fixed between task submission and delivery,
+assert that the wide OpenCode sidebar is actually visible, and compare exact
+SEND/REPLY bodies and thread identity. A substring in a prompt is insufficient.
+These source changes are **not published in npm 0.1.9**; restart after building
+the checkout or installing a future release.
+
+Validation on macOS / Node.js 24 (2026-09-14): the full gate passed 1,468
+application tests across 112 files, 28 Python tests, typecheck, development
+watch, build, built CLI isolation, packaged keyboard/template checks,
+100-panel stress in both themes and twenty synthetic PTYs with cleanup.
+The restricted-sandbox run could not perform macOS metadata copying/native
+watches; the complete host-permission run, not that failed run, is the gate.
+Independent code review checked redraw provenance, authorization, nested
+frames, echo reservations, malformed-input complexity and sidebar projection.
+
 ### Addressing and feedback regression checkpoint — 2026-09-12
 
 The source fix for the mixed P1/P2 OpenCode + P3 Claude + P4 Codex layout passed

@@ -107,6 +107,44 @@ export interface ProtocolMarkerMatch {
   sequence?: number;
 }
 
+/** Physical output, not prompt text. Cursor provenance never grants authorization. */
+export interface ProtocolTerminalRow {
+  text: string;
+  wrapsToNext: boolean;
+  startsAfterCursorMove?: boolean;
+}
+
+/** Strict START eligibility shared by cursor-redraw recovery and the parser. */
+function authenticatedStart(line: string, capability: string): ProtocolMarkerMatch | null {
+  const send = matchSendStart(line);
+  if (send && send[3] === capability && isPanelNumber(Number(send[2]))
+    && (isAgentType(send[1]) || isReportableUnknownAgentType(send[1]))) {
+    return { capability, ...(send[4] === undefined ? {} : { sequence: Number(send[4]) }) };
+  }
+  for (const match of [matchReplyMarker, matchBroadcastMarker, matchStatusMarker, matchQueryMarker]) {
+    const marker = match(line);
+    if (marker?.capability === capability) return marker;
+  }
+  return null;
+}
+
+/** Suppression only: quoted/inline prompt markers must not gain authorship on repaint. */
+export function promptProtocolSequences(text: string, capability: string): number[] {
+  const sequences = new Set<number>();
+  let offset = 0;
+  while ((offset = text.indexOf('===COMMANDER:', offset)) !== -1) {
+    // Search the literal prefix once. The anchored body stops at '=' (also
+    // the start of every next candidate), so candidates cannot repeatedly
+    // traverse a shared suffix. Preserve accepted zero-padded panel fields.
+    const token = text.slice(offset).match(/^===COMMANDER:[^\s=]+={3,}/)?.[0];
+    offset += '===COMMANDER:'.length;
+    if (!token) continue;
+    const marker = authenticatedStart(token, capability) ?? matchEndMarker(token);
+    if (marker?.capability === capability && marker.sequence !== undefined) sequences.add(marker.sequence);
+  }
+  return [...sequences];
+}
+
 /** Generate a 256-bit, URL-safe capability for one managed agent session. */
 export function generateProtocolCapability(): string {
   return randomBytes(32).toString('base64url');
@@ -310,6 +348,7 @@ export class ProtocolScanner {
   private contentLines: string[] = [];
   private contentBytes = 0;
   private rawProbeTail = '';
+  private repaintCandidate: { parts: string[]; bytes: number } | null = null;
   private maxContentLines: number;
   private maxContentBytes: number;
 
@@ -321,6 +360,7 @@ export class ProtocolScanner {
       maxContentLines?: number;
       maxContentBytes?: number;
       onRejected?: (msg: RejectedCommanderMessage) => void;
+      logPotentialMarkers?: boolean;
     },
   ) {
     this.maxContentLines = options?.maxContentLines ?? 500;
@@ -343,6 +383,7 @@ export class ProtocolScanner {
     this.clearPendingLine();
     this.rawProbeTail = '';
     this.discardingLine = false;
+    this.repaintCandidate = null;
   }
 
   /**
@@ -372,6 +413,53 @@ export class ProtocolScanner {
   feedLine(line: string): void {
     if (Date.now() < this.mutedUntil) return;
     this.processLine(line);
+  }
+
+  /**
+   * Recover an explicitly repainted header from a stale incoming wrap link.
+   * Never split natural soft wraps, unauthenticated output or a nested frame.
+   * Retained logical text is still parsed first so a wrapped outer header wins.
+   */
+  feedTerminalRow(row: ProtocolTerminalRow): void {
+    if (this.isMuted) return;
+    if (this.repaintCandidate) {
+      const candidate = this.repaintCandidate;
+      candidate.parts.push(row.text);
+      candidate.bytes += Buffer.byteLength(row.text, 'utf8');
+      if (row.wrapsToNext && candidate.bytes <= MAX_PENDING_MARKER_BYTES) return;
+      this.repaintCandidate = null;
+      this.feedTerminalRow({ text: candidate.parts.join(''), wrapsToNext: row.wrapsToNext,
+        startsAfterCursorMove: candidate.bytes <= MAX_PENDING_MARKER_BYTES });
+      return;
+    }
+    if (this.bufferBytes === 0) this.rawProbeTail = '';
+    const normalized = normalizeMarkerLine(row.text);
+    if (row.startsAfterCursorMove && row.wrapsToNext && this.expectedCapability && !this.collecting
+      && !this.discardingLine && !authenticatedStart(row.text, this.expectedCapability)
+      && Buffer.byteLength(row.text, 'utf8') <= MAX_PENDING_MARKER_BYTES
+      && (normalized.startsWith('===COMMANDER:') || (normalized.length > 0 && '===COMMANDER:'.startsWith(normalized)))) {
+      this.repaintCandidate = { parts: [row.text], bytes: Buffer.byteLength(row.text, 'utf8') };
+      return;
+    }
+    if (row.startsAfterCursorMove && this.expectedCapability && !this.collecting
+      && !this.discardingLine && authenticatedStart(row.text, this.expectedCapability)?.sequence !== undefined) {
+      const pending = this.bufferParts.join('');
+      if (authenticatedStart(pending, this.expectedCapability)) {
+        this.feed('\n');
+      } else {
+        this.clearPendingLine();
+        this.rawProbeTail = '';
+      }
+    }
+    if (row.wrapsToNext) {
+      // Unlike raw chunks, this is known to begin a physical row. Preserve
+      // ordinary prefix text too: dropping it could promote a wrapped example.
+      if (this.discardingLine) return;
+      this.appendPendingLine(row.text);
+      this.feed(''); // enforce the same pending-line byte budget
+    } else {
+      this.feed(`${row.text}\n`);
+    }
   }
 
   /** Feed raw PTY data (may contain ANSI codes). */
@@ -457,7 +545,7 @@ export class ProtocolScanner {
 
   private processLine(line: string): void {
     // Record marker-like activity without persisting agent-produced content.
-    if (line.includes('COMMANDER') || line.includes('===')) {
+    if (this.options?.logPotentialMarkers !== false && (line.includes('COMMANDER') || line.includes('==='))) {
       logger.debug(`Scanner[${this.sourcePanel}] potential marker line (${Buffer.byteLength(line, 'utf8')} bytes)`);
     }
 

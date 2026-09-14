@@ -38,11 +38,14 @@ function createPanelHarness() {
     activeTailReplyKeys: new Set<string>(),
     scanner: { isMuted: false },
     vterm: {
-      getTailLogicalLines: vi.fn(() => []),
+      getTailPlainRows: vi.fn(() => []),
     },
   };
 
   panel.buildEmissionKey = TerminalPanel.prototype['buildEmissionKey'];
+  panel.parseProtocolRows = TerminalPanel.prototype['parseProtocolRows'];
+  panel.getProtocolGridRows = TerminalPanel.prototype['getProtocolGridRows'];
+  panel.getProtocolTailRows = TerminalPanel.prototype['getProtocolTailRows'];
   panel.rememberEmissionKey = TerminalPanel.prototype['rememberEmissionKey'];
   panel.rememberProtocolReservation = TerminalPanel.prototype['rememberProtocolReservation'];
   panel.claimProtocolIdentity = TerminalPanel.prototype['claimProtocolIdentity'];
@@ -337,12 +340,12 @@ describe('TerminalPanel reply transport', () => {
 
   it('detects a reply from the rendered tail when grid and scrollback miss it', () => {
     const { panel, emitted } = createPanelHarness();
-    panel.vterm.getTailLogicalLines.mockReturnValue([
+    panel.vterm.getTailPlainRows.mockReturnValue([
       'some unrelated line',
       '✦ ===COMMANDER:REPLY===',
       '  GEMINI_SMOKE_OK',
       '  ===COMMANDER:END===',
-    ]);
+    ].map((text) => ({ text, wrapsToNext: false })));
 
     panel.scanRenderedTailForReplies();
 

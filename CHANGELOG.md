@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Detect authenticated sequenced protocol headers on cursor-addressed terminal
+  redraws without requiring a resize or another repaint, including narrow
+  panels where the header wraps. Preserve genuine wrapped message content.
+- Isolate the OpenCode 1.x transcript from its verified right sidebar so sidebar
+  labels cannot block headers or enter message bodies. Unknown/partial layouts
+  defer routing and show a waiting indicator instead of guessing a text region.
+- Share physical-row parsing across live scans, history and echo snapshots;
+  preserve capability, nested-frame, sequence and replay checks. Reserve inline
+  prompt examples conservatively and bound malformed-marker scanning.
+
+These changes are not included in the published 0.1.9 package.
+
 ## 0.1.9
 
 ### Fixed

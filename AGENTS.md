@@ -63,6 +63,14 @@ new counter. Template role guidance does not override explicit custom targets.
 Restart Commander after upgrading; Node.js 20 is unsupported, not the proven
 cause of the reproduced watcher freeze.
 
+Unreleased source additionally recovers cursor-addressed, authenticated
+sequenced headers across stale wrap links without resize. Generic terminal
+wraps remain unchanged; inline prompt identities are reserved conservatively.
+Grid, tail and snapshots share physical-row protocol parsing. OpenCode's
+recognized sidebar is projected by display columns; unknown/partial layouts
+defer with a panel-header indicator, never raw-row fallback. These fixes are
+not in npm 0.1.9. See docs/qa.md for the acceptance cases and limitations.
+
 ## Key Conventions
 
 - All imports use `.js` extension (ESM)

@@ -59,6 +59,12 @@ feedback, and teaches exact routing addresses for model-labelled profiles.
 Registry publication is a separate step; check the npm version listing before
 installing, or build the current source below.
 
+The current **unreleased source** additionally fixes resize-dependent protocol
+detection and OpenCode sidebar contamination. This is not part of npm 0.1.9.
+For OpenCode, an unrecognized or partially painted layout pauses routing with
+`Protocol waiting for OpenCode layout`; it never guesses which text to send.
+See the [redraw QA and limitations](docs/qa.md#resize-independent-routing--unreleased).
+
 ### Install version 0.1.9
 
 ```bash

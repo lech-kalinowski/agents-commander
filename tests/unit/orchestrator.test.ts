@@ -308,7 +308,8 @@ describe('Orchestrator', () => {
 
   it('drops REPLY when there is no previous sender', () => {
     const agents = mockAgentManager({ 1: 'codex' });
-    const orchestrator = new Orchestrator({} as never, agents as any) as any;
+    const sourcePanel = mockTerminalPanel(1);
+    const orchestrator = new Orchestrator(mockLayout({ 1: sourcePanel }) as any, agents as any) as any;
     orchestrator.enqueueTask = vi.fn();
 
     const msg: CommanderMessage = {
@@ -323,6 +324,7 @@ describe('Orchestrator', () => {
     orchestrator.handleAgentMessage(msg);
 
     expect(orchestrator.enqueueTask).not.toHaveBeenCalled();
+    expect(sourcePanel._inputs.join('')).toContain('kind=reply status=failed');
   });
 
   // ── BROADCAST routing ───────────────────────────────────────────

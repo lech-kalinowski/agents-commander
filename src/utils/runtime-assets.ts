@@ -102,6 +102,15 @@ export function resolvePtyHelperPath(options: RuntimeAssetLookupOptions): string
   return isReadableRegularFile(helperPath) ? helperPath : null;
 }
 
+export function resolveOpenCodeProtocolPluginPath(options: RuntimeAssetLookupOptions): string | null {
+  const root = lookupRoot(options);
+  if (!root) return null;
+  const pluginPath = options.mode === 'installed'
+    ? path.join(root, 'dist', 'agents', 'opencode-protocol-plugin.js')
+    : path.join(root, 'src', 'agents', 'opencode-protocol-plugin.js');
+  return isReadableRegularFile(pluginPath) ? pluginPath : null;
+}
+
 export function resolveCodexMicroBridgePath(
   options: RuntimeAssetLookupOptions,
 ): string | null {

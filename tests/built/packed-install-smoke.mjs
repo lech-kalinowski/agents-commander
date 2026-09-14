@@ -96,6 +96,7 @@ try {
     'dist/bin/agents-commander.js',
     'dist/index.d.ts',
     'dist/agents/pty-helper.py',
+    'dist/agents/opencode-protocol-plugin.js',
     'dist/hardware/codex-micro-bridge.py',
     'dist/demo/demo-agent.js',
     'docs/codex-micro.md',
@@ -130,7 +131,8 @@ try {
     assert.match(`dist/nested/${repositoryPath}`, repositoryOnlyPath);
   }
   for (const runtimePath of [
-    'dist/demo/demo-agent.js', 'docs/codex-micro.md', 'dist/apex_api.js',
+    'dist/demo/demo-agent.js', 'dist/agents/opencode-protocol-plugin.js',
+    'docs/codex-micro.md', 'dist/apex_api.js',
   ]) {
     assert.doesNotMatch(runtimePath, repositoryOnlyPath);
   }
@@ -177,6 +179,13 @@ try {
   assert.equal(installedMetadata.version, packageMetadata.version);
   assert.equal(installedMetadata.engines.node, '>=22.0.0');
   assert.equal(installedMetadata.license, 'MIT');
+  const installedProtocolPlugin = path.join(installedRoot, 'dist', 'agents', 'opencode-protocol-plugin.js');
+  assert.ok((await fs.lstat(installedProtocolPlugin)).isFile(), 'Installed OpenCode plugin must be a regular file');
+  assert.equal(
+    await fs.readFile(installedProtocolPlugin, 'utf8'),
+    await fs.readFile(path.join(repositoryRoot, 'src', 'agents', 'opencode-protocol-plugin.js'), 'utf8'),
+    'Installed OpenCode plugin must match the reviewed source, not a stale build or workspace substitute',
+  );
   for (const notice of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
     assert.equal(
       await fs.readFile(path.join(installedRoot, notice), 'utf8'),

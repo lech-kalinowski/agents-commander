@@ -137,18 +137,38 @@ with another agent running in a different panel.
   It does not prove the model accepted or acted on the task.
 
   BROADCAST sends one combined queue-admission ACK, not
-  per-target delivery ACKs. Check each delivery in F12 Activity:
+  a completion ACK. Check each delivery in F12 Activity:
     {green-fg}[Commander ACK] kind=broadcast queued=1 targets=Codex CLI in Panel 2{/green-fg}
   Capacity rejection adds status=partial or status=failed,
   rejected counts, rejectedTargets and an error.
+  A later recipient failure also reports kind=broadcast,
+  status=failed scope=recipient stage=delivery, msg and panel.
+  This reports one recipient, not completion of the broadcast.
 
   STATUS accepts a progress update, not a completed task:
     {green-fg}[Commander ACK] kind=status status=accepted text="Processing file 5 of 10..."{/green-fg}
 
   QUERY returns environment text, such as [Commander] PONG.
-  Rejected, unarmed or orphaned frames may have no ACK.
-  Feedback may be shortened for a CLI's input UI.
+  No REPLY window, a gone return session or no broadcast targets
+  returns a failed ACK. Queued recipient closure reports failure.
+  Unarmed, replayed or startup-suppressed frames may have no ACK.
+  Shutdown/gone senders stay quiet; routes are not auto-retried.
   Use REPLY to report work results; do not infer completion from ACKs.
+
+
+{bold}{yellow-fg}OPENCODE TRANSPORT (UNRELEASED SOURCE){/yellow-fg}{/bold}
+
+  Completed assistant text arrives through a bundled local plugin,
+  not the visible viewport. Sidebars/resize cannot complete a frame.
+  Keep header, body and matching END inside one completed text part;
+  parts are never joined across model/tool boundaries.
+  Default body limit: 500 lines / 256 KiB; part transport cap: 1 MiB.
+  Invalid frames require a correction with a fresh counter.
+  Check the panel's Protocol health indicator before Ctrl+P.
+  Connecting: wait. Unavailable: restart this agent.
+  Conversation changed: explicitly inject a fresh key with Ctrl+P.
+  No screen-scanning fallback; no user config file is changed.
+  Other adapters retain terminal scanning. Capture stays opt-in.
 
 
 {bold}{yellow-fg}ACTIVITY AND LOGGING{/yellow-fg}{/bold}

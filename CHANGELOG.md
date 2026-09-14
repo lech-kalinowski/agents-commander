@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Preserve supplementary Unicode characters when Blessed emits split UTF-16
+  keyboard events, including pasted emoji in prompts. Decode fragmented native
+  IPC records with linear scan work so large simultaneous messages do not
+  repeatedly rescan their entire accumulated payload.
+- Read OpenCode protocol candidates from completed assistant text using a
+  bundled launch-local plugin and authenticated private IPC, not virtualized
+  viewport text. Long frames no longer depend on simultaneous visibility of
+  header/body/footer, sidebar cropping, or a later resize. Other adapters also
+  reconcile all five commands across normal-buffer tail/scrollback boundaries.
+- Preserve per-session capabilities, sequenced replay/echo guards and exact
+  target identity. Reject incomplete/mismatched completed parts with bounded
+  feedback; rejected counters stay spent. Never assemble across text parts or
+  fall back to rendered OpenCode output after transport failure.
+- Return explicit failure feedback for missing REPLY routes, empty broadcasts,
+  queued recipient cancellation and later per-recipient broadcast failures.
+  Initial broadcast ACKs still report admission, not model completion.
+- Block protocol injection before key rotation when native transport is not
+  ready. Show transport health and retain explicit recovery; user configuration
+  files and capture consent are unchanged. Bundle the plugin as a runtime asset.
+
+These source changes are **not part of 0.1.10**. Synthetic regression coverage
+does not establish full live-model acceptance; that acceptance and the complete
+release gate are required separately. No npm publication is claimed by this section.
+
 ## 0.1.10
 
 ### Fixed
@@ -18,6 +46,9 @@
 
 This section describes version contents; verify npm publication separately.
 These fixes are not included in 0.1.9.
+The recorded live acceptance covered short two-agent exchanges; it did not
+validate long messages exceeding OpenCode's viewport or all-five-command
+multi-agent collaboration. See the separate unreleased work above.
 
 ## 0.1.9
 

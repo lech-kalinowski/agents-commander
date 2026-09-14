@@ -1,8 +1,121 @@
 # QA coverage and validation checklist
 
+## OpenCode semantic transport — unreleased
+
+This is **unreleased source work after 0.1.10**, not an npm release or a
+completed live acceptance claim. The earlier 0.1.10 evidence below covers short
+SEND/REPLY exchanges only. A subsequent long-frame regression demonstrated that
+OpenCode can virtualize a header out of its viewport before the matching footer
+appears; sidebar projection and a successful short exchange cannot prove that
+such a message or a multi-recipient broadcast was delivered.
+
+The source now reads completed assistant text parts through a bundled OpenCode
+1.18.30 plugin using a private inherited descriptor (fd4), separate from PTY
+input/output and resize control. Node and Bun descriptor handling have separate
+paths. Launch-local inline configuration preserves existing JSON-object fields
+and plugin entries, without editing user files. An explicit fresh protocol
+capability binds one conversation; stale epochs/sessions remain inert. Only
+candidate-containing completed assistant text is examined, not provider history,
+reasoning, tools, user input or a saved transcript. Recording remains off unless
+explicitly enabled at launch.
+
+All OpenCode rendered-grid/tail/scrollback/snapshot/exit fallbacks are disabled
+when this channel is configured, including after a channel error. Transport
+health appears in the panel header. A connecting/unavailable bridge blocks
+protocol injection before key rotation or any prompt write. Transport failure
+requires restarting the agent; a conversation mismatch requires explicit fresh
+Ctrl+P setup. The normal CLI may remain usable even when routing is unavailable.
+
+Each protocol frame must fit inside one completed assistant text part; parts
+are never concatenated across messages or tool boundaries. Default body limits
+remain 500 lines / 256 KiB, with a separate 1 MiB complete-part transport cap and
+bounded IPC queues. Protocol whitespace/control normalization still applies.
+Malformed completed frames return bounded feedback, spend recognized current-key
+counters, and cannot become executable after a correction reuses those counters.
+They must not be partially routed or silently redirected.
+
+New deterministic coverage includes:
+
+- All five verbs with bodies taller than a six-panel viewport, exact Unicode
+  content, no later input/resize, and normal-buffer header/tail boundary cases.
+- Native messages unaffected by sidebar text, clipped overlays, unknown layouts,
+  hidden panels, resize or replayed viewport history. Viewport-only markers are
+  inert; prompt-echo reservations, strict footer checks and session guards remain.
+- Plugin authentication, prompt-before-arm rotation races, failed epochs,
+  unrelated child sessions, bounded reads/writes, transport loss and disposal.
+  The real local PTY fixture checks Node/Bun descriptor inheritance separately
+  from model compliance; Bun is explicitly skipped if unavailable.
+- Orphan REPLY and empty BROADCAST NACKs; queued-recipient cancellation; six-panel
+  broadcast admission followed by individual delivery failures. A later
+  `scope=recipient stage=delivery` notice does not claim broadcast completion.
+  Replaced/gone senders and global shutdown remain quiet.
+- Source/installed runtime plugin lookup, missing/symlinked asset rejection and
+  tarball inclusion. The packed fixture must run on the final built candidate.
+
+Targeted fixtures are `terminal-long-protocol.test.ts`,
+`terminal-opencode-region.test.ts`, `opencode-protocol-plugin.test.ts`,
+`orchestrator-delivery-feedback.test.ts`, `runtime-assets.test.ts`, and
+`tests/integration/opencode-protocol-pty.test.ts`. Run the complete
+`npm run verify` gate on the final source; targeted tests and older counts do not replace it.
+
+**Live acceptance is a separate, opt-in gate for this transport.** Start the normal app,
+not demo/conference mode, and test all five verbs with authorized APEX sessions.
+Use a fixed six-panel geometry and a broadcast longer than the viewport; compare
+every recipient's full body and delivery record, exact SEND/REPLY thread identity,
+STATUS feedback and QUERY response. Repeat after resizing, but never resize or
+send rescue input while waiting for initial delivery. Test busy recipients,
+recipient closure, fresh protocol rotation and clean owned-process teardown.
+Record failures as failures; a model's “sent” claim, a prompt substring, queued
+ACK or successful script exit is not proof of delivery. Do not publish until the
+reviewed final build passes the release gate and required live checks.
+
+### Reproducible real APEX gate (source checkout)
+
+After `npm run verify`, with an existing configured OpenCode/APEX profile and
+provider authorization, use Node.js 24 on the tested macOS host:
+
+```bash
+COMMANDER_LIVE_APEX=1 npm run test:live:apex
+COMMANDER_LIVE_APEX=1 COMMANDER_QA_PANEL_COUNT=16 COMMANDER_QA_STRESS=1 npm run test:live:apex
+```
+
+These commands consume provider tokens. They are deliberately excluded from
+`verify`, CI and npm publication hooks. The harness creates an owned temporary
+workspace, launches the normal app through F2 and F2/P, denies model tools and
+sharing in the final child configuration, and leaves existing user sessions alone.
+It inspects only OpenCode records created for that exact temporary directory;
+no transcript, credentials or capability keys are printed or exported. OpenCode
+may retain its own ordinary local session history. Commander capture stays off.
+
+The 14-case baseline requires all five verbs, all QUERY variants, long
+SEND/REPLY/BROADCAST and Markdown/code/Unicode payloads. Stress adds concurrent
+senders, reply-window ordering, stable IDs after reordering, fullscreen hidden
+recipients, resize replay checks and natural CLI quit. Each routed receipt is
+compared against the complete observed PTY paste, including its source/thread/
+message envelope; a queue-admission ACK or body substring cannot pass.
+
+OpenCode **1.18.30** inserts one trailing ASCII separator after a summarized
+paste (at least three lines or over 150 characters). For that exact version and
+path only, the receipt check allows the complete expected input plus exactly
+one space and reports it separately from byte-exact storage. It never trims
+payloads or tolerates arbitrary additions. Commander output, protocol payloads
+and PTY writes must still match exactly. See the upstream
+[paste insertion](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/component/prompt/index.tsx#L1149-L1212)
+and [placeholder expansion](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/prompt/part.ts#L24-L28).
+
+To test an installed candidate instead of the checkout build, set
+`COMMANDER_QA_PACKAGE_ROOT` to its exact installed package directory. Native
+handshake checks remain enabled. Preserve the candidate hash and final metadata
+report when deciding whether a release is ready; this guide is not a claim that
+every model/provider/version or physical controller has passed.
+
 ## Resize-independent routing — 0.1.10
 
-The source fix recovers a strict, current-capability sequenced header that a
+This section is historical 0.1.10 evidence. Its OpenCode layout-scanning path
+is superseded in unreleased source by the native transport above; its live
+numbers do not validate long messages or that new transport.
+
+The 0.1.10 fix recovers a strict, current-capability sequenced header that a
 CLI explicitly redraws at column zero without erasing an old incoming wrap
 link. Regression cases require the first scheduled scan (50 ms), with no later
 output, resize, panel switch or scroll. They cover all five commands, 25–104
@@ -62,8 +175,8 @@ Earlier acceptance attempts are not counted as passes: one narrow attempt
 timed out without sufficient diagnostics; a subsequent run exposed the
 three-cell idle footer now covered by regressions, and also displayed a
 mismatched footer that was correctly rejected (its origin was not established).
-These tests demonstrate
-the reproduced fixes, not universal model compliance or live Claude/Codex
+These short-message tests demonstrate
+the reproduced fixes, not long broadcast delivery, universal model compliance or live Claude/Codex
 acceptance. Claude-shaped cursor redraws are covered by deterministic tests.
 
 ### Addressing and feedback regression checkpoint — 2026-09-12
@@ -367,7 +480,7 @@ explicitly, not counted as platform validation.
    terminals; existing panels remain. Shared profiles/directories are not
    isolated worktrees or sixteen distinct orchestration roles.
 4. Enable protocol in the intended live sessions and exercise a bounded
-   SEND/REPLY/BROADCAST/QUERY scenario. ACK means admission/delivery as documented,
+   SEND/REPLY/BROADCAST/STATUS/QUERY scenario. ACK means admission/delivery as documented,
    **not** model completion or correctness; inspect per-target Activity.
    Use the current injected sequence format, and complete the redraw checks
    below before treating a recording as a reliable backup.

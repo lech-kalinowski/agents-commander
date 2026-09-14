@@ -42,7 +42,8 @@
 
 ## Quick Start
 
-This README describes **Agents Commander 0.1.10**, under the MIT License.
+This README describes **Agents Commander 0.1.10**, under the MIT License,
+plus explicitly labelled **unreleased** source changes below.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
 The [bulk-launch workflow](#launch-one-profile-in-many-new-panels),
 [bulk protocol setup](#enable-protocol-in-many-agents),
@@ -61,9 +62,16 @@ installing, or build the current source below.
 
 Version **0.1.10** additionally fixes resize-dependent protocol detection and
 OpenCode sidebar contamination. These fixes are not part of 0.1.9.
-For OpenCode, an unrecognized or partially painted layout pauses routing with
-`Protocol waiting for OpenCode layout`; it never guesses which text to send.
-See the [redraw QA and limitations](docs/qa.md#resize-independent-routing--0110).
+That version's OpenCode scanner pauses on unrecognized/partial layouts instead
+of guessing a text region. Its live acceptance covered short exchanges, not
+messages taller than the viewport or a complete multi-agent broadcast workflow.
+See the [historical redraw QA](docs/qa.md#resize-independent-routing--0110).
+
+**Unreleased source:** OpenCode now supplies completed assistant text through a
+bundled, launch-local plugin and private IPC channel, independent of its
+viewport/sidebar. Other adapters retain terminal scanning. The new transport,
+long-message handling and explicit failure feedback are not in npm 0.1.10;
+live acceptance is a separate opt-in gate, not implied by unit tests. See [current transport QA](docs/qa.md#opencode-semantic-transport--unreleased).
 
 ### Install version 0.1.10
 
@@ -113,11 +121,12 @@ cancels without sending keys to the underlying panel. A background Vim exit
 no longer steals keyboard focus from an open dialog; closing that dialog
 returns focus to the replacement file panel.
 
-If a complete protocol block becomes deliverable only after adding panels or
-resizing, update to 0.1.8: it repairs stale soft-wrap boundaries after full-row
-terminal erases. A matching synthetic redraw now reaches the first scheduled
-scan (50 ms with default settings), without additional user input. This is
-local detection latency, not a guarantee of provider response time.
+Resize-dependent messages have had more than one cause. Version 0.1.8 repairs
+stale wraps after full-row erases; 0.1.10 handles cursor-addressed redraws and
+known OpenCode sidebars. Neither establishes delivery of a frame whose header
+has left OpenCode's viewport before its footer appears. The unreleased native
+transport addresses that separate case. Do not treat resizing or an earlier
+short-message test as proof that a long broadcast was delivered.
 
 ### Current source version
 
@@ -358,7 +367,10 @@ A file manager built into every file panel. Browse, copy (`Shift+F6`), move or r
 
 ### Inter-Agent Communication
 
-The killer feature. Agents can **autonomously send tasks to each other** using a lightweight protocol. Routing uses local output markers instead of a separate orchestration API or SDK.
+Agents can **autonomously send tasks to each other** using a lightweight marker
+protocol. No provider orchestration SDK is required. The unreleased OpenCode
+adapter reads completed assistant text through a bundled local plugin; other
+adapters read terminal output. Delivery to agents still uses their real PTYs.
 
 ### Built-in Editor
 
@@ -398,8 +410,10 @@ Version 0.1.9 supplies explicit addresses during protocol injection and
 SEND frames with an unknown short type return a `CommanderError`; mismatched
 known types return a failed ACK. Nothing is silently redirected or replaced.
 Read the feedback, verify the intended recipient, then use a **new counter** for
-a corrected message. Repainting the old frame does not retry it. Malformed,
-unauthorized, oversized, or replayed frames can remain inert without feedback.
+a corrected message. Repainting the old frame does not retry it. Unauthorized
+or replayed frames remain inert and may produce no feedback. Unreleased source
+also reports orphan REPLYs, empty BROADCASTs, and complete OpenCode output with
+invalid framing; use fresh counters after correcting a rejected action.
 
 ### The Protocol
 
@@ -451,7 +465,11 @@ agents
 ===COMMANDER:END:<session-key>:<N>===
 ```
 
-Commander's `ProtocolScanner` watches agent output in real-time, strips ANSI codes, detects these markers across streaming chunks, and routes a message only when its capability matches the currently armed session. The target agent sees:
+Commander's `ProtocolScanner` detects these markers and routes only with the
+currently armed session capability. Other adapters use terminal rows/scrollback;
+unreleased OpenCode uses a completed assistant text part before display wrapping.
+It never joins unrelated parts, messages, reasoning or tool output to invent a
+frame. The target agent sees:
 
 ```
 [From Claude Code in Panel 1 | thread=t1 | msg=m1]: Please write unit tests for the auth module...
@@ -467,6 +485,37 @@ the model accepted the task or completed it. Failed deliveries return
 `status=failed` with an error. BROADCAST's ACK reports queue admission only;
 subsequent per-target delivery outcomes appear in F12 Activity. STATUS returns
 a local `kind=status status=accepted` ACK.
+
+In unreleased source, a later broadcast delivery failure also sends a
+`kind=broadcast status=failed scope=recipient stage=delivery` notice identifying
+that recipient. It does not mean the rest of the broadcast has finished.
+No open REPLY window, a vanished return session, or no broadcast recipients
+returns a failed ACK to the still-current sender. Queued routes cancelled by a
+recipient closing also report failure; shutdown or a gone/replaced sender stays
+quiet. No failure silently redirects, retries or starts a replacement agent.
+
+### OpenCode transport in unreleased source
+
+The bundled plugin is added only to that launch's `OPENCODE_CONFIG_CONTENT`;
+existing JSON-object settings/plugin entries are preserved. Invalid inline JSON
+or plugin-list types fail launch rather than being replaced. User config files
+are not edited. The channel uses an inherited local descriptor, not a network
+listener, transcript file or provider history reader. Capture remains opt-in.
+
+After the agent starts, inject with **Ctrl+P** into its empty ready prompt. A
+connecting/unavailable transport blocks setup before changing its existing key.
+The panel header reports transport health. If unavailable, restart that agent;
+if it reports a changed conversation, explicitly inject fresh instructions.
+There is no screen-scraping fallback after channel failure. Other CLI operations
+can continue, but a visible protocol marker is not evidence of delivery.
+
+Keep each complete header/body/matching END inside one assistant text part.
+Partial parts are not stitched across model/tool boundaries. Default body
+limits remain 500 lines and 256 KiB; a completed source part also has a 1 MiB
+transport cap. Normal protocol whitespace/control normalization still applies.
+Split larger work deliberately into new complete messages with fresh counters;
+do not resend an uncertain action until checking F12/feedback. The integration
+targets OpenCode 1.18.30's completion hook; future CLI changes require validation.
 
 Routing is bidirectional between connected supported sessions.
 

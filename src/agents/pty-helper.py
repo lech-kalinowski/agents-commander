@@ -18,6 +18,7 @@ import termios
 import time
 
 CONTROL_FD = 3
+PROTOCOL_FD = 4
 MAX_TERMINAL_DIMENSION = 10000
 PROCESS_GROUP_TERM_GRACE_SECONDS = 0.5
 PROCESS_GROUP_KILL_GRACE_SECONDS = 0.5
@@ -199,6 +200,16 @@ def main():
 
     cwd, cmd = parse_args(sys.argv[1:])
     control_fd = available_control_fd()
+    # The dedicated OpenCode bridge is not terminal output. Inherit it only
+    # for an explicitly configured launch, and never proxy it through stdout.
+    protocol_fd = None
+    if os.environ.get('AGENTS_COMMANDER_OPENCODE_FD') == str(PROTOCOL_FD):
+        try:
+            os.fstat(PROTOCOL_FD)
+            os.set_inheritable(PROTOCOL_FD, True)
+            protocol_fd = PROTOCOL_FD
+        except OSError:
+            pass
     original_parent_pid = os.getppid()
 
     # Fork with a PTY
@@ -234,6 +245,8 @@ def main():
         sys.exit(127)
 
     # Parent: proxy I/O between stdin/stdout and the PTY master
+    if protocol_fd is not None:
+        os.close(protocol_fd)
     def forward_signal(signum, frame):
         signal_child_process_group(pid, signum)
 

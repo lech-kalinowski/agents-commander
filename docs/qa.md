@@ -1,13 +1,27 @@
 # QA coverage and validation checklist
 
-## OpenCode semantic transport — unreleased
+## OpenCode semantic transport — 0.1.11
 
-This is **unreleased source work after 0.1.10**, not an npm release or a
-completed live acceptance claim. The earlier 0.1.10 evidence below covers short
+This section describes the **0.1.11 transport and its validation**, not proof of
+npm publication. The earlier 0.1.10 evidence below covers short
 SEND/REPLY exchanges only. A subsequent long-frame regression demonstrated that
 OpenCode can virtualize a header out of its viewport before the matching footer
 appears; sidebar projection and a successful short exchange cannot prove that
 such a message or a multi-recipient broadcast was delivered.
+
+Pre-release implementation acceptance on 14 September 2026 used sixteen real
+OpenCode 1.18.30 / APEX sessions in the normal Commander app at 351 × 74 cells.
+It passed all five commands, all QUERY variants, 42-line / 3,863-byte messages,
+Markdown/code/Unicode, concurrent reply windows, stable panel reordering,
+fullscreen hidden recipients, settled resizes without replay and natural CLI
+quit. Strict whole-run totals were exactly **21 commands and 71 deliveries**.
+All owned processes stopped; Commander configuration was unchanged. This is
+bounded OpenCode/APEX evidence, not live Claude/Codex or physical hardware QA.
+
+The corresponding complete automated gate passed **1,659 application tests and
+28 Python tests**, plus development-watch, built/packed-install checks, 100 panels
+in both themes and twenty synthetic PTYs. Each final versioned release artifact
+must pass its own gate and the opt-in live checks below before publication.
 
 The source now reads completed assistant text parts through a bundled OpenCode
 1.18.30 plugin using a private inherited descriptor (fd4), separate from PTY
@@ -92,7 +106,11 @@ SEND/REPLY/BROADCAST and Markdown/code/Unicode payloads. Stress adds concurrent
 senders, reply-window ordering, stable IDs after reordering, fullscreen hidden
 recipients, resize replay checks and natural CLI quit. Each routed receipt is
 compared against the complete observed PTY paste, including its source/thread/
-message envelope; a queue-admission ACK or body substring cannot pass.
+message envelope; a queue-admission ACK or body substring cannot pass. Each
+command must remain fully accepted with all agents ready throughout a 2.5-second
+settling window. Unfiltered event/source counts, exact per-target ledger entries
+and whole-run totals include setup and gaps, rejecting late or other-command
+duplicates. The strict acceptance predicates have 53 offline regression tests.
 
 OpenCode **1.18.30** inserts one trailing ASCII separator after a summarized
 paste (at least three lines or over 150 characters). For that exact version and
@@ -112,7 +130,7 @@ every model/provider/version or physical controller has passed.
 ## Resize-independent routing — 0.1.10
 
 This section is historical 0.1.10 evidence. Its OpenCode layout-scanning path
-is superseded in unreleased source by the native transport above; its live
+is superseded in 0.1.11 by the native transport above; its live
 numbers do not validate long messages or that new transport.
 
 The 0.1.10 fix recovers a strict, current-capability sequenced header that a

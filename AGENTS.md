@@ -39,11 +39,11 @@ npm run verify
 
 The current UI uses TypeScript, blessed, and tsup, with native shallow filesystem watches. Runtime support is Node.js 22+, Python 3, and macOS/Linux/WSL2.
 
-Package version is 0.1.10, under the MIT License. Version 0.1.4 is the legacy
+Package version is 0.1.11, under the MIT License. Version 0.1.4 is the legacy
 baseline; its runtime requirements, features, and bundled license differ.
 Use `node dist/bin/agents-commander.js` or `npm start --` to exercise this checkout,
 not an older global installation. For the versioned package, the install command
-is `npm install -g agents-commander@0.1.10`. Recheck the registry before changing
+is `npm install -g agents-commander@0.1.11`. Recheck the registry before changing
 release claims. A source push is not an npm release.
 F2/N bulk launch, F2/P bulk protocol setup and sequenced replay protection are
 included in 0.1.6, not 0.1.5. Package metadata describes that version's contents;
@@ -71,10 +71,12 @@ recognized sidebar is projected by display columns; unknown/partial layouts
 defer with a panel-header indicator, never raw-row fallback. These fixes are
 not in 0.1.9. Verify publication separately; see docs/qa.md for acceptance cases.
 
-Unreleased source replaces OpenCode viewport routing with a bundled per-launch
+Version 0.1.11 replaces OpenCode viewport routing with a bundled per-launch
 completion-hook plugin and private inherited fd4 IPC. This is not in 0.1.10;
-that release's live evidence was short-message-only. Full live acceptance and
-the complete release gate are required independently; see docs/qa.md. Preserve existing inline
+that release's live evidence was short-message-only. The implementation passed
+strict sixteen-agent APEX acceptance (21 commands / 71 deliveries). Full live
+acceptance and the complete gate remain required for each final release artifact;
+see docs/qa.md. Preserve existing inline
 JSON configuration/plugin entries without writing user config files. Completed
 assistant text parts from the explicitly bound conversation are the only source;
 never stitch across parts or fall back to rendered output when IPC is unavailable.

@@ -10,10 +10,10 @@ npm run build
 npm start
 ```
 
-Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.10,
+Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.11,
 under the MIT License. Version 0.1.4 is the legacy baseline with different
 runtime requirements, features, and bundled license. The versioned install is
-`npm install -g agents-commander@0.1.10`. Run the local build with
+`npm install -g agents-commander@0.1.11`. Run the local build with
 `node dist/bin/agents-commander.js` or `npm start -- <options> <directory>`.
 Do not confuse an older global installation with this checkout; pushing source
 does not publish npm. See `AGENTS.md` and README for the current conventions.
@@ -37,6 +37,14 @@ and matching sequence. Unknown or partial OpenCode layouts defer with a panel
 indicator at every width; never fall back to raw whole-row text. Preserve
 physical-row parsing and echo/replay guards. These are version contents, not
 proof of npm publication; check the registry separately.
+Version 0.1.11 supersedes OpenCode viewport scanning with a bundled per-launch
+completion hook and private inherited IPC. Only completed assistant text from
+the explicitly bound conversation is eligible; no cross-part assembly or
+rendered-output fallback is allowed. Check transport readiness before protocol
+key creation/rotation. Preserve capability, epoch, replay and echo guards.
+Orphan REPLYs, empty broadcasts and later failed broadcast recipients receive
+explicit failure feedback; delivery ACKs do not mean model task completion.
+See `docs/qa.md` for the separate automated and real-provider release gates.
 Restart after upgrading. Do not attribute the reproduced watcher freeze to
 Node.js 20; it remains unsupported, while Node.js 22+ is required.
 

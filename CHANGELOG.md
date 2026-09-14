@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.11
 
 ### Fixed
 
@@ -24,9 +24,12 @@
   ready. Show transport health and retain explicit recovery; user configuration
   files and capture consent are unchanged. Bundle the plugin as a runtime asset.
 
-These source changes are **not part of 0.1.10**. Synthetic regression coverage
-does not establish full live-model acceptance; that acceptance and the complete
-release gate are required separately. No npm publication is claimed by this section.
+These fixes are new in **0.1.11**, not part of 0.1.10. Pre-release implementation
+acceptance included sixteen real OpenCode/APEX sessions, long SEND/REPLY/BROADCAST,
+all QUERY variants and STATUS: exactly 21 commands and 71 delivered messages,
+with settled-window and whole-run duplicate checks. See `docs/qa.md` for scope,
+receipt normalization and separate automated/live gates. Version contents do not
+establish registry publication; verify npm separately.
 
 ## 0.1.10
 
@@ -48,7 +51,7 @@ This section describes version contents; verify npm publication separately.
 These fixes are not included in 0.1.9.
 The recorded live acceptance covered short two-agent exchanges; it did not
 validate long messages exceeding OpenCode's viewport or all-five-command
-multi-agent collaboration. See the separate unreleased work above.
+multi-agent collaboration. See the separate 0.1.11 fixes above.
 
 ## 0.1.9
 

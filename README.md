@@ -42,8 +42,7 @@
 
 ## Quick Start
 
-This README describes **Agents Commander 0.1.10**, under the MIT License,
-plus explicitly labelled **unreleased** source changes below.
+This README describes **Agents Commander 0.1.11**, under the MIT License.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
 The [bulk-launch workflow](#launch-one-profile-in-many-new-panels),
 [bulk protocol setup](#enable-protocol-in-many-agents),
@@ -67,16 +66,18 @@ of guessing a text region. Its live acceptance covered short exchanges, not
 messages taller than the viewport or a complete multi-agent broadcast workflow.
 See the [historical redraw QA](docs/qa.md#resize-independent-routing--0110).
 
-**Unreleased source:** OpenCode now supplies completed assistant text through a
+**New in 0.1.11:** OpenCode now supplies completed assistant text through a
 bundled, launch-local plugin and private IPC channel, independent of its
 viewport/sidebar. Other adapters retain terminal scanning. The new transport,
 long-message handling and explicit failure feedback are not in npm 0.1.10;
-live acceptance is a separate opt-in gate, not implied by unit tests. See [current transport QA](docs/qa.md#opencode-semantic-transport--unreleased).
+live acceptance is a separate opt-in gate, not implied by unit tests. The
+implementation passed a strict sixteen-agent APEX run with 21 commands and 71
+deliveries. See [current transport QA](docs/qa.md#opencode-semantic-transport--0111).
 
-### Install version 0.1.10
+### Install version 0.1.11
 
 ```bash
-npm install -g agents-commander@0.1.10
+npm install -g agents-commander@0.1.11
 agents-commander --version
 agents-commander --doctor .
 agents-commander .
@@ -124,7 +125,7 @@ returns focus to the replacement file panel.
 Resize-dependent messages have had more than one cause. Version 0.1.8 repairs
 stale wraps after full-row erases; 0.1.10 handles cursor-addressed redraws and
 known OpenCode sidebars. Neither establishes delivery of a frame whose header
-has left OpenCode's viewport before its footer appears. The unreleased native
+has left OpenCode's viewport before its footer appears. The 0.1.11 native
 transport addresses that separate case. Do not treat resizing or an earlier
 short-message test as proof that a long broadcast was delivered.
 
@@ -159,12 +160,12 @@ prove that a physical controller or a particular model is ready.
 
 ### Upgrading from 0.1.4
 
-Version 0.1.4 advertised Node.js 18+; **0.1.10 requires Node.js 22+ and Python 3**,
-as did 0.1.5–0.1.9. Upgrade Node before installing 0.1.10. The older package supported only
+Version 0.1.4 advertised Node.js 18+; **0.1.11 requires Node.js 22+ and Python 3**,
+as did 0.1.5–0.1.10. Upgrade Node before installing 0.1.11. The older package supported only
 `--theme`, `--panels` (2, 3, or 4), and `--show-hidden`, plus help/version.
 The doctor, conference/demo modes, adaptive density, 100-panel workspace,
 OpenCode adapter, Codex Micro integration, and capture/dataset commands described
-here arrived in 0.1.5 and remain in 0.1.10, not 0.1.4. Bulk launch, bulk protocol
+here arrived in 0.1.5 and remain in 0.1.11, not 0.1.4. Bulk launch, bulk protocol
 setup and sequenced replay protection were added in 0.1.6.
 
 Panel controls have also changed: F4 toggles fullscreen, F6 clones a fresh agent
@@ -182,7 +183,7 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 
 ## Requirements
 
-For version 0.1.10:
+For version 0.1.11:
 
 - Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
@@ -368,7 +369,7 @@ A file manager built into every file panel. Browse, copy (`Shift+F6`), move or r
 ### Inter-Agent Communication
 
 Agents can **autonomously send tasks to each other** using a lightweight marker
-protocol. No provider orchestration SDK is required. The unreleased OpenCode
+protocol. No provider orchestration SDK is required. The 0.1.11 OpenCode
 adapter reads completed assistant text through a bundled local plugin; other
 adapters read terminal output. Delivery to agents still uses their real PTYs.
 
@@ -411,7 +412,7 @@ SEND frames with an unknown short type return a `CommanderError`; mismatched
 known types return a failed ACK. Nothing is silently redirected or replaced.
 Read the feedback, verify the intended recipient, then use a **new counter** for
 a corrected message. Repainting the old frame does not retry it. Unauthorized
-or replayed frames remain inert and may produce no feedback. Unreleased source
+or replayed frames remain inert and may produce no feedback. Version 0.1.11
 also reports orphan REPLYs, empty BROADCASTs, and complete OpenCode output with
 invalid framing; use fresh counters after correcting a rejected action.
 
@@ -467,7 +468,7 @@ agents
 
 Commander's `ProtocolScanner` detects these markers and routes only with the
 currently armed session capability. Other adapters use terminal rows/scrollback;
-unreleased OpenCode uses a completed assistant text part before display wrapping.
+OpenCode in 0.1.11 uses a completed assistant text part before display wrapping.
 It never joins unrelated parts, messages, reasoning or tool output to invent a
 frame. The target agent sees:
 
@@ -486,7 +487,7 @@ the model accepted the task or completed it. Failed deliveries return
 subsequent per-target delivery outcomes appear in F12 Activity. STATUS returns
 a local `kind=status status=accepted` ACK.
 
-In unreleased source, a later broadcast delivery failure also sends a
+In 0.1.11, a later broadcast delivery failure also sends a
 `kind=broadcast status=failed scope=recipient stage=delivery` notice identifying
 that recipient. It does not mean the rest of the broadcast has finished.
 No open REPLY window, a vanished return session, or no broadcast recipients
@@ -494,7 +495,7 @@ returns a failed ACK to the still-current sender. Queued routes cancelled by a
 recipient closing also report failure; shutdown or a gone/replaced sender stays
 quiet. No failure silently redirects, retries or starts a replacement agent.
 
-### OpenCode transport in unreleased source
+### OpenCode transport in 0.1.11
 
 The bundled plugin is added only to that launch's `OPENCODE_CONFIG_CONTENT`;
 existing JSON-object settings/plugin entries are preserved. Invalid inline JSON
@@ -986,7 +987,7 @@ privacy precautions before sharing logs or agent output.
 Open source under the [MIT License](LICENSE), including commercial use. Retain
 the copyright and permission notice when redistributing the software; see
 [third-party notices](THIRD_PARTY_NOTICES.md) for included third-party material.
-Version 0.1.10 uses MIT. Versions 0.1.5–0.1.9 also used MIT.
+Version 0.1.11 uses MIT. Versions 0.1.5–0.1.10 also used MIT.
 Earlier published packages retain the license bundled with those versions;
 updating the source does not relicense older artifacts.
 

@@ -1,5 +1,71 @@
 # QA coverage and validation checklist
 
+## Resize-independent routing — 0.1.10
+
+The source fix recovers a strict, current-capability sequenced header that a
+CLI explicitly redraws at column zero without erasing an old incoming wrap
+link. Regression cases require the first scheduled scan (50 ms), with no later
+output, resize, panel switch or scroll. They cover all five commands, 25–104
+column headers, exact Unicode/space-preserving bodies, history boundaries,
+hidden panels, echo reservations and no re-execution after repaint/resize.
+
+Natural soft wraps are not treated as new commands. Nested markers remain
+content: an incomplete outer frame is deliberately not reset by a later
+header. Fresh actions still require a fresh sequence. Terminal cursor
+provenance is not a new authorization mechanism.
+
+OpenCode's known 1.x layout is checked against the 1.18.30 source: the right
+sidebar is a separate 42-cell region. Its recognized footer, background and
+padding determine a consistent display-cell crop for header, body, footer,
+tail and snapshots. Unknown/partial layouts defer rather than stripping
+arbitrary suffixes. A narrow sidebar overlay is not a complete transcript.
+Even a fresh narrow session requires a recognized full-width prompt footer.
+A partial 42-cell sidebar background invalidates a stale full-width footer;
+six additional regressions check that clipped bodies neither route nor become
+echo snapshots, and that a complete repaint can deliver the original body once.
+Nonstandard themes, footer plugins or future layout changes may require a
+follow-up adaptation; a panel header reports `Protocol waiting for OpenCode
+layout`. Wait for the prompt to finish drawing or manually hide the sidebar
+(OpenCode's default leader Ctrl+X, release, then B). Never blindly resend an
+old action after changing the layout: check Activity first.
+
+Live acceptance must keep geometry fixed between task submission and delivery,
+assert that the wide OpenCode sidebar is actually visible, and compare exact
+SEND/REPLY bodies and thread identity. A substring in a prompt is insufficient.
+These fixes are included in **0.1.10**, not 0.1.9. Verify registry publication
+separately; restart Commander after building or upgrading.
+
+The initial validation on macOS / Node.js 24 (2026-09-14) passed 1,471
+application tests across 112 files, 28 Python tests, typecheck, development
+watch, build, built CLI isolation, packaged keyboard/template checks,
+100-panel stress in both themes and twenty synthetic PTYs with cleanup.
+The restricted-sandbox run could not perform macOS metadata copying/native
+watches; the complete host-permission run, not that failed run, is the gate.
+Independent code review checked redraw provenance, authorization, nested
+frames, echo reservations, malformed-input complexity and sidebar projection.
+
+The final 0.1.10 host-permission gate repeated the same checks successfully
+with **1,477 application tests across 112 files** after partial-overlay
+hardening and release-documentation corrections. Runtime dependency audit
+reported zero advisories on 2026-09-14. These are automated/source checks;
+the exact release archive and registry publication are verified separately.
+
+Real OpenCode/APEX acceptance used the normal welcome/F2/protocol workflow in
+isolated owned PTYs with model tools denied and recording off. Fixed 213×57
+with both sidebars visible delivered an exact SEND/REPLY pair in 4.006 s.
+The final 118×57 run delivered an exact pair in 3.628 s without any intervening
+input or resize; after resizing wide and back, both layout blockers cleared
+and a **new** exact pair delivered in 2.663 s. Old messages did not replay.
+Owned processes were stopped and Commander configuration remained unchanged.
+
+Earlier acceptance attempts are not counted as passes: one narrow attempt
+timed out without sufficient diagnostics; a subsequent run exposed the
+three-cell idle footer now covered by regressions, and also displayed a
+mismatched footer that was correctly rejected (its origin was not established).
+These tests demonstrate
+the reproduced fixes, not universal model compliance or live Claude/Codex
+acceptance. Claude-shaped cursor redraws are covered by deterministic tests.
+
 ### Addressing and feedback regression checkpoint — 2026-09-12
 
 The source fix for the mixed P1/P2 OpenCode + P3 Claude + P4 Codex layout passed

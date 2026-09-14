@@ -90,6 +90,59 @@ afterEach(() => {
 });
 
 describe('TerminalPanel session-scoped protocol replay protection', () => {
+  it.each(['SEND:codex:4', 'REPLY', 'BROADCAST', 'STATUS', 'QUERY'])(
+    'detects a cursor-addressed %s repaint without erase, resize or later output', (type) => {
+      vi.useFakeTimers();
+      const fixture = createFixture();
+      try {
+        const child = fixture.launch();
+        fixture.panel.setProtocolCapability(capability);
+        child.stdout.emit('data', Buffer.from(clearViewport + 'x'.repeat(100) + 'old continuation'));
+        vi.advanceTimersByTime(50);
+        const body = 'hello from a repainted row';
+        child.stdout.emit('data', Buffer.from(`\x1b[2;1H${frame(type, body, capability, 1)}`));
+        vi.advanceTimersByTime(50);
+        expect(fixture.emitted).toHaveBeenCalledOnce();
+        expect(fixture.emitted.mock.calls[0][0]).toMatchObject({ content: body, sequence: 1 });
+        // Reflow, scrolling and a later redraw retain the already executed identity.
+        fixture.panel.vterm.resize(99, 30);
+        fixture.render(child, frame(type, body, capability, 1));
+        child.stdout.emit('data', Buffer.from('\r\n'.repeat(40)));
+        vi.advanceTimersByTime(20000);
+        expect(fixture.emitted).toHaveBeenCalledOnce();
+      } finally { fixture.dispose(); }
+    },
+  );
+
+  it('does not promote an inline example that naturally wraps before its header', () => {
+    vi.useFakeTimers();
+    const fixture = createFixture();
+    try {
+      const child = fixture.launch();
+      fixture.panel.setProtocolCapability(capability);
+      child.stdout.emit('data', Buffer.from(clearViewport + 'Example: '.padEnd(100) + frame('REPLY', 'not an action', capability, 1)));
+      vi.advanceTimersByTime(50);
+      expect(fixture.emitted).not.toHaveBeenCalled();
+    } finally { fixture.dispose(); }
+  });
+
+  it.each(['REPLY', `SEND:codex:${'0'.repeat(300)}4`])('reserves inline %s examples even if a TUI repaints them at column zero', (type) => {
+    vi.useFakeTimers();
+    const fixture = createFixture();
+    try {
+      const child = fixture.launch();
+      fixture.panel.setProtocolCapability(capability);
+      const example = frame(type, 'quoted example', capability, 1);
+      fixture.panel.reserveProtocolTextForEcho(`Example only: ${example}`);
+      child.stdout.emit('data', Buffer.from(clearViewport + 'x'.repeat(100) + 'old continuation'));
+      child.stdout.emit('data', Buffer.from(`\x1b[2;1H${example}`));
+      vi.advanceTimersByTime(50);
+      expect(fixture.emitted).not.toHaveBeenCalled();
+      fixture.render(child, frame('REPLY', 'real response', capability, 2));
+      expect(fixture.emitted).toHaveBeenCalledOnce();
+    } finally { fixture.dispose(); }
+  });
+
   it('detects a complete Claude-style redraw on the first scheduled scan without further output', () => {
     vi.useFakeTimers();
     const fixture = createFixture();

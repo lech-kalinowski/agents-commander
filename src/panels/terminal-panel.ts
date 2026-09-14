@@ -6,6 +6,7 @@ import { StringDecoder } from 'node:string_decoder';
 import type { Theme, AppConfig, OrchestrationConfig } from '../config/types.js';
 import type { AgentType } from '../agents/types.js';
 import { VTerm } from './vterm.js';
+import { OpenCodeRegionDetector, projectOpenCodeRows } from './opencode-region.js';
 import {
   ProtocolScanner,
   isAgentType,
@@ -19,6 +20,8 @@ import {
   isWithinProtocolContentBudget,
   looksLikeInstructionEcho,
   isReportableUnknownAgentType,
+  promptProtocolSequences,
+  type ProtocolTerminalRow,
   type ProtocolEvent,
   type CommanderMessage,
   type MessageType,
@@ -208,6 +211,8 @@ export class TerminalPanel {
 
   // ── VTerm-based protocol scanning ────────────────────────────
   private scannerEnabled = false;
+  private openCodeRegion?: OpenCodeRegionDetector;
+  private protocolLayoutBlocked = false;
   private lastScrollbackIndex = 0;
   private gridScanTimer: ReturnType<typeof setTimeout> | null = null;
   private activeGridProtocolKeys = new Set<string>();
@@ -648,6 +653,8 @@ export class TerminalPanel {
       // Protocol scanning now reads from VTerm (clean grid/scrollback)
       // instead of raw PTY data, avoiding TUI rendering artifacts.
       this.scannerEnabled = enableProtocolScanner;
+      this.openCodeRegion = undefined;
+      this.protocolLayoutBlocked = false;
       this.lastScrollbackIndex = this.vterm.primaryScrollbackStartIndex;
       this.activeGridProtocolKeys.clear();
       this.activeTailReplyKeys.clear();
@@ -825,7 +832,7 @@ export class TerminalPanel {
         this.lastScrollbackIndex = this.vterm.primaryScrollbackStartIndex;
         continue;
       }
-      scanner.feed(`${row.text}${row.wrapsToNext ? '' : '\n'}`);
+      scanner.feedTerminalRow(row);
       if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
       this.lastScrollbackIndex++;
     }
@@ -861,141 +868,65 @@ export class TerminalPanel {
     const scanner = this.scanner;
     const vterm = this.vterm;
 
-    const lines = this.vterm.getGridLogicalLines();
+    const messages = this.parseProtocolRows(this.getProtocolGridRows());
     const visibleKeys = new Set<string>();
-    let startIdx = -1;
-    let msgType: MessageType = 'send';
-    let capability: string | null = null;
-    let sequence: number | undefined;
-    let target: { agent: string; panel: number } | null = null;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-
-      // Only look for start markers when not already collecting
-      if (startIdx < 0) {
-        // ── SEND:agent:panel ──
-        const startMatch = matchSendStart(line);
-        if (startMatch && (isAgentType(startMatch[1])
-          || (this.protocolCapability && isReportableUnknownAgentType(startMatch[1])))
-          && (!this.protocolCapability || startMatch[3] === this.protocolCapability)) {
-          const panelNum = parseProtocolPanelId(startMatch[2]);
-          if (panelNum !== null) {
-            startIdx = i;
-            msgType = 'send';
-            capability = startMatch[3] ?? null;
-            sequence = startMatch[4] === undefined ? undefined : Number(startMatch[4]);
-            target = { agent: startMatch[1], panel: panelNum };
-          }
-          continue;
-        }
-
-        // ── REPLY ──
-        const replyMarker = matchReplyMarker(line);
-        if (replyMarker && (!this.protocolCapability || replyMarker.capability === this.protocolCapability)) {
-          startIdx = i;
-          msgType = 'reply';
-          capability = replyMarker.capability;
-          sequence = replyMarker.sequence;
-          target = null;
-          continue;
-        }
-
-        // ── BROADCAST ──
-        const broadcastMarker = matchBroadcastMarker(line);
-        if (broadcastMarker && (!this.protocolCapability || broadcastMarker.capability === this.protocolCapability)) {
-          startIdx = i;
-          msgType = 'broadcast';
-          capability = broadcastMarker.capability;
-          sequence = broadcastMarker.sequence;
-          target = null;
-          continue;
-        }
-
-        // ── STATUS ──
-        const statusMarker = matchStatusMarker(line);
-        if (statusMarker && (!this.protocolCapability || statusMarker.capability === this.protocolCapability)) {
-          startIdx = i;
-          msgType = 'status';
-          capability = statusMarker.capability;
-          sequence = statusMarker.sequence;
-          target = null;
-          continue;
-        }
-
-        // ── QUERY ──
-        const queryMarker = matchQueryMarker(line);
-        if (queryMarker && (!this.protocolCapability || queryMarker.capability === this.protocolCapability)) {
-          startIdx = i;
-          msgType = 'query';
-          capability = queryMarker.capability;
-          sequence = queryMarker.sequence;
-          target = null;
-          continue;
-        }
-      }
-
-      if (startIdx >= 0 && isEndMarker(line, capability, sequence)) {
-        const contentLines = lines.slice(startIdx + 1, i);
-        if (!this.protocolContentWithinLimits(contentLines)) {
-          startIdx = -1;
-          capability = null;
-          sequence = undefined;
-          target = null;
-          continue;
-        }
-        const content = contentLines.join('\n').trim();
-        const canonical = TerminalPanel.canonicalizeContent(content);
-        const key = this.buildEmissionKey(
-          msgType,
-          target?.agent ?? 'generic',
-          target?.panel ?? -1,
-          canonical,
-          capability,
-          sequence,
-        );
-        visibleKeys.add(key);
-        if (msgType === 'reply') {
-          this.cancelPendingReplyEmission(key);
-        }
-
-        logger.info(
-          `GridScan[${this.panelIndex}]: detected ${msgType}` +
-          (target ? ` ${target.agent}:${target.panel + 1}` : '') +
-          ` (${content.length} chars)`,
-        );
-
-        if (!this.activeGridProtocolKeys.has(key)) {
-          const common = {
-            sourcePanel: this.panelIndex,
-            sourceAgent: this.agentName,
-            targetPanel: target?.panel ?? -1,
-            content,
-            ...(capability ? { capability } : {}),
-            ...(sequence === undefined ? {} : { sequence }),
-          };
-          const agent = target?.agent ?? 'generic';
-          if (isAgentType(agent)) {
-            this.emitDeduped({ ...common, type: msgType, targetAgent: agent }, 'grid');
-          } else if (msgType === 'send' && this.protocolCapability) {
-            this.emitDeduped({
-              ...common, type: 'send', targetAgent: agent, rejection: 'unknown_agent_type',
-            }, 'grid');
-          }
-          if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
-        } else {
-          this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
-        }
-
-        startIdx = -1;
-        capability = null;
-        sequence = undefined;
-        target = null;
+    for (const message of messages) {
+      const canonical = TerminalPanel.canonicalizeContent(message.content);
+      const key = this.buildEmissionKey(
+        message.type, message.targetAgent, message.targetPanel,
+        canonical,
+        message.capability ?? null, message.sequence,
+      );
+      visibleKeys.add(key);
+      if (message.type === 'reply') this.cancelPendingReplyEmission(key);
+      if (!this.activeGridProtocolKeys.has(key)) {
+        logger.info(`GridScan[${this.panelIndex}]: detected ${message.type} (${message.content.length} chars)`);
+        this.emitDeduped(message, 'grid');
+        if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
+      } else {
+        this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
       }
     }
 
     this.activeGridProtocolKeys = visibleKeys;
     this.scanRenderedTailForReplies();
+  }
+
+  /** One bounded parser for grid, history and snapshots; no alternate regex recovery. */
+  private parseProtocolRows(rows: readonly ProtocolTerminalRow[]): ProtocolEvent[] {
+    const messages: ProtocolEvent[] = [];
+    if (!rows.some((row) => row.text.includes('COMMANDER') || row.text.includes('==='))) return messages;
+    const parser = new ProtocolScanner(this.panelIndex, this.agentName, (message) => messages.push(message), {
+      maxContentLines: this.orchConfig.maxContentLines,
+      maxContentBytes: this.orchConfig.maxContentBytes,
+      onRejected: (message) => messages.push(message),
+      logPotentialMarkers: false,
+    });
+    if (this.protocolCapability) parser.setProtocolCapability(this.protocolCapability);
+    for (const row of rows) parser.feedTerminalRow(row);
+    // A snapshot may end on a full-width footer without a trailing newline.
+    parser.feed('\n');
+    return messages;
+  }
+
+  private getProtocolGridRows(): ProtocolTerminalRow[] {
+    if (this.agentType !== 'opencode' || !this.vterm.inAltScreen) return this.vterm.getGridPlainRows();
+    this.openCodeRegion ??= new OpenCodeRegionDetector();
+    const rows = this.vterm.getGridCellRows();
+    // A partially painted/unknown sidebar must never leak into the payload.
+    const projected = projectOpenCodeRows(rows, this.openCodeRegion.detect(rows, this.vterm.colCount));
+    const blocked = this.protocolCapability != null && projected === null;
+    if (blocked !== this.protocolLayoutBlocked) {
+      this.protocolLayoutBlocked = blocked;
+      this.updateHeader();
+      this.scheduleRender();
+    }
+    return projected ?? [];
+  }
+
+  private getProtocolTailRows(): ProtocolTerminalRow[] {
+    if (this.vterm.inAltScreen) return this.getProtocolGridRows();
+    return this.vterm.getTailPlainRows();
   }
 
   /** Throttled render — max 15fps to keep UI responsive. */
@@ -1053,6 +984,8 @@ export class TerminalPanel {
     const pid = this.proc ? ` pid=${this.proc.pid}` : '';
     const activity = this.protocolReplayWarningShown
       ? '  |  {red-fg}Protocol limit: restart agent{/red-fg}'
+      : this.protocolLayoutBlocked
+      ? '  |  {yellow-fg}Protocol waiting for OpenCode layout{/yellow-fg}'
       : this.commanderActivityLabel
       ? `  |  {yellow-fg}${this.commanderActivityLabel}{/yellow-fg}`
       : '  |  Type directly  ^C=Int';
@@ -1374,6 +1307,7 @@ export class TerminalPanel {
    */
   markProtocolTextAsProcessed(text: string): void {
     if (!this.scannerEnabled || !text.includes('COMMANDER')) return;
+    this.reserveProtocolTextForEcho(text);
     if (text.includes('[Agents Commander]')) {
       this.instructionEchoGuardUntil = Math.max(
         this.instructionEchoGuardUntil,
@@ -1392,6 +1326,11 @@ export class TerminalPanel {
    */
   reserveProtocolTextForEcho(text: string): void {
     if (!this.scannerEnabled || !text.includes('COMMANDER')) return;
+    if (this.protocolCapability) {
+      for (const sequence of promptProtocolSequences(text, this.protocolCapability)) {
+        this.rememberProtocolReservation(`seq:${this.protocolCapability}:${sequence}`, this.orchConfig.ackTimeout);
+      }
+    }
     this.reserveProtocolLinesForEcho(
       text.split(/\r?\n/),
       Math.max(this.orchConfig.ackTimeout, this.orchConfig.dedupWindow * 4, this.orchConfig.injectionGrace),
@@ -1411,21 +1350,15 @@ export class TerminalPanel {
    */
   private snapshotGridAsProcessed(): void {
     if (!this.scannerEnabled) return;
-
-    const lines = this.vterm.getGridLogicalLines();
-
-    // Fast path: skip regex matching if no potential markers on grid
-    if (!lines.some((l) => l.includes('COMMANDER'))) {
-      this.activeGridProtocolKeys.clear();
-      this.activeTailReplyKeys.clear();
-      return;
-    }
-
-    this.activeGridProtocolKeys = this.markProtocolLinesAsProcessed(lines, this.orchConfig.dedupWindow);
-    this.activeTailReplyKeys = this.markTailRepliesAsProcessed(
-      this.vterm.getTailLogicalLines(120),
-      this.orchConfig.dedupWindow,
-    );
+    const mark = (messages: ProtocolEvent[]) => new Set(messages.map((message) => {
+      const key = this.buildEmissionKey(message.type, message.targetAgent, message.targetPanel,
+        TerminalPanel.canonicalizeContent(message.content), message.capability ?? null, message.sequence);
+      this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
+      return key;
+    }));
+    this.activeGridProtocolKeys = mark(this.parseProtocolRows(this.getProtocolGridRows()));
+    this.activeTailReplyKeys = mark(this.parseProtocolRows(this.getProtocolTailRows())
+      .filter((message) => message.type === 'reply'));
   }
 
   private markProtocolLinesAsProcessed(lines: string[], ttlMs: number): Set<string> {
@@ -1555,62 +1488,20 @@ export class TerminalPanel {
     const scanner = this.scanner;
     const vterm = this.vterm;
 
-    const tailLines = this.vterm.getTailLogicalLines(120);
+    const messages = this.parseProtocolRows(this.getProtocolTailRows());
     const visibleKeys = new Set<string>();
-    let startIdx = -1;
-    let capability: string | null = null;
-    let sequence: number | undefined;
-
-    for (let i = 0; i < tailLines.length; i++) {
-      const line = tailLines[i].replace(/\x1b\[[0-9;]*m/g, '');
-
-      if (startIdx < 0) {
-        const replyMarker = matchReplyMarker(line);
-        if (replyMarker && (!this.protocolCapability || replyMarker.capability === this.protocolCapability)) {
-          startIdx = i;
-          capability = replyMarker.capability;
-          sequence = replyMarker.sequence;
-        }
-        continue;
-      }
-
-      if (isEndMarker(line, capability, sequence)) {
-        const contentLines = tailLines
-          .slice(startIdx + 1, i)
-          .map((tailLine) => tailLine.replace(/\x1b\[[0-9;]*m/g, ''));
-        if (!this.protocolContentWithinLimits(contentLines)) {
-          startIdx = -1;
-          capability = null;
-          sequence = undefined;
-          continue;
-        }
-        const content = contentLines.join('\n').trim();
-        const canonical = TerminalPanel.canonicalizeContent(content);
-        const key = this.buildEmissionKey('reply', 'generic', -1, canonical, capability, sequence);
-        visibleKeys.add(key);
-        this.cancelPendingReplyEmission(key);
-
-        logger.info(`TailScan[${this.panelIndex}]: detected reply (${content.length} chars)`);
-
-        if (!this.activeTailReplyKeys.has(key) && !this.activeGridProtocolKeys.has(key)) {
-          this.emitDeduped({
-            type: 'reply',
-            sourcePanel: this.panelIndex,
-            sourceAgent: this.agentName,
-            targetAgent: 'generic',
-            targetPanel: -1,
-            content,
-            ...(capability ? { capability } : {}),
-            ...(sequence === undefined ? {} : { sequence }),
-          }, 'tail');
-          if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
-        } else {
-          this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
-        }
-
-        startIdx = -1;
-        capability = null;
-        sequence = undefined;
+    for (const message of messages) {
+      if (message.type !== 'reply') continue;
+      const canonical = TerminalPanel.canonicalizeContent(message.content);
+      const key = this.buildEmissionKey('reply', 'generic', -1, canonical, message.capability ?? null, message.sequence);
+      visibleKeys.add(key);
+      this.cancelPendingReplyEmission(key);
+      if (!this.activeTailReplyKeys.has(key) && !this.activeGridProtocolKeys.has(key)) {
+        logger.info(`TailScan[${this.panelIndex}]: detected reply (${message.content.length} chars)`);
+        this.emitDeduped(message, 'tail');
+        if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
+      } else {
+        this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
       }
     }
 
@@ -1869,7 +1760,7 @@ export class TerminalPanel {
       // The primary scanner has consumed scrollback only. On close its final
       // grid rows can be finalized too, including a block spanning the boundary.
       for (const row of this.vterm.getGridPlainRows()) {
-        this.scanner?.feed(`${row.text}${row.wrapsToNext ? '' : '\n'}`);
+        this.scanner?.feedTerminalRow(row);
         if (this.proc !== child) return;
       }
     }

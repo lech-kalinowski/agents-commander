@@ -10,10 +10,10 @@ npm run build
 npm start
 ```
 
-Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.9,
+Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.10,
 under the MIT License. Version 0.1.4 is the legacy baseline with different
 runtime requirements, features, and bundled license. The versioned install is
-`npm install -g agents-commander@0.1.9`. Run the local build with
+`npm install -g agents-commander@0.1.10`. Run the local build with
 `node dist/bin/agents-commander.js` or `npm start -- <options> <directory>`.
 Do not confuse an older global installation with this checkout; pushing source
 does not publish npm. See `AGENTS.md` and README for the current conventions.
@@ -31,6 +31,12 @@ and complete Claude feedback instead of panel-width truncation. Never alias
 model names to adapters, silently redirect messages, or replace a mismatched
 session. Rejected frames share replay/echo guards; corrected actions need a
 new counter. Template role guidance does not override explicit custom targets.
+Version 0.1.10 fixes resize-dependent protocol detection and OpenCode sidebar
+contamination. Cursor-addressed headers still require the current capability
+and matching sequence. Unknown or partial OpenCode layouts defer with a panel
+indicator at every width; never fall back to raw whole-row text. Preserve
+physical-row parsing and echo/replay guards. These are version contents, not
+proof of npm publication; check the registry separately.
 Restart after upgrading. Do not attribute the reproduced watcher freeze to
 Node.js 20; it remains unsupported, while Node.js 22+ is required.
 

@@ -34,12 +34,23 @@ interface Cell {
   style: CellStyle;
   /** True when terminal output explicitly occupied this display cell. */
   occupied: boolean;
+  /** Provenance of a column-zero write, independent of DEC wrap state. */
+  startsAfterCursorMove?: true;
 }
 
 export interface VTermPlainRow {
   text: string;
   /** True when DEC autowrap continues this physical row into the next row. */
   wrapsToNext: boolean;
+  /** The first cell was written after explicit cursor movement, not autowrap. */
+  startsAfterCursorMove?: boolean;
+}
+
+export interface VTermCellRow {
+  /** Detached display-column cells; a wide glyph continuation has char ''. */
+  readonly cells: ReadonlyArray<{ readonly char: string; readonly bg: number }>;
+  readonly wrapsToNext: boolean;
+  readonly startsAfterCursorMove?: boolean;
 }
 
 // ── Style helpers ────────────────────────────────────────────────
@@ -157,10 +168,12 @@ interface SavedScreen {
   gridWrapsToNext: boolean[];
   scrollback: string[];
   scrollbackWrapsToNext: boolean[];
+  scrollbackStartsAfterCursorMove: boolean[];
   scrollbackStartIndex: number;
   cursorRow: number;
   cursorCol: number;
   wrapPending: boolean;
+  cursorMovePending: boolean;
   style: CellStyle;
   scrollTop: number;
   scrollBottom: number;
@@ -184,6 +197,7 @@ export class VTerm {
   private cursorCol = 0;
   private scrollback: string[] = [];
   private scrollbackWrapsToNext: boolean[] = [];
+  private scrollbackStartsAfterCursorMove: boolean[] = [];
   /** Absolute index of the first retained scrollback row. */
   private _scrollbackStartIndex = 0;
   private maxScrollback: number;
@@ -192,6 +206,8 @@ export class VTerm {
   private savedCursor: SavedCursor | null = null;
   /** Delayed autowrap flag: the next printable character starts a new line. */
   private wrapPending = false;
+  /** Consumed by the next printable; ordinary line flow cannot set it. */
+  private cursorMovePending = false;
 
   // ── Scroll region ─────────────────────────────────────────────
   private scrollTop = 0;
@@ -394,8 +410,18 @@ export class VTerm {
       return {
         text: this.renderRowPlain(row, wrapsToNext),
         wrapsToNext,
+        ...(row[0]?.startsAfterCursorMove ? { startsAfterCursorMove: true } : {}),
       };
     });
+  }
+
+  /** Detached physical display cells for verified terminal-region extraction. */
+  getGridCellRows(): VTermCellRow[] {
+    return this.grid.map((row, index) => ({
+      cells: row.map((cell) => ({ char: cell.char, bg: cell.style.bg })),
+      wrapsToNext: this.gridWrapsToNext[index] ?? false,
+      ...(row[0]?.startsAfterCursorMove ? { startsAfterCursorMove: true } : {}),
+    }));
   }
 
   /** Return visible logical lines, rejoining only terminal-generated soft wraps. */
@@ -407,6 +433,11 @@ export class VTerm {
   getTailLogicalLines(n: number): string[] {
     const count = Math.max(0, Math.trunc(n));
     if (count === 0) return [];
+    return this.joinPlainRows(this.getTailPlainRows()).slice(-count);
+  }
+
+  /** Physical rows across retained scrollback and the current visible buffer. */
+  getTailPlainRows(): VTermPlainRow[] {
     const rows: VTermPlainRow[] = [];
     if (!this._inAltScreen) {
       for (let index = 0; index < this.scrollback.length; index++) {
@@ -414,7 +445,7 @@ export class VTerm {
       }
     }
     rows.push(...this.getGridPlainRows());
-    return this.joinPlainRows(rows).slice(-count);
+    return rows;
   }
 
   /** Number of lines that have scrolled off the visible grid. */
@@ -450,6 +481,7 @@ export class VTerm {
     return {
       text: raw.replace(/\x1b\[[0-9;]*m/g, ''),
       wrapsToNext: this.scrollbackWrapsToNext[index] ?? false,
+      ...(this.scrollbackStartsAfterCursorMove[index] ? { startsAfterCursorMove: true } : {}),
     };
   }
 
@@ -462,11 +494,15 @@ export class VTerm {
     const wraps = this._inAltScreen && this.altScreenSaved
       ? this.altScreenSaved.scrollbackWrapsToNext
       : this.scrollbackWrapsToNext;
+    const starts = this._inAltScreen && this.altScreenSaved
+      ? this.altScreenSaved.scrollbackStartsAfterCursorMove
+      : this.scrollbackStartsAfterCursorMove;
     const localIndex = index - start;
     if (localIndex < 0 || localIndex >= rows.length) return null;
     return {
       text: rows[localIndex].replace(/\x1b\[[0-9;]*m/g, ''),
       wrapsToNext: wraps[localIndex] ?? false,
+      ...(starts[localIndex] ? { startsAfterCursorMove: true } : {}),
     };
   }
 
@@ -611,6 +647,7 @@ export class VTerm {
     this.cursorCol = cursor.col;
     this.wrapPending = this.savedCursor.wrapPending;
     this.style = cloneStyle(this.savedCursor.style);
+    this.cursorMovePending = true;
   }
 
   /** Return the prior printable cell, skipping a wide-character continuation. */
@@ -648,6 +685,7 @@ export class VTerm {
     const printable = charWidth(char) > this.cols ? '\uFFFD' : char;
     const width = charWidth(printable);
     if (this.wrapPending || this.cursorCol + width > this.cols) {
+      this.cursorMovePending = false;
       this.gridWrapsToNext[this.cursorRow] = true;
       this.cursorCol = 0;
       this.lineFeed();
@@ -663,7 +701,9 @@ export class VTerm {
       char: printable,
       style: cloneStyle(this.style),
       occupied: true,
+      ...(this.cursorCol === 0 && this.cursorMovePending ? { startsAfterCursorMove: true as const } : {}),
     };
+    this.cursorMovePending = false;
 
     if (width === 2 && this.cursorCol + 1 < this.cols) {
       row[this.cursorCol + 1] = {
@@ -745,6 +785,7 @@ export class VTerm {
 
         // ESC M — reverse index (move cursor up, scroll if at top of region)
         if (remaining.length >= 2 && remaining[1] === 'M') {
+          this.cursorMovePending = true;
           this.wrapPending = false;
           if (this.cursorRow === this.scrollTop) {
             this.scrollDown();
@@ -763,6 +804,7 @@ export class VTerm {
           this.cursorCol = 0;
           this.wrapPending = false;
           this.style = { ...DEFAULT_STYLE };
+          this.cursorMovePending = false;
           this.scrollTop = 0;
           this.scrollBottom = this.rows - 1;
           i += 2;
@@ -817,6 +859,7 @@ export class VTerm {
 
       // ── Control characters ─────────────────────────────────
       if (ch === '\r') {
+        this.cursorMovePending = false;
         this.cursorCol = 0;
         this.wrapPending = false;
         i++;
@@ -824,6 +867,7 @@ export class VTerm {
       }
 
       if (ch === '\n') {
+        this.cursorMovePending = false;
         this.gridWrapsToNext[this.cursorRow] = false;
         this.wrapPending = false;
         this.lineFeed();
@@ -832,6 +876,7 @@ export class VTerm {
       }
 
       if (ch === '\b') {
+        this.cursorMovePending = false;
         this.wrapPending = false;
         if (this.cursorCol > 0) this.cursorCol--;
         i++;
@@ -839,6 +884,7 @@ export class VTerm {
       }
 
       if (ch === '\t') {
+        this.cursorMovePending = false;
         this.wrapPending = false;
         this.cursorCol = Math.min(this.cols - 1, (this.cursorCol + 8) & ~7);
         i++;
@@ -899,9 +945,11 @@ export class VTerm {
       const wrapsToNext = this.gridWrapsToNext[0] ?? false;
       this.scrollback.push(this.renderRow(this.grid[0], wrapsToNext));
       this.scrollbackWrapsToNext.push(wrapsToNext);
+      this.scrollbackStartsAfterCursorMove.push(this.grid[0][0]?.startsAfterCursorMove === true);
       if (this.scrollback.length > this.maxScrollback) {
         this.scrollback.shift();
         this.scrollbackWrapsToNext.shift();
+        this.scrollbackStartsAfterCursorMove.shift();
         this._scrollbackStartIndex++;
       }
     }
@@ -951,10 +999,12 @@ export class VTerm {
       gridWrapsToNext: this.gridWrapsToNext,
       scrollback: this.scrollback,
       scrollbackWrapsToNext: this.scrollbackWrapsToNext,
+      scrollbackStartsAfterCursorMove: this.scrollbackStartsAfterCursorMove,
       scrollbackStartIndex: this._scrollbackStartIndex,
       cursorRow: this.cursorRow,
       cursorCol: this.cursorCol,
       wrapPending: this.wrapPending,
+      cursorMovePending: this.cursorMovePending,
       style: cloneStyle(this.style),
       scrollTop: this.scrollTop,
       scrollBottom: this.scrollBottom,
@@ -963,11 +1013,13 @@ export class VTerm {
     this.gridWrapsToNext = this.makeWrapFlags();
     this.scrollback = [];
     this.scrollbackWrapsToNext = [];
+    this.scrollbackStartsAfterCursorMove = [];
     this._scrollbackStartIndex = this.altScreenSaved.scrollbackStartIndex
       + this.altScreenSaved.scrollback.length;
     this.cursorRow = 0;
     this.cursorCol = 0;
     this.wrapPending = false;
+    this.cursorMovePending = false;
     this.scrollTop = 0;
     this.scrollBottom = this.rows - 1;
     this._inAltScreen = true;
@@ -982,6 +1034,7 @@ export class VTerm {
     );
     this.scrollback = this.altScreenSaved.scrollback;
     this.scrollbackWrapsToNext = this.altScreenSaved.scrollbackWrapsToNext;
+    this.scrollbackStartsAfterCursorMove = this.altScreenSaved.scrollbackStartsAfterCursorMove;
     this._scrollbackStartIndex = this.altScreenSaved.scrollbackStartIndex;
     const cursor = this.clampCursor(
       this.altScreenSaved.cursorRow,
@@ -990,6 +1043,7 @@ export class VTerm {
     this.cursorRow = cursor.row;
     this.cursorCol = cursor.col;
     this.wrapPending = this.altScreenSaved.wrapPending;
+    this.cursorMovePending = this.altScreenSaved.cursorMovePending;
     this.style = cloneStyle(this.altScreenSaved.style);
     this.scrollTop = Math.max(
       0,
@@ -1009,6 +1063,10 @@ export class VTerm {
     const cmd = suffix.charAt(suffix.length - 1);
     const nums = params ? params.split(';').map((n) => parseInt(n, 10) || 0) : [];
     const n = nums[0] || 1;
+
+    if (['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'f', 'd'].includes(cmd)) {
+      this.cursorMovePending = true;
+    }
 
     // Cursor movement and editing operations cancel delayed autowrap. Style,
     // save/restore, mode, and query operations preserve or manage it themselves.
@@ -1312,6 +1370,7 @@ export class VTerm {
         this._scrollbackStartIndex += this.scrollback.length;
         this.scrollback = [];
         this.scrollbackWrapsToNext = [];
+        this.scrollbackStartsAfterCursorMove = [];
         break;
     }
   }

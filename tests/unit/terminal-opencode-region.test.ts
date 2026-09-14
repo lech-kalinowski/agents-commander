@@ -27,7 +27,9 @@ function frame(type = 'REPLY', body = 'Hello Panel 1!', sequence = 1, key = capa
 }
 
 /** Deterministic OpenCode-shaped ANSI rendering, not an offline/demo agent. */
-function draw(text: string, sidebar: boolean, options: { chrome?: boolean; width?: number } = {}) {
+function draw(text: string, sidebar: boolean, options: {
+  chrome?: boolean; width?: number; footerPadding?: 2 | 3;
+} = {}) {
   const width = options.width ?? columns;
   const contentWidth = width - (sidebar ? 42 : 0);
   const lines = Array.from({ length: height }, () => '');
@@ -44,7 +46,7 @@ function draw(text: string, sidebar: boolean, options: { chrome?: boolean; width
     if (options.chrome !== false) right[height - 2] = '  • OpenCode 1.18.30';
   }
   if (options.chrome !== false) {
-    lines[height - 2] = 'ctrl+p commands'.padStart(contentWidth - 2);
+    lines[height - 2] = 'ctrl+p commands'.padStart(contentWidth - (options.footerPadding ?? 2));
   }
   let ansi = '\x1b[?1049h\x1b[H\x1b[2J';
   for (let y = 0; y < height; y++) {
@@ -188,6 +190,27 @@ describe('TerminalPanel OpenCode sidebar routing integration', () => {
       vi.advanceTimersByTime(50);
       expect(f.emitted).toHaveBeenCalledOnce();
       expect(f.emitted.mock.calls[0][0].content).toBe('Hello Panel 1!');
+    } finally { f.dispose(); }
+  });
+
+  it('continues routing after wide-to-narrow resize with the real three-cell idle footer', () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    try {
+      f.output(draw(frame('REPLY', 'first reply'), true));
+      vi.advanceTimersByTime(50);
+      expect(f.emitted).toHaveBeenCalledOnce();
+      f.panel.vterm.resize(115, height);
+      f.panel.scanGridForProtocol();
+      expect(f.panel.protocolLayoutBlocked).toBe(true);
+      f.output(draw(frame('REPLY', 'next reply', 2), false, { width: 115, footerPadding: 3 }));
+      vi.advanceTimersByTime(50);
+      expect(f.panel.protocolLayoutBlocked).toBe(false);
+      expect(f.emitted).toHaveBeenCalledTimes(2);
+      expect(f.emitted.mock.calls[1][0].content).toBe('next reply');
+      f.output(draw(frame('REPLY', 'first reply'), false, { width: 115, footerPadding: 3 }));
+      vi.advanceTimersByTime(50);
+      expect(f.emitted).toHaveBeenCalledTimes(2);
     } finally { f.dispose(); }
   });
 

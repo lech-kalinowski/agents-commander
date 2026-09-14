@@ -181,6 +181,20 @@ describe('OpenCode protocol conversation region', () => {
     expect(detector.detect(fresh, 110).kind).toBe('full');
   });
 
+  it('recognizes the real idle prompt with three right padding cells after resize', () => {
+    const detector = new OpenCodeRegionDetector();
+    detector.detect(sidebarGrid(), columns);
+    const narrow = grid(115, 22);
+    put(narrow, 19, 115 - 'ctrl+p commands   '.length, 'ctrl+p commands');
+    expect(detector.detect(narrow, 115)).toEqual({ kind: 'full', endColumn: 115 });
+  });
+
+  it('does not treat an arbitrary wider command-footer gap as full-width evidence', () => {
+    const rows = grid();
+    put(rows, 22, columns - 'ctrl+p commands    '.length, 'ctrl+p commands');
+    expect(new OpenCodeRegionDetector().detect(rows, columns).kind).toBe('ambiguous');
+  });
+
   it('does not alter ordinary narrow output without an overlay', () => {
     const rows = grid(110);
     addFrame(rows);

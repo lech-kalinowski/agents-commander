@@ -24,7 +24,9 @@ export type OpenCodeProtocolRegion =
 const SIDEBAR_COLUMNS = 42;
 const WIDE_COLUMNS = 120;
 const SIDEBAR_FOOTER = /^  • OpenCode 1\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)? +$/u;
-const PROMPT_FOOTER = /(?:^| +)[A-Za-z0-9+<>.,_-]{1,24} commands  $/u;
+// Real 1.18.30 full-width prompts leave two cells while generating and three
+// while idle. Keep this bounded: an arbitrary suffix/gap is not layout proof.
+const PROMPT_FOOTER = /(?:^| )[A-Za-z0-9+<>.,_-]{1,24} commands {2,3}$/u;
 
 function cellText(cells: readonly OpenCodeRegionCell[]): string {
   return cells.map((cell) => cell.char).join('');
@@ -88,8 +90,8 @@ export class OpenCodeRegionDetector {
       return { kind: 'ambiguous', reason: 'unverified-layout' };
     }
 
-    // A full-width main prompt places its command hint two cells from the
-    // physical edge. A sidebar places that hint 42 columns farther left.
+    // A full-width main prompt places its command hint two or three cells from
+    // the physical edge. A sidebar puts that hint 42 columns farther left.
     // Require this positive evidence rather than assuming an absent footer
     // means a sidebar was disabled halfway through an incremental repaint.
     if (fullPromptFooterSeen) {

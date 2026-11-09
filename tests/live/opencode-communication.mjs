@@ -21,7 +21,7 @@ const { promisify } = await import('node:util');
 const { fileURLToPath, pathToFileURL } = await import('node:url');
 const { DatabaseSync } = await import('node:sqlite');
 const { oneCommandAccepted, correctionAccepted, correctionAccountingAccepted, expectedCorrectionFeedback, exactMalformedCorrectionShape,
-  wholeRunAccepted, settledReadySince, hasKnownOpenCodePasteSeparator, openCodeStoredInputMatches } = await import('./acceptance-checks.mjs');
+  wholeRunAccepted, settledReadySince, hasKnownOpenCodePasteSeparator, openCodeStoredInputMatches, isFreshOpenCodePrompt } = await import('./acceptance-checks.mjs');
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const packageRoot = process.env.COMMANDER_QA_PACKAGE_ROOT ? path.resolve(process.env.COMMANDER_QA_PACKAGE_ROOT) : root;
@@ -115,7 +115,9 @@ function readiness(panel) {
   // https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/routes/home.tsx#L64-L79
   // https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/component/prompt/index.tsx#L1236-L1245
   // https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/component/prompt/index.tsx#L1363-L1393
-  const freshPromptChrome = /Ask anything…/u.test(text) && /(?:Build|Plan)\s+·\s+APEX/u.test(text);
+  // 1.18.31 can show the literal "auto" mode label before the model separator.
+  // https://github.com/anomalyco/opencode/blob/v1.18.31/packages/tui/src/component/prompt/index.tsx#L1363-L1383
+  const freshPromptChrome = isFreshOpenCodePrompt(text);
   const channelReady = !!panel.openCodeChannel && panel.getProtocolSetupError?.() === null;
   const sessionID = sessionIds.get(panel.panelIndex) ?? panel.openCodeChannel?.sessionID;
   if (!sessionID) return { ready: panel.isRunning && !interrupted && (expectNative ? channelReady && freshPromptChrome

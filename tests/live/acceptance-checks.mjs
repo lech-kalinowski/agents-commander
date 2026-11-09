@@ -7,6 +7,12 @@ export function hasKnownOpenCodePasteSeparator(version) {
   return version === '1.18.30' || version === '1.18.31';
 }
 
+/** Empty Home placeholder plus the selected APEX model, never idle-by-timeout. */
+export function isFreshOpenCodePrompt(text) {
+  return typeof text === 'string' && /Ask anything\u2026/u.test(text)
+    && /(?:Build|Plan)(?:\s+auto)?\s+\u00b7\s+APEX/u.test(text);
+}
+
 /** Exact wire text, or the one verified paste-summary separator on known versions. */
 export function openCodeStoredInputMatches(version, stored, wire) {
   if (typeof stored !== 'string' || typeof wire !== 'string') return false;

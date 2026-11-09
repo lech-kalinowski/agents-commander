@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { oneCommandAccepted, correctionAccepted, correctionAccountingAccepted, expectedCorrectionFeedback, exactMalformedCorrectionShape, settledReadySince, wholeRunAccepted, hasKnownOpenCodePasteSeparator, openCodeStoredInputMatches } from '../live/acceptance-checks.mjs';
+import { oneCommandAccepted, correctionAccepted, correctionAccountingAccepted, expectedCorrectionFeedback, exactMalformedCorrectionShape, settledReadySince, wholeRunAccepted, hasKnownOpenCodePasteSeparator, openCodeStoredInputMatches, isFreshOpenCodePrompt } from '../live/acceptance-checks.mjs';
 import { buildProtocolFeedback } from '../../src/orchestration/protocol-feedback.js';
 
 function acceptedBroadcast(overrides: Record<string, unknown> = {}) {
@@ -22,6 +22,17 @@ function acceptedCorrection(overrides: Record<string, unknown> = {}) {
 }
 
 describe('opt-in real-model correction acceptance', () => {
+  it('requires an empty Home placeholder and APEX model, with the optional explicit auto label', () => {
+    for (const label of ['Build', 'Plan', 'Build auto', 'Plan auto']) {
+      expect(isFreshOpenCodePrompt(`Ask anything\u2026\n${label} \u00b7 APEX`)).toBe(true);
+    }
+    for (const text of [undefined, '', 'Build \u00b7 APEX', 'Ask anything\u2026',
+      'Ask anything\u2026\nBuild \u00b7 Other', 'Ask anything\u2026\nShell \u00b7 APEX',
+      'Ask anything\u2026\nBuild unexpected \u00b7 APEX']) {
+      expect(isFreshOpenCodePrompt(text)).toBe(false);
+    }
+  });
+
   it('allows only the verified single paste separator and never normalizes payloads', () => {
     const wire = 'synthetic transport body '.repeat(8);
     for (const version of ['1.18.30', '1.18.31']) {

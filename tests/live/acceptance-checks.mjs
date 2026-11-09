@@ -4,13 +4,25 @@ const isCount = value => Number.isSafeInteger(value) && value >= 0;
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 export function hasKnownOpenCodePasteSeparator(version) {
-  return version === '1.18.30' || version === '1.18.31';
+  return version === '1.18.30' || version === '1.18.31' || version === '1.19.5';
 }
 
 /** Empty Home placeholder plus the selected APEX model, never idle-by-timeout. */
 export function isFreshOpenCodePrompt(text) {
   return typeof text === 'string' && /Ask anything\u2026/u.test(text)
     && /(?:Build|Plan)(?:\s+auto)?\s+\u00b7\s+APEX/u.test(text);
+}
+
+/** Fixed booleans only; diagnosing startup must never log terminal content. */
+export function openCodePromptEvidence(text) {
+  const value = typeof text === 'string' ? text : '';
+  return {
+    emptyHomePlaceholder: /Ask anything\u2026/u.test(value),
+    agentModeLabel: /\b(?:Build|Plan)\b/u.test(value),
+    apexModelLabel: /\bAPEX\b/u.test(value),
+    providerConnectionPrompt: /Connect a provider/u.test(value),
+    visibleErrorLabel: /\b(?:Error|error|ERROR)\b/u.test(value),
+  };
 }
 
 /** Exact wire text, or the one verified paste-summary separator on known versions. */

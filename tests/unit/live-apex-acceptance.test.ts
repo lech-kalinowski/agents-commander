@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { oneCommandAccepted, correctionAccepted, correctionAccountingAccepted, expectedCorrectionFeedback, exactMalformedCorrectionShape, settledReadySince, wholeRunAccepted, hasKnownOpenCodePasteSeparator, openCodeStoredInputMatches, isFreshOpenCodePrompt } from '../live/acceptance-checks.mjs';
+import { oneCommandAccepted, correctionAccepted, correctionAccountingAccepted, expectedCorrectionFeedback, exactMalformedCorrectionShape, settledReadySince, wholeRunAccepted, hasKnownOpenCodePasteSeparator, openCodeStoredInputMatches, isFreshOpenCodePrompt, openCodePromptEvidence } from '../live/acceptance-checks.mjs';
 import { buildProtocolFeedback } from '../../src/orchestration/protocol-feedback.js';
 
 function acceptedBroadcast(overrides: Record<string, unknown> = {}) {
@@ -22,6 +22,20 @@ function acceptedCorrection(overrides: Record<string, unknown> = {}) {
 }
 
 describe('opt-in real-model correction acceptance', () => {
+  it('reduces startup diagnostics to fixed booleans without retaining terminal text', () => {
+    expect(openCodePromptEvidence('Ask anything\u2026\nBuild auto \u00b7 APEX')).toEqual({
+      emptyHomePlaceholder: true, agentModeLabel: true, apexModelLabel: true,
+      providerConnectionPrompt: false, visibleErrorLabel: false,
+    });
+    expect(openCodePromptEvidence('Error: Connect a provider\nprivate input')).toEqual({
+      emptyHomePlaceholder: false, agentModeLabel: false, apexModelLabel: false,
+      providerConnectionPrompt: true, visibleErrorLabel: true,
+    });
+    for (const value of [undefined, null, 42, '', 'private input']) {
+      expect(Object.values(openCodePromptEvidence(value))).toEqual([false, false, false, false, false]);
+    }
+  });
+
   it('requires an empty Home placeholder and APEX model, with the optional explicit auto label', () => {
     for (const label of ['Build', 'Plan', 'Build auto', 'Plan auto']) {
       expect(isFreshOpenCodePrompt(`Ask anything\u2026\n${label} \u00b7 APEX`)).toBe(true);
@@ -35,7 +49,7 @@ describe('opt-in real-model correction acceptance', () => {
 
   it('allows only the verified single paste separator and never normalizes payloads', () => {
     const wire = 'synthetic transport body '.repeat(8);
-    for (const version of ['1.18.30', '1.18.31']) {
+    for (const version of ['1.18.30', '1.18.31', '1.19.5']) {
       expect(hasKnownOpenCodePasteSeparator(version)).toBe(true);
       expect(openCodeStoredInputMatches(version, wire, wire)).toBe(true);
       expect(openCodeStoredInputMatches(version, wire + ' ', wire)).toBe(true);
@@ -46,7 +60,7 @@ describe('opt-in real-model correction acceptance', () => {
       expect(openCodeStoredInputMatches(version, 'short ', 'short')).toBe(false);
       expect(openCodeStoredInputMatches(version, 'a\nb ', 'a\nb')).toBe(false);
     }
-    for (const unknown of ['1.18.29', '1.18.32', 'v1.18.31', undefined]) {
+    for (const unknown of ['1.18.29', '1.18.32', '1.19.4', '1.19.6', 'v1.18.31', 'v1.19.5', undefined]) {
       expect(hasKnownOpenCodePasteSeparator(unknown)).toBe(false);
       expect(openCodeStoredInputMatches(unknown, wire, wire)).toBe(true);
       expect(openCodeStoredInputMatches(unknown, wire + ' ', wire)).toBe(false);

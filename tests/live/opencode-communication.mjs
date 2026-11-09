@@ -21,7 +21,8 @@ const { promisify } = await import('node:util');
 const { fileURLToPath, pathToFileURL } = await import('node:url');
 const { DatabaseSync } = await import('node:sqlite');
 const { oneCommandAccepted, correctionAccepted, correctionAccountingAccepted, expectedCorrectionFeedback, exactMalformedCorrectionShape,
-  wholeRunAccepted, settledReadySince, hasKnownOpenCodePasteSeparator, openCodeStoredInputMatches, isFreshOpenCodePrompt } = await import('./acceptance-checks.mjs');
+  wholeRunAccepted, settledReadySince, hasKnownOpenCodePasteSeparator, openCodeStoredInputMatches, isFreshOpenCodePrompt,
+  openCodePromptEvidence } = await import('./acceptance-checks.mjs');
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const packageRoot = process.env.COMMANDER_QA_PACKAGE_ROOT ? path.resolve(process.env.COMMANDER_QA_PACKAGE_ROOT) : root;
@@ -102,6 +103,7 @@ const trials = [];
 const wirePastes = new Map();
 let naturalQuitPassed = false;
 let stage = 'startup', failure = null, resizeEvents = 0, inputWrites = 0, trackingFailure = false, launchedCount = 0;
+let startupFullscreenChecks = 0;
 const view = () => screenTerm.getGridPlainLines().join('\n');
 const panels = () => app.layout?.allPanels.filter(panel => panel.vterm) ?? [];
 const activity = () => [...(app.orchestrator?.getRecentActivity(1000) ?? [])].reverse();
@@ -145,7 +147,7 @@ const stringEnums = new Set(['startup','welcome','dismiss-welcome','focus','pick
   'send-short','reply-short','reply-long','broadcast-short','send-long','broadcast-long','send-markdown','broadcast-markdown',
   'query-ping','query-agents','query-panels','query-status','query-help','status-short','simultaneous',
   'reply-latest','reply-previous','broadcast-hidden','send-reordered','send-after-resize','reorder','fullscreen','resize','natural-quit',
-  'correction','correction-running',
+  'correction','correction-running','startup-fullscreen','startup-grid',
   'send','reply','broadcast','status','query','queued','delivered','failed','timed_out','dropped',
   'SEND','REPLY','BROADCAST','STATUS','QUERY','END']);
 const keys = new Set(['event','stage','elapsedSeconds','trial','passed','failure','panels','panel','columns','rows','running',
@@ -162,6 +164,8 @@ const keys = new Set(['event','stage','elapsedSeconds','trial','passed','failure
   'stressResults','baselinePassed','stressPassed','distinctThreads','stableIdentities','hiddenTargets','visiblePanels',
   'wireBodyExactCount','receiverAddedOneSpaceCount','receiverByteExactCount','knownOpenCodePasteBehavior','naturalQuitPassed','channelOpenBeforeQuit',
   'freshPromptChrome','latestUserCompleted','settled','settledElapsedMs','matchingEvents','fullRunPassed',
+  'emptyHomePlaceholder','agentModeLabel','apexModelLabel','providerConnectionPrompt','visibleErrorLabel',
+  'startupFullscreenChecks',
   'actualEvents','expectedEvents','actualRoutes','expectedRoutes','allRoutesDelivered',
   'correctionEnabled','correctionPassed','correctionResult','malformedFrames','controllerFeedbackCount','feedbackWireCount','feedbackStoredCount',
   'malformedComplete','malformedShapeExact','feedbackExact','correctionSequenceFresh','correctedAfterFeedback',
@@ -176,7 +180,8 @@ function guard(value) {
 }
 function report(value) { check(guard(value), 'metadata-rejected'); console.log(JSON.stringify(value)); }
 function panelMetadata() { return panels().map(panel => ({ panel: panel.panelIndex + 1, columns: panel.vterm.colCount,
-  rows: panel.vterm.getGridPlainLines().length, running: panel.isRunning, ...readiness(panel), layoutBlocked: panel.protocolLayoutBlocked,
+  rows: panel.vterm.getGridPlainLines().length, running: panel.isRunning, ...readiness(panel),
+  ...openCodePromptEvidence(body(panel)), layoutBlocked: panel.protocolLayoutBlocked,
   alt: panel.vterm.inAltScreen, channelPresent: !!panel.openCodeChannel,
   channelReady: panel.getProtocolSetupError?.() === null,
   channelBound: !!panel.openCodeChannel?.sessionID && panel.openCodeChannel?.status === null,
@@ -282,7 +287,7 @@ function receiptEvidence(index, expected, since) {
     const stored = storedUserText(row.part);
     if (stored === null) continue;
     if (wires.some(wire => stored === wire.text)) { exact++; continue; }
-    // OpenCode 1.18.30/1.18.31 insert a virtual paste-summary label plus ONE separator
+    // Verified OpenCode versions insert a virtual paste-summary label plus ONE separator
     // space for >=3 lines or >150 chars. Submission expands the label without
     // removing its separator. Compare the COMPLETE real wire envelope/body; do
     // not trim, normalize internal whitespace, or accept this on other versions.
@@ -291,6 +296,7 @@ function receiptEvidence(index, expected, since) {
     // https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/component/prompt/index.tsx#L1026-L1034
     // https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/prompt/part.ts#L24-L28
     // https://github.com/anomalyco/opencode/blob/v1.18.31/packages/tui/src/component/prompt/index.tsx#L1084-L1144
+    // https://github.com/anomalyco/opencode/blob/v1.19.5/packages/tui/src/component/prompt/index.tsx#L1084-L1144
     if (wires.some(wire => openCodeStoredInputMatches(sessionVersions.get(index), stored, wire.text))) separator++;
   }
   return { wire: wires.length, exact, separator, total: exact + separator };
@@ -724,7 +730,13 @@ try {
     return originalHandleMessage(panel, message, ...args);
   };
   for (let index = 0; index < count; index++) {
-    await focus(index); write('\x1bOQ'); await waitFor(() => view().includes('Launch Agent (F2)'), 'picker');
+    await focus(index);
+    // OpenCode 1.19.5 clips Home model labels in twelve-row cells. Verify the
+    // entire EMPTY prompt before any protocol input, then restore the narrow
+    // matrix for all routing. Never resize as recovery for a pending delivery.
+    write('\x1bOS');
+    await waitFor(() => app.layout.visiblePanelIds.length === 1, 'startup-fullscreen');
+    write('\x1bOQ'); await waitFor(() => view().includes('Launch Agent (F2)'), 'picker');
     for (let cursor = 0; cursor < profileIndex; cursor++) { write('\x1b[B'); await delay(60); }
     check(app.screen.focused?.getItem?.(app.screen.focused.selected)?.getText?.().includes(profile.profileLabel), 'picker-mismatch');
     write('\r'); await waitFor(() => panels().length === index + 1, 'launch');
@@ -734,6 +746,9 @@ try {
     await waitFor(() => panel.isRunning && ready(panel), 'prompt', 45000);
     if (expectNative) await waitFor(() => panel.openCodeChannel
       && panel.getProtocolSetupError() === null, 'prompt', 45000);
+    startupFullscreenChecks++;
+    write('\x1bOS');
+    await waitFor(() => app.layout.visiblePanelIds.length > 1 && panel.vterm.colCount < cols / 2, 'startup-grid');
   }
   write('\x1bOQ'); await waitFor(() => view().includes('Launch Agent (F2)'), 'protocol-picker');
   write('p'); await waitFor(() => view().includes('Choose running sessions.'), 'protocol-selection');
@@ -830,6 +845,7 @@ try {
     actualRoutes: finalRouteRecords.length, expectedRoutes: 5 + 3 * (count - 1) + (stressEnabled ? 6 + count - 1 : 0) + (correctionEnabled ? 1 : 0),
     allRoutesDelivered: finalRouteRecords.every(record => record.status === 'delivered') };
   const fullRunPassed = wholeRunAccepted({ ...fullRun, allChecksPassed: baselinePassed && stressPassed && correctionPassed && naturalQuitPassed
+    && startupFullscreenChecks === count
     && (!correctionEnabled || correctionAccountingAccepted({ ...correctionAudit,
       totalFeedback: fullRunCorrectionFeedback, intentionalPassed: correctionPassed }))
     && trials.length === (stressEnabled ? 19 : 14) && trials.every(item => item.passed) });
@@ -840,7 +856,7 @@ try {
     correctionEnabled, correctionPassed, correctionResult, fullRunCorrectionFeedback,
     ...correctionAudit,
     fullRunPassed, ...fullRun,
-    realAgentPTYs: launchedCount, ownedProcessesStopped, naturalQuitPassed,
+    realAgentPTYs: launchedCount, startupFullscreenChecks, ownedProcessesStopped, naturalQuitPassed,
     globalConfigUnchanged, toolsDenied: verifiedLaunches === launchedCount && launchedCount > 0,
     rawOutputPrinted: false, rawOutputRecorded: false, resizeEvents });
   process.exitCode = !failure && fullRunPassed && ownedProcessesStopped && globalConfigUnchanged ? 0 : 1;

@@ -119,6 +119,26 @@ afterEach(() => {
 });
 
 describe('TerminalPanel payloads taller than a six-panel viewport', () => {
+  it.each(['SEND:codex:2', 'REPLY', 'BROADCAST', 'STATUS', 'QUERY'])(
+    'routes long %s scrolled above a reserved composer without losing its header', (type) => {
+      vi.useFakeTimers();
+      const f = fixture('generic');
+      try {
+        f.output(`\x1b[${height};1Hfixed composer\x1b[1;${transcriptRows}r`
+          + frameLines(type, longBody).join('\r\n') + '\r\n');
+        vi.advanceTimersByTime(500);
+        expect(f.panel.vterm.getGridPlainLines().at(-1)).toBe('fixed composer');
+        expect(f.panel.vterm.primaryScrollbackEndIndex).toBeGreaterThan(0);
+        expect(f.emitted).toHaveBeenCalledOnce();
+        expect(f.emitted.mock.calls[0][0]).toMatchObject({ content: longBody, sequence: 1 });
+        f.panel.scanGridForProtocol();
+        f.output('\r\n'.repeat(height * 2));
+        vi.advanceTimersByTime(20000);
+        expect(f.emitted).toHaveBeenCalledOnce();
+      } finally { f.dispose(); }
+    },
+  );
+
   it.each(['SEND:opencode:2', 'REPLY', 'BROADCAST', 'STATUS', 'QUERY'])(
     'routes short OpenCode %s only from the completed semantic part, not the viewport', (type) => {
     vi.useFakeTimers();
@@ -191,7 +211,9 @@ describe('TerminalPanel payloads taller than a six-panel viewport', () => {
       const partial = lines.slice(0, -1).join('\n');
       f.complete(partial);
       f.complete(partial, { partID: 'prt_repeated' });
-      expect(f.protocolError).toHaveBeenCalledExactlyOnceWith('invalid-frame');
+      expect(f.protocolError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        code: 'missing-footer', capability, sequences: [1],
+      }), 1);
       expect(f.panel.nativeProtocolIssue).toBe('invalid frame — not sent');
       f.complete(lines.at(-1)!);
       expect(f.emitted).not.toHaveBeenCalled();

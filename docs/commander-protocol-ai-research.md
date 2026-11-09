@@ -14,6 +14,9 @@ transport and failure feedback added after 0.1.10. Final package acceptance and
 npm publication require separate verification; 0.1.10's short-exchange tests
 did not validate long messages or multi-agent broadcast workflows. See
 [QA scope and recorded acceptance](qa.md).
+Section 5.6 describes the **0.1.12** model-correction feedback extension;
+it is not part of 0.1.11. Final versioned-package acceptance and npm publication
+must be verified separately.
 
 ### Abstract
 
@@ -250,6 +253,50 @@ with a new number.
 ### 5.5 UTF-8 safe decoding
 
 Source `0.1.5` uses stream-safe UTF-8 decoding for PTY output. This matters for modern agent CLIs because progress indicators, spinner glyphs, and non-ASCII symbols often arrive in fragmented chunks.
+
+### 5.6 Model-correction feedback — 0.1.12
+
+Authenticated malformed frames receive fixed per-frame diagnostic explanations,
+not silent repairs. Errors distinguish missing closing `===` on the header,
+footer or both, invalid/mismatched counters, invalid header/panel fields and
+oversized frames. A missing matching footer can additionally be identified in
+an immutable completed OpenCode text part. The notice states that **this frame**
+was not sent; it never claims that other valid frames in the same part failed.
+Only bounded validated counter numbers may appear in diagnostic metadata, not
+the message body, session capability or a reconstructed live marker.
+
+The model may then emit a corrected frame with a fresh counter. The original
+rejected canonical counters remain spent; correcting the bytes while reusing
+one of those counters cannot execute a previously rejected action. Outgoing
+malformed prompt examples reserve their identities too, so later echoes and
+redraws cannot acquire authorship. The intended task and recipient must remain
+unchanged, and already-delivered frames must not be resent. Commander does not
+automatically retry, rewrite markers, choose a new recipient or guarantee that
+the model will successfully correct itself.
+
+This feedback is shared across protocol-enabled CLI adapters, but completion
+evidence differs. OpenCode provides authored completed text parts. For other
+CLIs, finalized logical scrollback or an exact closed footer can establish a
+diagnosable frame boundary. A footer still being drawn in a mutable grid, or an
+absent END, remains pending. Quiet time, resize, clipping and fullscreen are not
+turn-completion signals. Do not claim the same missing-footer coverage for an
+arbitrary terminal CLI as for OpenCode's completion hook.
+
+Each explicitly armed capability has an allowance of **three correction
+notices**. The third tells the model to stop and ask the user if its next
+correction fails. Further errors remain visible while automatic correction
+feedback is paused; valid commands are not disabled. Success, new model output,
+elapsed time and terminal geometry do not replenish the allowance. Only an
+explicit fresh Ctrl+P injection resets it; check Activity and leave an empty
+ready prompt first. Bulk F2/P does not rotate an already-armed session.
+
+Correction notices use the existing serialized controller-input lane and remain
+bound to the originating session and capability through queue waits and submit.
+Closed/replaced sessions, rotated keys, detected manual drafts and intervening
+user input prevent unsafe feedback submission. These guards are not a claim
+that arbitrary CLI completion or input state can always be inferred from the
+screen. See the [0.1.12 acceptance checklist](qa.md#model-correction-feedback--0112)
+for deterministic and opt-in live verification before release.
 
 ## 6. Why the Protocol Matters for AI Research
 

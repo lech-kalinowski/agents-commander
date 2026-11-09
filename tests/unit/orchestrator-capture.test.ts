@@ -85,7 +85,7 @@ describe('Orchestrator semantic capture', () => {
     const f = fixture();
     f.emit('send', 0, 'unarmed body');
     await f.arm(0, false);
-    f.emit('send', 0, 'startup body');
+    f.emit('broadcast', 0, 'startup body');
     f.emit('send', 0, 'bad key body', 1, 'x'.repeat(43));
     expect(f.events.filter((event) => event.type === 'frame.accepted')).toEqual([]);
     expect(f.events.filter((event) => event.type === 'frame.rejected').map((event) => event.reason))
@@ -145,6 +145,7 @@ describe('Orchestrator semantic capture', () => {
     expect(reply).toMatchObject({ target: { sessionId: 'session_0', panel: 1 },
       threadId: sent.threadId, replyToMessageId: sent.messageId });
     f.emit('reply', 1, 'duplicate reply without another open window');
+    await vi.runAllTimersAsync();
     expect(f.events.at(-2)).toMatchObject({ type: 'route.failed', reason: 'no_reply_window' });
     expect(f.events.at(-1)).toMatchObject({ type: 'controller.feedback', outcome: 'submitted' });
   });

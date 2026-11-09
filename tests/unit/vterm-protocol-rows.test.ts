@@ -1,7 +1,37 @@
 import { describe, expect, it } from 'vitest';
 import { VTerm } from '../../src/panels/vterm.js';
+import { ProtocolScanner, type CommanderMessage } from '../../src/orchestration/protocol.js';
 
 describe('VTerm protocol-row provenance', () => {
+  it('parses a complete reply after repeated spaces erase stale prose beside its footer', () => {
+    const width = 210;
+    const terminal = new VTerm(width, 8);
+    const capability = 'a'.repeat(43);
+    for (let row = 1; row <= 4; row++) {
+      terminal.write(`\x1b[${row};1H${'old status and response text '.repeat(7)}`);
+    }
+    const lines = [
+      `===COMMANDER:REPLY:${capability}:2===`,
+      'Pong! \u{1f3d3}',
+      `===COMMANDER:END:${capability}:2===`,
+    ];
+    for (const [index, line] of lines.entries()) {
+      const displayWidth = [...line].reduce((sum, char) => sum + (char === '\u{1f3d3}' ? 2 : 1), 0);
+      terminal.write(`\x1b[${index + 1};1H${line} `);
+      // The real renderer may split CSI REP across successive PTY chunks.
+      terminal.write(`\x1b[${width - displayWidth - 1}`);
+      terminal.write('b');
+    }
+    expect(terminal.getGridPlainLines().slice(0, 3)).toEqual(lines);
+    const messages: CommanderMessage[] = [];
+    const scanner = new ProtocolScanner(0, 'Claude Code', msg => messages.push(msg));
+    scanner.setProtocolCapability(capability);
+    for (const row of terminal.getGridPlainRows()) scanner.feedTerminalRow(row);
+    scanner.feed('\n', false);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'reply', content: 'Pong! \u{1f3d3}', sequence: 2 });
+  });
+
   it('records a cursor-addressed row-start write without changing real DEC wrap links', () => {
     const terminal = new VTerm(12, 4);
     terminal.write('x'.repeat(12) + 'old text');

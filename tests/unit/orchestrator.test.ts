@@ -482,7 +482,8 @@ describe('Orchestrator', () => {
 
   // ── Claude-specific sendInfoToPanel ─────────────────────────────
 
-  it('types ACK directly to Claude (no bracketed paste)', () => {
+  it('types ACK to Claude and submits in a separate input event', async () => {
+    vi.useFakeTimers();
     const tp = mockTerminalPanel(0);
     const layout = mockLayout({ 0: tp });
     const agents = mockAgentManager({ 0: 'claude' });
@@ -492,15 +493,18 @@ describe('Orchestrator', () => {
 
     expect(tp.muteScanner).not.toHaveBeenCalled();
 
-    // Should type directly — no paste markers, text + \r in one call
+    // The composer must receive the text before a later Enter event.
     expect(tp.sendInput).toHaveBeenCalledTimes(1);
     const sent = tp.sendInput.mock.calls[0][0];
-    expect(sent).toBe('[Commander] Test ACK\r');
+    expect(sent).toBe('[Commander] Test ACK');
     expect(sent).not.toContain('\x1b[200~'); // no paste start
     expect(sent).not.toContain('\x1b[201~'); // no paste end
+    await vi.runAllTimersAsync();
+    expect(tp._inputs).toEqual(['[Commander] Test ACK', '\r']);
   });
 
-  it('flattens multi-line text when typing to Claude', () => {
+  it('flattens multi-line feedback before separately submitting to Claude', async () => {
+    vi.useFakeTimers();
     const tp = mockTerminalPanel(0);
     const layout = mockLayout({ 0: tp });
     const agents = mockAgentManager({ 0: 'claude' });
@@ -510,11 +514,14 @@ describe('Orchestrator', () => {
 
     const sent = tp.sendInput.mock.calls[0][0];
     // Newlines replaced with spaces
-    expect(sent).toBe('[Commander] Running agents:   Panel 1: Claude   Panel 2: Codex\r');
+    expect(sent).toBe('[Commander] Running agents:   Panel 1: Claude   Panel 2: Codex');
     expect(sent).not.toContain('\n');
+    await vi.runAllTimersAsync();
+    expect(tp._inputs.at(-1)).toBe('\r');
   });
 
-  it('sends atomic paste+Enter to non-Claude agents', () => {
+  it('separates pasted feedback from Enter for non-Claude agents', async () => {
+    vi.useFakeTimers();
     const tp = mockTerminalPanel(0);
     const layout = mockLayout({ 0: tp });
     const agents = mockAgentManager({ 0: 'codex' });
@@ -524,13 +531,43 @@ describe('Orchestrator', () => {
 
     expect(tp.muteScanner).not.toHaveBeenCalled();
 
-    // Paste + \r should be in ONE call (atomic)
+    // Never fold Enter into the paste event.
     expect(tp.sendInput).toHaveBeenCalledTimes(1);
     const paste = tp.sendInput.mock.calls[0][0];
-    expect(paste).toBe('\x1b[200~[Commander] Test ACK\x1b[201~\r');
+    expect(paste).toBe('\x1b[200~[Commander] Test ACK\x1b[201~');
+    await vi.runAllTimersAsync();
+    expect(tp._inputs).toEqual([paste, '\r']);
   });
 
   // ── submitInput ─────────────────────────────────────────────────
+
+  it.each(['claude', 'codex'])('serializes %s feedback and the next task through submission', async (agentType) => {
+    vi.useFakeTimers();
+    const tp = mockTerminalPanel(0);
+    const agents = mockAgentManager({ 0: agentType });
+    const orchestrator = new Orchestrator(mockLayout({ 0: tp }) as any, agents as any) as any;
+    orchestrator.sendInfoToPanel(0, '[Commander] PONG');
+    const task = orchestrator.sendTask(agentType, 0, 'next task');
+    expect(tp._inputs.join('')).not.toContain('next task');
+    await vi.runAllTimersAsync();
+    expect(await task).toEqual({ success: true });
+    const wire = tp._inputs.join('');
+    expect(wire.indexOf('\r')).toBeLessThan(wire.indexOf('next task'));
+    expect(tp._inputs.filter(text => text === '\r')).toHaveLength(2);
+    expect(tp._inputs.some(text => text.length > 1 && text.endsWith('\r'))).toBe(false);
+  });
+
+  it.each(['claude', 'codex'])('does not submit delayed %s feedback to a replaced session', async (agentType) => {
+    vi.useFakeTimers();
+    const tp = mockTerminalPanel(0);
+    const agents = mockAgentManager({ 0: agentType });
+    const orchestrator = new Orchestrator(mockLayout({ 0: tp }) as any, agents as any) as any;
+    orchestrator.sendInfoToPanel(0, '[Commander] PONG');
+    agents._sessionIds[0] = 'replacement';
+    await vi.runAllTimersAsync();
+    expect(tp._inputs).toHaveLength(1);
+    expect(tp._inputs.join('')).not.toContain('\r');
+  });
 
   it('sends Enter after 2.5s delay for Claude (bypass prompt needs time)', async () => {
     vi.useFakeTimers();
@@ -570,6 +607,32 @@ describe('Orchestrator', () => {
   });
 
   // ── Post-injection handling ─────────────────────────────────────
+
+  it('routes an authenticated first SEND from P2 to P1 immediately after setup', () => {
+    const tp0 = mockTerminalPanel(0);
+    const tp1 = mockTerminalPanel(1);
+    const agents = mockAgentManager({ 0: 'claude', 1: 'codex' });
+    const orchestrator = new Orchestrator(mockLayout({ 0: tp0, 1: tp1 }) as any, agents as any) as any;
+    orchestrator.connectPanel(tp1);
+    const key = 'a'.repeat(43);
+    orchestrator.protocolInjected.add(1);
+    orchestrator.protocolCapabilities.set('codex-session-1', key);
+    orchestrator.protocolSessionState.set('codex-session-1', {
+      injectedAt: Date.now(), engaged: false, lastUserInputAt: 0,
+    });
+    orchestrator.enqueueTask = vi.fn();
+    tp1.onCommanderMessage({ type: 'send', sourcePanel: 1, sourceAgent: 'Codex CLI',
+      targetAgent: 'claude', targetPanel: 0, capability: 'b'.repeat(43), sequence: 1,
+      content: 'unauthorized' });
+    expect(orchestrator.enqueueTask).not.toHaveBeenCalled();
+    tp1.onCommanderMessage({ type: 'send', sourcePanel: 1, sourceAgent: 'Codex CLI',
+      targetAgent: 'claude', targetPanel: 0, capability: key, sequence: 2,
+      content: 'P2 to P1 receipt required' });
+    expect(orchestrator.enqueueTask).toHaveBeenCalledWith(0, expect.objectContaining({
+      agentType: 'claude', task: expect.stringContaining('P2 to P1 receipt required'),
+      allowTargetMutation: false,
+    }));
+  });
 
   it('does not ignore QUERY immediately after protocol injection state exists', () => {
     const tp = mockTerminalPanel(0);

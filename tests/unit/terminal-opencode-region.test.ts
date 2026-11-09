@@ -288,7 +288,9 @@ describe('TerminalPanel OpenCode semantic routing across sidebar layouts', () =>
       f.complete(frame('REPLY', 'wrong footer', 1).replace(`END:${capability}:1`, `END:${capability}:2`));
       vi.advanceTimersByTime(50);
       expect(f.emitted).not.toHaveBeenCalled();
-      expect(f.protocolError).toHaveBeenCalledExactlyOnceWith('invalid-frame');
+      expect(f.protocolError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        code: 'mismatched-sequence', capability, sequences: [1, 2],
+      }), 1);
       f.output(draw(frame('REPLY', 'valid', 2), true));
       vi.advanceTimersByTime(50);
       expect(f.emitted).not.toHaveBeenCalled();

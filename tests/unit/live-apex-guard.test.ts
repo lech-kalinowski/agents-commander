@@ -14,4 +14,16 @@ describe('opt-in live APEX acceptance guard', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr.trim()).toBe('Live APEX QA is disabled. Set COMMANDER_LIVE_APEX=1 only with provider-use authorization.');
   });
+
+  it('does not interpret the optional correction flag as provider-use consent', () => {
+    const env = { ...process.env, COMMANDER_QA_CORRECTION: '1',
+      COMMANDER_QA_PACKAGE_ROOT: '/nonexistent/never-import-this-package' };
+    delete env.COMMANDER_LIVE_APEX;
+    const result = spawnSync(process.execPath, [path.resolve('tests/live/opencode-communication.mjs')], {
+      env, encoding: 'utf8', timeout: 5000,
+    });
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr.trim()).toBe('Live APEX QA is disabled. Set COMMANDER_LIVE_APEX=1 only with provider-use authorization.');
+  });
 });

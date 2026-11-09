@@ -6,6 +6,7 @@ import { StringDecoder } from 'node:string_decoder';
 import type { Theme, AppConfig, OrchestrationConfig } from '../config/types.js';
 import type { AgentType } from '../agents/types.js';
 import { VTerm } from './vterm.js';
+import { ensureBlessedEmojiWidth } from '../screen/unicode-compat.js';
 import { OpenCodeRegionDetector, projectOpenCodeRows } from './opencode-region.js';
 import { OpenCodeProtocolChannel, withOpenCodeProtocolPlugin } from '../agents/opencode-protocol-channel.js';
 import {
@@ -24,6 +25,7 @@ import {
   promptProtocolSequences,
   type ProtocolTerminalRow,
   type ProtocolEvent,
+  type ProtocolIssue,
   type CommanderMessage,
   type MessageType,
 } from '../orchestration/protocol.js';
@@ -39,6 +41,9 @@ import { isPanelNumber } from '../panel-limits.js';
 import { isDialogActive } from '../utils/dialog-state.js';
 import { isCodexMicroKey } from '../hardware/codex-micro.js';
 import { ProtocolReplayGuard } from '../orchestration/replay-guard.js';
+import { ProtocolFeedbackBudget } from '../orchestration/protocol-feedback.js';
+
+type ProtocolObservation = ProtocolEvent | ProtocolIssue;
 
 /**
  * Keys reserved for the UI — never forwarded to the agent process.
@@ -192,6 +197,8 @@ export class TerminalPanel {
   /** Selected for the whole OpenCode launch, even when unavailable: never fall back to screen scraping. */
   private openCodeChannel: OpenCodeProtocolChannel | null = null;
   private nativeProtocolIssue: string | null = null;
+  private protocolFeedbackBudget = new ProtocolFeedbackBudget();
+  private protocolFeedbackPaused = false;
   private lastPtySize: string | null = null;
   private stdoutDecoder: StringDecoder | null = null;
   private stderrDecoder: StringDecoder | null = null;
@@ -203,6 +210,8 @@ export class TerminalPanel {
   private _sessionGeneration = 0;
   /** Monotonic count of all user and Commander writes to the active PTY. */
   private _inputGeneration = 0n;
+  private _userInputGeneration = 0n;
+  private userInputPending = false;
   /** Latest input generation followed by process output applied to VTerm. */
   private _outputObservedInputGeneration = 0n;
   private lastInputAt = Number.NEGATIVE_INFINITY;
@@ -240,7 +249,7 @@ export class TerminalPanel {
 
   /** Set by the Orchestrator to receive inter-agent messages. */
   public onCommanderMessage: ((msg: ProtocolEvent) => void) | null = null;
-  public onCommanderProtocolError: ((reason: 'invalid-frame' | 'oversized-frame') => void) | null = null;
+  public onCommanderProtocolError: ((issue: ProtocolIssue, attempt: number) => void) | null = null;
 
   /** Called when the process exits. Useful for AgentManager to track lifecycle. */
   public onExit: ((
@@ -263,6 +272,8 @@ export class TerminalPanel {
   get sessionName(): string | null { return this.agentName || null; }
   get sessionGeneration(): number { return this._sessionGeneration; }
   get inputGeneration(): bigint { return this._inputGeneration; }
+  get userInputGeneration(): bigint { return this._userInputGeneration; }
+  get hasPendingUserInput(): boolean { return this.userInputPending; }
   get inputSynchronized(): boolean {
     return this._inputGeneration === this._outputObservedInputGeneration
       && Date.now() - this.lastInputAt >= TERMINAL_INPUT_SETTLE_MS;
@@ -277,6 +288,7 @@ export class TerminalPanel {
     position: { top: number | string; left: number | string; width: number | string; height: number | string },
     config: AppConfig,
   ) {
+    ensureBlessedEmojiWidth();
     this.screen = screen;
     this.theme = theme;
     this.panelIndex = panelIndex;
@@ -398,7 +410,7 @@ export class TerminalPanel {
           return;
         }
         this.proc.stdin.write(data);
-        this.recordUserInput();
+        this.recordUserInput(data);
       }
     });
   }
@@ -666,6 +678,8 @@ export class TerminalPanel {
       this._sessionGeneration += 1;
       this.pendingInputSurrogate = '';
       this._inputGeneration = 0n;
+      this._userInputGeneration = 0n;
+      this.userInputPending = false;
       this._outputObservedInputGeneration = 0n;
       this.lastInputAt = Number.NEGATIVE_INFINITY;
       const thisProc = this.proc;
@@ -700,6 +714,8 @@ export class TerminalPanel {
       this.activeTailReplyKeys.clear();
       this.replayGuard = new ProtocolReplayGuard();
       this.protocolCapability = null;
+      this.protocolFeedbackBudget = new ProtocolFeedbackBudget();
+      this.protocolFeedbackPaused = false;
       this.protocolReplayWarningShown = false;
       this.clearCommanderActivity();
       this.clearPendingReplyEmissions();
@@ -718,6 +734,7 @@ export class TerminalPanel {
             maxContentLines: this.orchConfig.maxContentLines,
             maxContentBytes: this.orchConfig.maxContentBytes,
             onRejected: (msg) => this.emitDeduped(msg, 'scrollback'),
+            onMalformed: (issue) => this.reportProtocolIssue(issue),
           },
         )
         : null;
@@ -850,6 +867,7 @@ export class TerminalPanel {
       logger.info(`Dedup[${this.panelIndex}]: suppressed echoed ${msg.type} block from protocol instructions`);
       return;
     }
+    if (!this.protocolFeedbackPaused) this.nativeProtocolIssue = null;
     this.onCommanderMessage(msg);
   }
 
@@ -881,7 +899,7 @@ export class TerminalPanel {
         this.lastScrollbackIndex = this.vterm.primaryScrollbackStartIndex;
         continue;
       }
-      scanner.feedTerminalRow(row);
+      scanner.feedTerminalRow({ ...row, finalized: true });
       if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
       this.lastScrollbackIndex++;
     }
@@ -921,6 +939,11 @@ export class TerminalPanel {
     const messages = this.parseProtocolRows(this.getProtocolGridRows());
     const visibleKeys = new Set<string>();
     for (const message of messages) {
+      if ('code' in message) {
+        this.reportProtocolIssue(message);
+        if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
+        continue;
+      }
       const canonical = TerminalPanel.canonicalizeContent(message.content);
       const key = this.buildEmissionKey(
         message.type, message.targetAgent, message.targetPanel,
@@ -943,19 +966,23 @@ export class TerminalPanel {
   }
 
   /** One bounded parser for grid, history and snapshots; no alternate regex recovery. */
-  private parseProtocolRows(rows: readonly ProtocolTerminalRow[]): ProtocolEvent[] {
-    const messages: ProtocolEvent[] = [];
+  private parseProtocolRows(rows: readonly ProtocolTerminalRow[], reserveIncomplete = false): ProtocolObservation[] {
+    const messages: ProtocolObservation[] = [];
     if (!rows.some((row) => row.text.includes('COMMANDER') || row.text.includes('==='))) return messages;
     const parser = new ProtocolScanner(this.panelIndex, this.agentName, (message) => messages.push(message), {
       maxContentLines: this.orchConfig.maxContentLines,
       maxContentBytes: this.orchConfig.maxContentBytes,
       onRejected: (message) => messages.push(message),
+      onMalformed: (issue) => messages.push(issue),
       logPotentialMarkers: false,
     });
     if (this.protocolCapability) parser.setProtocolCapability(this.protocolCapability);
     for (const row of rows) parser.feedTerminalRow(row);
     // A snapshot may end on a full-width footer without a trailing newline.
-    parser.feed('\n');
+    parser.feed('\n', false);
+    // Only an explicit echo snapshot may conservatively reserve incomplete
+    // identities. Ordinary execution scans must never infer completion here.
+    if (reserveIncomplete) parser.finishCompletedPart();
     return messages;
   }
 
@@ -1383,6 +1410,15 @@ export class TerminalPanel {
   reserveProtocolTextForEcho(text: string): void {
     if (!this.scannerEnabled || !text.includes('COMMANDER')) return;
     if (this.protocolCapability) {
+      const parser = new ProtocolScanner(this.panelIndex, this.agentName, () => {}, {
+        maxContentLines: this.orchConfig.maxContentLines,
+        maxContentBytes: this.orchConfig.maxContentBytes,
+        logPotentialMarkers: false,
+        onMalformed: (issue) => { this.reserveProtocolIssue(issue); },
+      });
+      parser.setProtocolCapability(this.protocolCapability);
+      parser.feed(text);
+      parser.finishCompletedPart();
       for (const sequence of promptProtocolSequences(text, this.protocolCapability)) {
         this.rememberProtocolReservation(`seq:${this.protocolCapability}:${sequence}`, this.orchConfig.ackTimeout);
       }
@@ -1407,14 +1443,18 @@ export class TerminalPanel {
   private snapshotGridAsProcessed(): void {
     if (this.openCodeChannel) return;
     if (!this.scannerEnabled) return;
-    const mark = (messages: ProtocolEvent[]) => new Set(messages.map((message) => {
+    const mark = (messages: ProtocolObservation[]) => new Set(messages.flatMap((message) => {
+      if ('code' in message) {
+        this.reserveProtocolIssue(message);
+        return [];
+      }
       const key = this.buildEmissionKey(message.type, message.targetAgent, message.targetPanel,
         TerminalPanel.canonicalizeContent(message.content), message.capability ?? null, message.sequence);
       this.rememberEmissionKey(key, this.orchConfig.dedupWindow);
-      return key;
+      return [key];
     }));
-    this.activeGridProtocolKeys = mark(this.parseProtocolRows(this.getProtocolGridRows()));
-    this.activeTailReplyKeys = mark(this.parseProtocolRows(this.getProtocolTailRows()));
+    this.activeGridProtocolKeys = mark(this.parseProtocolRows(this.getProtocolGridRows(), true));
+    this.activeTailReplyKeys = mark(this.parseProtocolRows(this.getProtocolTailRows(), true));
   }
 
   private markProtocolLinesAsProcessed(lines: string[], ttlMs: number): Set<string> {
@@ -1548,6 +1588,11 @@ export class TerminalPanel {
     const messages = this.parseProtocolRows(this.getProtocolTailRows());
     const visibleKeys = new Set<string>();
     for (const message of messages) {
+      if ('code' in message) {
+        this.reportProtocolIssue(message);
+        if (this.proc !== child || this.scanner !== scanner || this.vterm !== vterm) return;
+        continue;
+      }
       const canonical = TerminalPanel.canonicalizeContent(message.content);
       const key = this.buildEmissionKey(message.type, message.targetAgent, message.targetPanel,
         canonical, message.capability ?? null, message.sequence);
@@ -1652,6 +1697,8 @@ export class TerminalPanel {
     if (this.protocolCapability === capability) return;
     this.protocolCapability = capability;
     this.nativeProtocolIssue = null;
+    this.protocolFeedbackBudget = new ProtocolFeedbackBudget();
+    this.protocolFeedbackPaused = false;
     this.openCodeChannel?.arm(capability);
     this.scanner?.setProtocolCapability?.(capability);
     this.replayGuard = new ProtocolReplayGuard();
@@ -1673,32 +1720,56 @@ export class TerminalPanel {
     if (!capability || !this.scannerEnabled || this.scanner?.isMuted) return;
     const child = this.proc;
     const channel = this.openCodeChannel;
-    const messages: ProtocolEvent[] = [];
+    const messages: ProtocolObservation[] = [];
     const parser = new ProtocolScanner(this.panelIndex, this.agentName, (msg) => messages.push(msg), {
       maxContentLines: this.orchConfig.maxContentLines,
       maxContentBytes: this.orchConfig.maxContentBytes,
       onRejected: (msg) => messages.push(msg),
+      onMalformed: (issue) => messages.push(issue),
       logPotentialMarkers: false,
     });
     parser.setProtocolCapability(capability);
     parser.feed(text + '\n');
+    parser.finishCompletedPart();
     for (const message of messages) {
-      this.nativeProtocolIssue = null;
-      this.emitDeduped(message, 'opencode');
+      if ('code' in message) this.reportProtocolIssue(message);
+      else this.emitDeduped(message, 'opencode');
       if (this.proc !== child || this.openCodeChannel !== channel || this.protocolCapability !== capability) return;
     }
-    if (messages.length === 0 && text.includes(capability) && text.includes('COMMANDER:')) {
-      // Rejected authored frames spend their authenticated counters too. A
-      // later correction must not turn a previously rejected identity executable.
-      for (const sequence of promptProtocolSequences(text, capability)) {
-        this.claimProtocolIdentity(`seq:${capability}:${sequence}`);
-      }
-      const digest = createHash('sha256').update(text, 'utf8').digest('base64url');
-      if (this.claimProtocolIdentity(`${capability}:invalid:${digest}`)) {
-        this.nativeProtocolIssue = 'invalid frame — not sent';
-        this.onCommanderProtocolError?.('invalid-frame');
-      }
+    this.updateHeader();
+    this.scheduleRender();
+  }
+
+  /** Diagnostics cannot authorize output; they only spend the same replay IDs. */
+  private reserveProtocolIssue(issue: ProtocolIssue): boolean {
+    if (issue.capability !== this.protocolCapability) return false;
+    const keys = issue.sequences.length > 0
+      ? [...new Set(issue.sequences)].map((sequence) => `seq:${issue.capability}:${sequence}`)
+      : [`${issue.capability}:invalid:${issue.fingerprint}`];
+    const fresh = keys.map((key) => this.claimProtocolIdentity(key));
+    return fresh.every(Boolean);
+  }
+
+  private reportProtocolIssue(issue: ProtocolIssue): void {
+    if (!this.scannerEnabled || this.scanner?.isMuted || !this.isRunning
+      || !this.reserveProtocolIssue(issue)) return;
+    this.protocolFeedbackBudget ??= new ProtocolFeedbackBudget();
+    const attempt = this.protocolFeedbackBudget.claim();
+    if (attempt === null) {
+      this.protocolFeedbackPaused = true;
+      this.nativeProtocolIssue = 'corrections paused — Ctrl+P to rearm';
+    } else {
+      this.nativeProtocolIssue = 'invalid frame — not sent';
+      this.onCommanderProtocolError?.(issue, attempt);
     }
+    this.updateHeader();
+    this.scheduleRender();
+  }
+
+  /** Never append correction instructions to a user's unfinished prompt. */
+  holdProtocolFeedback(): void {
+    if (this.protocolFeedbackPaused) return;
+    this.nativeProtocolIssue = 'correction held: input changed — Ctrl+P to rearm';
     this.updateHeader();
     this.scheduleRender();
   }
@@ -1766,7 +1837,9 @@ export class TerminalPanel {
     }
   }
 
-  private recordUserInput(): void {
+  private recordUserInput(data?: string): void {
+    this._userInputGeneration = (this._userInputGeneration ?? 0n) + 1n;
+    if (data !== undefined) this.userInputPending = data !== '\r' && data !== '\x03';
     this.recordTerminalInput();
     this.onUserInput?.();
   }

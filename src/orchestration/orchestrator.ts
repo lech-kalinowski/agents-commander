@@ -13,9 +13,11 @@ import {
   isProtocolCapability,
   type CommanderMessage,
   type ProtocolEvent,
+  type ProtocolIssue,
   type RejectedCommanderMessage,
   type MessageType,
 } from './protocol.js';
+import { buildProtocolFeedback } from './protocol-feedback.js';
 import {
   MessageLedger,
   type MessageRecord,
@@ -261,17 +263,28 @@ export class Orchestrator {
     };
     const connectedSessionId = this.agentManager.getAgentSessionId(tp.panelIndex);
     const connectedGeneration = tp.sessionGeneration;
-    tp.onCommanderProtocolError = (reason: 'invalid-frame' | 'oversized-frame') => {
+    tp.onCommanderProtocolError = (issue: ProtocolIssue, attempt: number) => {
       if (this.sealed || !tp.isRunning || !connectedSessionId
         || !this.isCurrentTarget(tp.panelIndex, tp)
         || tp.sessionGeneration !== connectedGeneration
         || this.agentManager.getAgentSessionId(tp.panelIndex) !== connectedSessionId
         || !this.protocolInjected.has(tp.panelIndex)
-        || !this.protocolCapabilities.has(connectedSessionId)) return;
-      const text = reason === 'oversized-frame'
-        ? '[Commander protocol error] Message was not sent: protocol frame is too large. Shorten or split the message, using a complete header and matching END footer with a fresh counter for each message.'
-        : '[Commander protocol error] Message was not sent: incomplete or invalid protocol frame. Use complete header and matching END footer with a fresh counter.';
-      this.sendInfoToPanel(tp.panelIndex, text);
+        || this.protocolCapabilities.get(connectedSessionId) !== issue.capability) return;
+      const userInputGeneration = tp.userInputGeneration ?? tp.inputGeneration;
+      const guard = () => {
+        if (this.sealed || !tp.isRunning || !this.isCurrentTarget(tp.panelIndex, tp)
+          || tp.sessionGeneration !== connectedGeneration
+          || this.agentManager.getAgentSessionId(tp.panelIndex) !== connectedSessionId
+          || !this.protocolInjected.has(tp.panelIndex)
+          || this.protocolCapabilities.get(connectedSessionId) !== issue.capability) return false;
+        if (tp.hasPendingUserInput
+          || (tp.userInputGeneration ?? tp.inputGeneration) !== userInputGeneration) {
+          tp.holdProtocolFeedback?.();
+          return false;
+        }
+        return true;
+      };
+      this.sendInfoToPanel(tp.panelIndex, buildProtocolFeedback(issue, attempt), undefined, guard);
     };
     tp.onUserInput = () => {
       const source = this.resolveSessionRefForPanel(tp.panelIndex);
@@ -519,7 +532,9 @@ export class Orchestrator {
     if (!state || state.engaged) return false;
     if (Date.now() - state.injectedAt > this.getStartupGuardMs()) return false;
 
-    if (msg.type === 'reply') {
+    // Explicitly addressed, authenticated traffic is actionable immediately.
+    // Setup may be requested after the user has already given the agent a task.
+    if (msg.type === 'send' || msg.type === 'reply') {
       return false;
     }
 
@@ -1260,7 +1275,12 @@ export class Orchestrator {
    * or error to the visible panel width.
    * Other agents: bracketed paste for atomic multi-line delivery.
    */
-  private sendInfoToPanel(panelIndex: number, text: string, capture?: CaptureContext): void {
+  private sendInfoToPanel(
+    panelIndex: number,
+    text: string,
+    capture?: CaptureContext,
+    correctionGuard?: () => boolean,
+  ): void {
     if (this.sealed) return;
     const failed = (reason: string, actor = capture?.actor) => {
       this.recordCapture({ ...capture, type: 'controller.feedback', actor, target: undefined,
@@ -1282,7 +1302,8 @@ export class Orchestrator {
     if (!target) { failed('feedback_target_unavailable'); return; }
 
     void this.withSessionInputLane(target, async () => {
-      const targetIsCurrent = () => this.isManagedTaskTargetCurrent(target);
+      const targetIsCurrent = () => !this.sealed && this.isManagedTaskTargetCurrent(target)
+        && (correctionGuard?.() ?? true);
       if (!targetIsCurrent()) {
         failed('feedback_session_changed', this.captureActor(target));
         return false;
@@ -1295,7 +1316,11 @@ export class Orchestrator {
         if (flat.length <= Math.max(0, maxCols - 2)) {
           // Newlines must not become premature submits in direct typing.
           submittedText = flat;
-          sent = tp.sendInput(flat + '\r');
+          sent = tp.sendInput(flat);
+          if (sent) {
+            await this.delay(CLAUDE_DIRECT_SUBMIT_DELAY_MS);
+            sent = targetIsCurrent() && tp.sendInput('\r');
+          }
         } else {
           sent = false;
           try {
@@ -1307,7 +1332,8 @@ export class Orchestrator {
           }
         }
       } else {
-        sent = tp.sendInput(`\x1b[200~${text}\x1b[201~\r`);
+        sent = tp.sendInput(`\x1b[200~${text}\x1b[201~`);
+        if (sent) sent = await this.submitInput(tp, targetIsCurrent);
       }
       if (sent) {
         this.recordCapture({ ...capture, type: 'controller.feedback', actor: this.captureActor(target),
@@ -2139,11 +2165,9 @@ export class Orchestrator {
    *
    * In a PTY, Enter is `\r` (0x0d).
    *
-   * Claude Code shows a "bypass permissions" prompt after bracketed paste.
-   * The Enter MUST arrive in a separate PTY read — if it's still in the
-   * buffer when Claude reads the paste, it gets processed before the prompt
-   * renders and is swallowed.  A 5-second delay ensures Claude has read the
-   * paste, rendered the prompt, and is waiting for input before `\r` arrives.
+   * Keep Enter separate from paste/text input so CLI paste detection does not
+   * absorb it into the draft. This submits text, not tool/permission approvals.
+   * A successful write is not evidence that the model has read the message.
    */
   private async submitInput(
     tp: TerminalPanel,
@@ -2151,8 +2175,7 @@ export class Orchestrator {
   ): Promise<boolean> {
     const agentType = this.agentManager.getAgentType(tp.panelIndex);
     if (agentType === 'claude') {
-      // Delay so the paste is read + bypass prompt rendered before \r.
-      // The prompt appears within 1-2s; 2.5s gives comfortable margin.
+      // Allow Claude's composer to process the bracketed paste before Enter.
       await this.delay(this.orchConfig.claudeSubmitDelay);
       if (!isStillValid()) return false;
       return tp.sendInput('\r');

@@ -39,11 +39,11 @@ npm run verify
 
 The current UI uses TypeScript, blessed, and tsup, with native shallow filesystem watches. Runtime support is Node.js 22+, Python 3, and macOS/Linux/WSL2.
 
-Package version is 0.1.11, under the MIT License. Version 0.1.4 is the legacy
+Package version is 0.1.13, under the MIT License. Version 0.1.4 is the legacy
 baseline; its runtime requirements, features, and bundled license differ.
 Use `node dist/bin/agents-commander.js` or `npm start --` to exercise this checkout,
 not an older global installation. For the versioned package, the install command
-is `npm install -g agents-commander@0.1.11`. Recheck the registry before changing
+is `npm install -g agents-commander@0.1.13`. Recheck the registry before changing
 release claims. A source push is not an npm release.
 F2/N bulk launch, F2/P bulk protocol setup and sequenced replay protection are
 included in 0.1.6, not 0.1.5. Package metadata describes that version's contents;
@@ -87,6 +87,13 @@ empty broadcasts NACK; broadcast admission ACKs are not final completion, and
 later failed recipients get explicitly scoped delivery notices. Shutdown and
 gone/replaced senders must not receive new failure feedback.
 
+Version 0.1.13 separates controller feedback from Enter in the same guarded
+input lane, accepts authenticated addressed startup SENDs, preserves history
+above fixed composers, and aligns virtual-terminal/Blessed emoji widths.
+Keep narrow text symbols narrow, honor split variation selectors and REP
+spaces, and retain strict authentication, echo and replay guards. Other
+unreleased hardware changes are not part of this communication release.
+
 ## Key Conventions
 
 - All imports use `.js` extension (ESM)
@@ -107,6 +114,7 @@ gone/replaced senders must not receive new failure feedback.
 - Shift+F4 cycles auto/2/3/4 visible density independently of active panel count; Ctrl+0/2/3/4 are terminal-dependent aliases
 - REPLY claims the latest open reply window, not a permanent last-sender address
 - New protocol injections teach a per-capability positive sequence on every header and matching END footer. Fresh actions use a fresh counter; redraws/retries keep their identity. Replay suppression survives scrolling and resize. Legacy frames remain accepted with conservative session-lifetime exact-content suppression; hard reflow requires sequenced identity. Replay storage is bounded and fails closed, never evicting history into execution eligibility. See the protocol reference for limits and explicit capability rotation.
+- Version 0.1.12 correction feedback is fixed, authenticated and per-frame; the model corrects with a fresh counter, never Commander. Three notices per explicit capability arm, then a visible feedback pause; success/resize never resets it. Preserve rejected/echo identities and exact session/key/manual-input guards through queued submission. OpenCode completed parts permit missing-footer diagnosis; other CLIs need finalized scrollback or exact closed-footer evidence, never idle/resize guesses for mutable partial output. This extension is not in 0.1.11; final versioned-package acceptance and npm publication must be verified separately in `docs/qa.md` before release claims.
 - Activity is bounded and in-memory; diagnostic logs are not session recordings. Capture/export require explicit launch consent and human review; see `docs/datasets.md` and the broader proposed roadmap in `docs/session-capture-plan.md`
 - Dataset commands must remain UI-independent; never enable recording from saved config, export unapproved data, retain live capability keys, or include private research artifacts in git/npm
 - marked-terminal renderer methods must be extracted and bound to avoid marked v15 compat issues

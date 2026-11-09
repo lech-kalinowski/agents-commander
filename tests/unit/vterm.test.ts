@@ -53,6 +53,83 @@ describe('VTerm', () => {
     expect(terminal.getGridPlainRows()[0].wrapsToNext).toBe(true);
   });
 
+  it('repeats spaces to clear a shortened redraw instead of leaving the previous text', () => {
+    const terminal = new VTerm(40, 3);
+    terminal.write('old status text left behind by a repaint');
+    terminal.write('\rPong! \x1b[34b');
+    expect(terminal.getGridPlainLines()[0]).toBe('Pong!');
+    expect(terminal.curCol).toBe(39);
+  });
+
+  it('repeats the last printed character after a cursor move, not the neighboring cell', () => {
+    const terminal = new VTerm(12, 2);
+    terminal.write('abc \x1b[1G\x1b[3b');
+    expect(terminal.getGridPlainLines()[0]).toBe('');
+    expect(terminal.curCol).toBe(3);
+  });
+
+  it.each(['\u273b', '\u273d', '\u2736', '\u2726', '\u23fa'])('keeps text-presentation UI symbol %s in one terminal column', (symbol) => {
+    const terminal = new VTerm(20, 3);
+    terminal.write(`${symbol} Working`);
+    expect(terminal.curCol).toBe(9);
+    terminal.write('\x1b[1G\x1b[10C!');
+    expect(terminal.getGridPlainLines()[0]).toBe(`${symbol} Working !`);
+  });
+
+  it('keeps emoji and CJK wide while expanding a split emoji variation selector', () => {
+    const terminal = new VTerm(20, 3);
+    terminal.write('\u{1f3d3}界\u23fa');
+    expect(terminal.curCol).toBe(5);
+    terminal.write('\ufe0f!');
+    expect(terminal.curCol).toBe(7);
+    expect(terminal.getGridPlainLines()[0]).toBe('\u{1f3d3}界\u23fa\ufe0f!');
+  });
+
+  it('wraps an expanded emoji at the margin without leaving a half glyph', () => {
+    const terminal = new VTerm(4, 3);
+    terminal.write('abc\u23fa');
+    terminal.write('\ufe0f!');
+    expect(terminal.getGridPlainLines()).toEqual(['abc', '\u23fa\ufe0f!', '']);
+    expect(terminal.curCol).toBe(3);
+  });
+
+  it('replaces a split wide emoji when the panel is only one column wide', () => {
+    const terminal = new VTerm(1, 2);
+    terminal.write('\u23fa');
+    terminal.write('\ufe0f\x1b[1b');
+    expect(terminal.getGridPlainLines()).toEqual(['\ufffd', '\ufffd']);
+  });
+
+  it('does not repeat an old graphic after full terminal reset', () => {
+    const terminal = new VTerm(12, 2);
+    terminal.write('A\x1bc\x1b[3b');
+    expect(terminal.getGridPlainLines()).toEqual(['', '']);
+  });
+
+  it.each(['\r\n', '\x1bD', '\x1bE', '\x1b[1S'])('preserves history above a fixed footer when scrolling with %j', (scroll) => {
+    const terminal = new VTerm(12, 5);
+    terminal.write('\x1b[5;1HSTATUS\x1b[1;3rA\r\nB\r\nC');
+    terminal.write(scroll);
+    expect(terminal.getScrollbackPlain(0)).toBe('A');
+    expect(terminal.scrollbackLength).toBe(1);
+    expect(terminal.getGridPlainLines()).toEqual(['B', 'C', '', '', 'STATUS']);
+  });
+
+  it('preserves the column on IND and resets it on NEL, including split escapes', () => {
+    const terminal = new VTerm(12, 5);
+    terminal.write('ab\x1b');
+    terminal.write('D!\x1bE#');
+    expect(terminal.getGridPlainLines()).toEqual(['ab', '  !', '#', '', '']);
+  });
+
+  it('does not save internal-region or alternate-buffer scrolling as history', () => {
+    for (const prefix of ['\x1b[2;3r', '\x1b[?1049h\x1b[1;3r']) {
+      const terminal = new VTerm(12, 5);
+      terminal.write(prefix + 'A\r\nB\r\nC\r\nD\r\n');
+      expect(terminal.scrollbackLength).toBe(0);
+    }
+  });
+
   it('preserves soft-wrap boundaries as rows enter scrollback', () => {
     const terminal = new VTerm(4, 2);
 

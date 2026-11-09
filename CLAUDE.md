@@ -10,10 +10,10 @@ npm run build
 npm start
 ```
 
-Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.11,
+Use Node.js 22+, Python 3, and macOS/Linux/WSL2. Package version is 0.1.13,
 under the MIT License. Version 0.1.4 is the legacy baseline with different
 runtime requirements, features, and bundled license. The versioned install is
-`npm install -g agents-commander@0.1.11`. Run the local build with
+`npm install -g agents-commander@0.1.13`. Run the local build with
 `node dist/bin/agents-commander.js` or `npm start -- <options> <directory>`.
 Do not confuse an older global installation with this checkout; pushing source
 does not publish npm. See `AGENTS.md` and README for the current conventions.
@@ -94,6 +94,7 @@ TypeScript + blessed + native shallow filesystem watches + marked + tsup
 - Shift+F4 cycles auto/2/3/4 visible density independently of active panel count; Ctrl+0/2/3/4 are terminal-dependent aliases
 - REPLY claims the latest open reply window, not a permanent last-sender address
 - Protocol 0.1.6 instructions use one positive per-capability counter across all five verbs, matching header and END footer. New actions increment it; redraws retain it. Bounded local replay protection survives scrolling/resize; legacy hard-reflow remains ambiguous. Explicit Ctrl+P rotates the key, while F2/P skips already-armed sessions.
+- Version 0.1.12 per-frame correction feedback is bounded to three notices per explicitly armed capability, with visible pause after exhaustion. Only fresh Ctrl+P setup resets it. Models correct using fresh counters; Commander never repairs/resends. Preserve malformed echo/replay, session/key and manual-input guards. OpenCode diagnoses completed parts; other CLIs require finalized scrollback or exact closed footers and never infer completion from idle/resize. This extension is not part of 0.1.11; its own final versioned-package gate and separate npm verification remain required.
 - Activity is bounded and in-memory; diagnostic logs are not session recordings. Capture/export require explicit launch consent and human review; see `docs/datasets.md` and the broader proposed roadmap in `docs/session-capture-plan.md`
 - Dataset commands stay UI-independent. Do not enable recording from config, export unapproved data, keep live capability keys, or commit/package private research artifacts
 - marked-terminal renderer methods must be extracted and bound to avoid marked v15 compat issues

@@ -80,7 +80,8 @@ describe('exact addresses and complete controller feedback', () => {
     expect(f.input(0)).toContain('QUERY agents');
     expect(f.input(0)).toContain('new counter');
     expect(f.input(0)).not.toContain('PRIVATE_REJECTED_BODY');
-    expect(f.panels[0].sendInput).toHaveBeenCalledOnce();
+    expect(f.panels[0].sendInput).toHaveBeenCalledTimes(2);
+    expect(f.panels[0].sendInput).toHaveBeenLastCalledWith('\r');
     f.panels.slice(1).forEach(panel => expect(panel.sendInput).not.toHaveBeenCalled());
     expect(f.layout.convertToTerminal).not.toHaveBeenCalled();
     expect(f.manager.launchAgent).not.toHaveBeenCalled();

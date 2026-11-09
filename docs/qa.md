@@ -1,5 +1,213 @@
 # QA coverage and validation checklist
 
+## Claude/Codex stale redraws - 0.1.13
+
+A second November 9 reproduction showed old response text appended to a
+completed authenticated footer, plus scattered characters in status rows.
+The virtual terminal ignored CSI REP after a SPACE, so repeated blanks neither
+cleared old cells nor advanced the cursor. REP now tracks the last printed
+graphic, including SPACE, independently of cursor movement. Terminal reset
+clears that state. Narrow text-presentation spinner/bullet symbols no longer
+consume two columns; emoji and CJK retain their wide cells, including split
+emoji variation selectors.
+
+The outer Blessed renderer also uses the updated emoji width for both cell
+allocation and incremental painting. An end-to-end paint regression replaces
+an emoji-containing row with shorter text and checks the emitted terminal
+output for leftover characters; narrow text symbols, BMP/astral CJK and
+explicit emoji presentation are included. No dependency files are edited.
+
+Top-anchored scroll regions now retain primary-buffer history even when their
+bottom margin excludes a fixed composer. Previously long frames could lose
+their headers as they scrolled out of the smaller transcript region. Internal
+regions and alternate buffers still do not enter scrollback. IND/NEL also use
+the normal region-aware scroll path. Tests cover all five command kinds above
+a reserved footer, exact full payloads and replay suppression after scrolling.
+
+Regression coverage includes shortened redraws, fragmented REP, cursor moves,
+reset, narrow symbols, wide glyphs and an authenticated reply parsed after a
+footer repaint. The parser is not made permissive about trailing stale text.
+The live check below additionally exercises three short emoji exchanges and a
+six-delivery continuing REPLY chain before the multiline case. Set
+`COMMANDER_QA_STACKED=1` to reproduce the reported
+212-by-66 stacked layout; omit it for side-by-side panels. Its metadata counts
+space-repeat escape sequences without recording terminal transcripts.
+
+## Claude/Codex feedback submission - 0.1.13
+
+The November 9, 2026 reproduction used the installed npm 0.1.12 package with
+Claude in P1 and Codex in P2. Short and multiline SEND/REPLY exchanges routed,
+but Claude's ACK remained in the composer: text and Enter had been written in
+one input event. The patched checkout separates feedback text/paste from Enter
+and keeps both inside the same session input lane. It rechecks the exact session
+and correction guards before submission. No extra Enter retries or permission
+approvals are introduced. The patched live reproduction consumed both ACKs and
+returned to an empty Claude composer without manual input or resize.
+
+Authenticated addressed SENDs are also accepted immediately after protocol
+setup. The former startup heuristic silently discarded the first SEND even
+though the setup instructions only prohibited unsolicited broadcasts, status
+updates and self-check queries. Capability, replay and exact-address checks
+still apply; unsolicited startup broadcasts/status remain suppressed.
+
+The opt-in Claude/Codex check uses isolated real terminal sessions, tools
+disabled in Claude and read-only/no-approval Codex. It checks short and multiline
+P2-to-P1 SEND, P1-to-P2 REPLY, QUERY, STATUS and BROADCAST, model-produced receipt
+markers, exact delivery counts and an empty Claude composer after ACK. It never
+presses a rescue Enter during the exchanges or persists raw terminal output.
+The CLIs may retain their normal provider histories. This is a targeted
+communication check, not the sixteen-panel OpenCode release acceptance gate.
+
+```bash
+COMMANDER_LIVE_CLAUDE_CODEX=1 \
+  COMMANDER_QA_PACKAGE_ROOT=/absolute/path/to/installed/agents-commander \
+  node tests/live/claude-codex-communication.mjs
+```
+
+Use Node 22+ and installed authenticated `claude` and `codex` commands. Optional
+`COMMANDER_QA_CLAUDE` and `COMMANDER_QA_CODEX` select exact executable paths.
+Version contents alone do not establish publication. See the separate
+[0.1.13 release record](releases/0.1.13.md) for exact-artifact validation and
+registry verification. This release excludes unrelated hardware changes.
+
+## Model-correction feedback — 0.1.12
+
+This section describes the **0.1.12 model-correction extension**, not the npm
+0.1.11 package. Keep the historical 0.1.11 transport results below separate.
+The pre-release implementation evidence below does not establish acceptance or
+publication of the final 0.1.12 archive. Any subsequent runtime changes require `npm run verify` and the
+applicable opt-in live gate against the new exact installed candidate before
+release.
+
+Commander now diagnoses individual authenticated malformed frames and offers
+fixed, specific feedback to their originating model. It does not repair or
+resend the frame. Missing closing delimiters, mismatched/noncanonical counters,
+invalid header/panel fields, and oversized frames have distinct explanations.
+If a completed part contains both valid and invalid frames, feedback must name
+only the rejected frame; an accepted neighbor must never be resent because of
+that error. Recognized rejected counters share the normal replay/echo guard.
+
+OpenCode's completed-text event permits a missing-footer diagnosis. Other
+protocol-enabled CLI harnesses use finalized logical scrollback lines or an
+exact closed footer as evidence. A partial footer in a mutable grid, a clipped
+frame or a missing END remains pending. No timer, pause in model output,
+fullscreen transition or resize is evidence of a completed malformed frame.
+This conservative behavior is not equivalent to full turn-completion hooks in
+every CLI, and model self-correction is not guaranteed.
+
+The allowance is three correction notices per explicitly armed capability,
+not three per command or per successful response. The third notice tells the
+model to stop and ask the user if its next correction fails. Later diagnostics
+remain visible without further automatic feedback; normal valid routing is not
+disabled. Only fresh Ctrl+P setup resets the allowance, after checking previous
+deliveries and verifying an empty ready prompt. F2/P skips already-armed agents.
+Feedback must remain bound to the exact session and key, recheck those identities
+when its input lane runs, and avoid submitting a detected manual input draft or
+intervening user typing.
+
+### Pre-release implementation evidence
+
+Automated acceptance recorded on 14 September 2026: the complete verification
+gate passed with **1,837 tests in 123 files** after the final live-check
+helper changes. Python (28 tests), development watch, build, installed CLI,
+packed keyboard/navigation, 100-panel layouts and twenty synthetic PTYs passed.
+These automated checks use deterministic fixtures; live-provider evidence is
+recorded separately below and is not proof for every model.
+
+The pre-release installed candidate then passed the opt-in real-provider gate with
+sixteen OpenCode **1.18.30 / APEX** sessions in the normal Commander application
+at 351 × 74 cells. Nineteen baseline/stress trials covered every command and
+QUERY variant, 42-line / 3,863-byte messages, Markdown/code/Unicode, concurrent
+reply windows, stable panel reordering, fullscreen hidden recipients, and
+settled resizes without replay. The additional intentional malformed-frame
+trial proved one exact controller error stored in P1's conversation, a completed
+model-generated child response using a fresh counter with unchanged body/target,
+and exactly one P2 receipt and delivery ACK. There was no input or resize while
+that correction was pending. Whole-run totals were exactly **22 accepted
+commands and 72 delivered messages**, one correction notice and zero unaccounted
+errors. Natural quit and complete owned-process cleanup passed; configuration
+was unchanged, capture stayed off and model tools were denied.
+
+Historical pre-release candidate archive SHA-256:
+`5ed7d801cc76216d520997718bfcdd64f4c01638b0b5f40ba4e58f9cc54ff47a`.
+All 142 installed runtime files matched that checkout build byte for byte.
+The local archive retained development version 0.1.11; it is **not** the public
+npm 0.1.11 archive and has not been published. These are bounded APEX/OpenCode
+results; other harnesses have deterministic fixture coverage, not live-provider
+or physical Codex Micro acceptance in this run.
+
+One intermediate parallel test rerun timed out in the unchanged native
+file-watcher integration test. Its isolated rerun and the subsequent complete
+1,837-test verification gate passed without changing that test or watcher code.
+
+Pre-release implementation acceptance checklist:
+
+- [x] All five verbs: malformed frame, precise feedback, fresh-counter correction
+  accepted exactly once, reused rejected counter suppressed without delivery.
+- [x] Header/footer missing `===`, unequal counters, noncanonical or unsafe
+  counters, invalid panel/header and byte/line limits; no payload or capability
+  leakage in feedback, logs or diagnostics.
+- [x] Mixed valid/invalid frames in one completed part preserve the valid
+  delivery while rejecting only the malformed neighbor; separate OpenCode parts
+  never stitch together.
+- [x] Character-by-character PTY chunks with long pauses never trigger a false
+  error before the closing delimiter arrives. Mutable partial/missing footers,
+  clipping, resize and fullscreen remain conservative; finalized scrollback and
+  immutable completed parts produce the appropriate bounded error.
+- [x] Malformed outgoing prompt examples, echoes, snapshots and repeated
+  repaint/scrollback sightings neither route nor generate new correction loops.
+- [x] Three notices exhaust only the exact capability's allowance. Success,
+  model output, time and resize do not refill it; explicit new Ctrl+P setup does.
+- [x] Unarmed, wrong-key, rotated-key, replaced/closed-session and shutdown
+  events stay inert, including notices waiting behind another input operation.
+  Draft text and intervening user typing are not submitted by feedback.
+- [x] Real OpenCode 1.18.30/APEX sessions exercise communication and genuine
+  model correction without rescue resize/input, with exact accepted deliveries.
+- [ ] Extend live-provider acceptance to Claude, Codex, Gemini and Pi/generic
+  harnesses before making corresponding real-model reliability claims.
+- [x] Final `npm run verify`, packed candidate checks, APEX live acceptance and
+  owned-process teardown succeed for that pre-release candidate. No publication
+  or final 0.1.12 artifact acceptance is implied by these historical checks.
+
+### Final 0.1.12 artifact gate
+
+Release requires complete verification and the sixteen-panel stress/correction
+live gate against the exact installed 0.1.12 archive, with owned-process teardown.
+After sealing the archive, record its digest and final acceptance separately in
+the source repository's release evidence. Verify the published registry artifact
+separately before claiming npm availability; a package's bundled checklist cannot
+establish its own publication.
+
+Targeted coverage includes `tests/unit/protocol-feedback.test.ts`,
+`tests/unit/protocol-malformed.test.ts`,
+`tests/unit/terminal-protocol-feedback.test.ts`,
+`tests/unit/orchestrator-protocol-feedback.test.ts`. These deterministic fixtures are not paid-provider or
+physical-hardware acceptance. Existing long-message, replay, stream-boundary
+and delivery-feedback fixtures remain part of the complete gate.
+
+With explicit provider-use consent, an installed candidate and the configured
+APEX/OpenCode profile, the additional live correction gate is:
+
+```bash
+COMMANDER_LIVE_APEX=1 COMMANDER_QA_PANEL_COUNT=16 COMMANDER_QA_STRESS=1 \
+  COMMANDER_QA_CORRECTION=1 \
+  COMMANDER_QA_PACKAGE_ROOT=/absolute/path/to/installed/agents-commander \
+  npm run test:live:apex
+```
+
+The correction flag does not replace provider consent or the normal command
+matrix. It adds an intentional malformed first attempt, one exact error stored
+in the source conversation, and a model-generated correction whose parent is
+that feedback message. It requires an unchanged recipient/body, a fresh counter
+and exactly one verified receiver receipt. No harness-generated repair, rescue
+input or resize is allowed while pending. Sixteen-panel stress plus correction
+must total exactly **22 accepted commands and 72 deliveries**; the malformed
+attempt is not a delivered command. Incidental model errors during the ordinary
+matrix are allowed only when each has independent evidence of exact controller
+feedback, a causal child response with a fresh counter and unchanged body/target,
+and exactly one accepted command with its full receiver receipts. Any unaccounted
+error fails acceptance. Logs contain bounded metadata only.
+
 ## OpenCode semantic transport — 0.1.11
 
 This section describes the **0.1.11 transport and its validation**, not proof of

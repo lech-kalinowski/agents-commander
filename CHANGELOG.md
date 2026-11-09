@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.1.13
+
+### Fixed
+
+- Separate controller feedback text/paste from Enter inside the same guarded
+  session input lane. Claude/Codex feedback no longer remains as an unsubmitted
+  draft in the reproduced exchanges. No permission approval or blind retry is
+  added, and delayed submission still checks session identity and user input.
+- Accept explicitly addressed, authenticated SENDs immediately after protocol
+  setup, while continuing to suppress unsolicited startup broadcasts/status.
+- Retain primary-buffer history when top-anchored scroll regions reserve a
+  bottom composer, so long frames do not lose their headers. Internal regions
+  and alternate buffers remain excluded; IND/NEL use region-aware scrolling.
+- Correct REP blank clearing, narrow spinner/bullet widths and emoji display
+  widths in both the virtual terminal and Blessed's incremental painter.
+  Preserve split variation selectors, CJK widths and one-column panel safety.
+
+### Validation scope
+
+- Add deterministic regressions for stale footer text, scrolling long frames,
+  replay suppression, emoji redraw artifacts and guarded feedback submission.
+- Add opt-in real Claude/Codex installed-package acceptance for short/multiline
+  SEND/REPLY, continuing reply chains, QUERY, STATUS and BROADCAST in stacked
+  and side-by-side layouts. The existing sixteen-agent APEX gate remains required.
+- The unrelated, unreleased Codex Micro framing/diagnostic work is not included.
+  See `docs/releases/0.1.13.md` for the exact artifact, gate results and separate
+  registry publication verification. Restart Commander after upgrading.
+
+## 0.1.12
+
+### Added
+
+- Shared authenticated per-frame diagnostics for malformed protocol headers,
+  closing delimiters, counters, panel numbers and content limits. Fixed feedback
+  identifies the error without exposing the body or capability key. A model
+  may correct the rejected frame with a fresh counter; Commander does not
+  rewrite, automatically retry, redirect, or resend messages already delivered.
+- A maximum of three correction notices per explicitly armed capability, then
+  a visible feedback pause. Only explicit fresh Ctrl+P protocol setup restores
+  the allowance; resize, successful messages and model output do not. Normal
+  valid routing remains available after the feedback allowance is exhausted.
+- Shared rejected-frame and prompt-echo replay reservations, plus session/key
+  and user-input-draft guards on correction feedback. Queued notices cannot
+  follow a replacement session, a rotated key or intervening manual input.
+
+### Validation boundaries
+
+- OpenCode diagnoses immutable completed text parts, including missing footers.
+  Other CLI harnesses report only with finalized scrollback or exact closed
+  footer evidence. A mutable partial footer or missing END stays pending;
+  elapsed time and window resize never establish completion.
+- These changes are new in **0.1.12**, not part of 0.1.11. Pre-release source
+  verification passed 1,837 tests plus Python and packaged-terminal checks.
+  Sixteen real OpenCode 1.18.30/APEX sessions passed all commands, stress and
+  model-correction acceptance: exactly 22 accepted commands and 72 deliveries,
+  with owned-process cleanup and unchanged configuration. Other harnesses have
+  deterministic coverage, not live-provider acceptance in this run.
+  See `docs/qa.md` for the evidence and remaining coverage boundaries.
+
+Version contents do not establish registry publication. The final versioned
+package requires its own complete verification and live acceptance gates;
+verify npm publication separately.
+
 ## 0.1.11
 
 ### Fixed

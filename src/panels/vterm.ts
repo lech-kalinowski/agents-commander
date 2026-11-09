@@ -9,6 +9,8 @@
  * wide characters, zero-width joiners/combiners, mouse mode tracking.
  */
 
+import { isWideEmoji } from '../utils/emoji-width.js';
+
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 
@@ -105,40 +107,20 @@ function styleToAnsi(style: CellStyle): string {
 /** Determine terminal display width of a character (1 or 2). */
 function charWidth(ch: string): 1 | 2 {
   const cp = ch.codePointAt(0) ?? 0;
+  // Text dingbats (Claude's spinners/bullets) are narrow unless explicitly
+  // presented as emoji. Treating their entire Unicode block as wide drifts
+  // the cursor on every incremental repaint.
+  if (isWideEmoji(ch)) return 2;
   if (cp < 0x1100) return 1;
   if (
     (cp >= 0x1100 && cp <= 0x115F) ||
-    (cp >= 0x231A && cp <= 0x231B) ||
     (cp >= 0x2329 && cp <= 0x232A) ||
-    (cp >= 0x23E9 && cp <= 0x23F3) ||
-    (cp >= 0x23F8 && cp <= 0x23FA) ||
-    (cp >= 0x25FD && cp <= 0x25FE) ||
-    (cp >= 0x2614 && cp <= 0x2615) ||
-    (cp >= 0x2648 && cp <= 0x2653) ||
-    (cp >= 0x267F && cp <= 0x267F) ||
-    (cp >= 0x2693 && cp <= 0x2693) ||
-    (cp >= 0x26A1 && cp <= 0x26A1) ||
-    (cp >= 0x26AA && cp <= 0x26AB) ||
-    (cp >= 0x26BD && cp <= 0x26BE) ||
-    (cp >= 0x26C4 && cp <= 0x26C5) ||
-    (cp >= 0x26D4 && cp <= 0x26D4) ||
-    (cp >= 0x26EA && cp <= 0x26EA) ||
-    (cp >= 0x26F2 && cp <= 0x26F3) ||
-    (cp >= 0x26F5 && cp <= 0x26F5) ||
-    (cp >= 0x26FA && cp <= 0x26FA) ||
-    (cp >= 0x2702 && cp <= 0x27B0) ||
-    (cp >= 0x2934 && cp <= 0x2935) ||
-    (cp >= 0x2B05 && cp <= 0x2B07) ||
-    (cp >= 0x2B1B && cp <= 0x2B1C) ||
-    (cp >= 0x2B50 && cp <= 0x2B50) ||
-    (cp >= 0x2B55 && cp <= 0x2B55) ||
     (cp >= 0x2E80 && cp <= 0xA4CF && cp !== 0x303F) ||
     (cp >= 0xAC00 && cp <= 0xD7AF) ||
     (cp >= 0xF900 && cp <= 0xFAFF) ||
     (cp >= 0xFE10 && cp <= 0xFE6F) ||
     (cp >= 0xFF01 && cp <= 0xFF60) ||
     (cp >= 0xFFE0 && cp <= 0xFFE6) ||
-    (cp >= 0x1F000 && cp <= 0x1FAFF) ||
     (cp >= 0x20000 && cp <= 0x3FFFF)
   ) return 2;
   return 1;
@@ -208,6 +190,8 @@ export class VTerm {
   private wrapPending = false;
   /** Consumed by the next printable; ordinary line flow cannot set it. */
   private cursorMovePending = false;
+  /** CSI REP repeats the last printed graphic, including SPACE, after moves. */
+  private lastGraphic: string | null = null;
 
   // ── Scroll region ─────────────────────────────────────────────
   private scrollTop = 0;
@@ -661,7 +645,23 @@ export class VTerm {
 
   private appendZeroWidth(char: string): void {
     const cell = this.getPreviousGraphicCell();
-    if (cell) cell.char += char;
+    if (!cell) return;
+    const combined = cell.char + char;
+    if (charWidth(combined) > charWidth(cell.char)) {
+      // VS16 may arrive in a later PTY chunk. Expand the existing cell using
+      // the normal wide-glyph wrap/overwrite rules, preserving its style.
+      const col = this.wrapPending ? this.cursorCol : this.cursorCol - 1;
+      const style = this.style;
+      this.grid[this.cursorRow][col] = this.blankCell();
+      this.cursorCol = col;
+      this.wrapPending = false;
+      this.style = cell.style;
+      this.writePrintable(combined);
+      this.style = style;
+    } else {
+      cell.char = combined;
+      this.lastGraphic = combined;
+    }
   }
 
   private clearCellForWrite(row: Cell[], col: number): void {
@@ -683,6 +683,7 @@ export class VTerm {
     // A two-column glyph cannot be represented in a one-column grid without
     // bleeding into adjacent Blessed UI, so use a single-cell replacement.
     const printable = charWidth(char) > this.cols ? '\uFFFD' : char;
+    this.lastGraphic = printable;
     const width = charWidth(printable);
     if (this.wrapPending || this.cursorCol + width > this.cols) {
       this.cursorMovePending = false;
@@ -783,6 +784,17 @@ export class VTerm {
           continue;
         }
 
+        // IND/NEL use the same region-aware scrolling as LF; NEL also resets X.
+        if (remaining.length >= 2 && (remaining[1] === 'D' || remaining[1] === 'E')) {
+          this.cursorMovePending = false;
+          this.gridWrapsToNext[this.cursorRow] = false;
+          this.wrapPending = false;
+          if (remaining[1] === 'E') this.cursorCol = 0;
+          this.lineFeed();
+          i += 2;
+          continue;
+        }
+
         // ESC M — reverse index (move cursor up, scroll if at top of region)
         if (remaining.length >= 2 && remaining[1] === 'M') {
           this.cursorMovePending = true;
@@ -805,6 +817,7 @@ export class VTerm {
           this.wrapPending = false;
           this.style = { ...DEFAULT_STYLE };
           this.cursorMovePending = false;
+          this.lastGraphic = null;
           this.scrollTop = 0;
           this.scrollBottom = this.rows - 1;
           i += 2;
@@ -940,8 +953,9 @@ export class VTerm {
 
   /** Scroll content up within the scroll region by one line. */
   private scrollUp(preserveBottomWrap = false): void {
-    // Push top row to scrollback only for full-screen scroll in main buffer
-    if (this.scrollTop === 0 && this.scrollBottom === this.rows - 1 && !this._inAltScreen) {
+    // A top-anchored region still contributes history when a CLI reserves
+    // bottom rows for its composer. Internal regions and alt buffers do not.
+    if (this.scrollTop === 0 && !this._inAltScreen) {
       const wrapsToNext = this.gridWrapsToNext[0] ?? false;
       this.scrollback.push(this.renderRow(this.grid[0], wrapsToNext));
       this.scrollbackWrapsToNext.push(wrapsToNext);
@@ -1191,9 +1205,8 @@ export class VTerm {
         break;
       case 'b': // REP — Repeat the preceding graphic character n times
         {
-          const previous = this.getPreviousGraphicCell();
-          if (previous) {
-            const previousChar = previous.char;
+          if (this.lastGraphic !== null) {
+            const previousChar = this.lastGraphic;
             for (let j = 0; j < n; j++) this.writePrintable(previousChar);
           }
         }

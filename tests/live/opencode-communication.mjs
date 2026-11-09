@@ -20,7 +20,8 @@ const { createRequire, syncBuiltinESMExports } = await import('node:module');
 const { promisify } = await import('node:util');
 const { fileURLToPath, pathToFileURL } = await import('node:url');
 const { DatabaseSync } = await import('node:sqlite');
-const { oneCommandAccepted, wholeRunAccepted, settledReadySince } = await import('./acceptance-checks.mjs');
+const { oneCommandAccepted, correctionAccepted, correctionAccountingAccepted, expectedCorrectionFeedback, exactMalformedCorrectionShape,
+  wholeRunAccepted, settledReadySince, hasKnownOpenCodePasteSeparator, openCodeStoredInputMatches } = await import('./acceptance-checks.mjs');
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const packageRoot = process.env.COMMANDER_QA_PACKAGE_ROOT ? path.resolve(process.env.COMMANDER_QA_PACKAGE_ROOT) : root;
@@ -64,7 +65,11 @@ const cols = 351, rows = 74, count = Number(process.env.COMMANDER_QA_PANEL_COUNT
 check(count === 6 || count === 16, 'profile-rejected');
 const expectNative = process.env.COMMANDER_QA_LEGACY_BASELINE !== '1';
 const stressEnabled = process.env.COMMANDER_QA_STRESS === '1';
-let baselinePassed = false, stressPassed = !stressEnabled;
+const correctionEnabled = process.env.COMMANDER_QA_CORRECTION === '1';
+check(!correctionEnabled || expectNative, 'profile-rejected');
+let baselinePassed = false, stressPassed = !stressEnabled, correctionPassed = !correctionEnabled;
+let correctionResult = null;
+let correctionWindow = null;
 const started = Date.now();
 const workspace = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'commander-apex-matrix-')));
 await fs.chmod(workspace, 0o700);
@@ -138,6 +143,7 @@ const stringEnums = new Set(['startup','welcome','dismiss-welcome','focus','pick
   'send-short','reply-short','reply-long','broadcast-short','send-long','broadcast-long','send-markdown','broadcast-markdown',
   'query-ping','query-agents','query-panels','query-status','query-help','status-short','simultaneous',
   'reply-latest','reply-previous','broadcast-hidden','send-reordered','send-after-resize','reorder','fullscreen','resize','natural-quit',
+  'correction','correction-running',
   'send','reply','broadcast','status','query','queued','delivered','failed','timed_out','dropped',
   'SEND','REPLY','BROADCAST','STATUS','QUERY','END']);
 const keys = new Set(['event','stage','elapsedSeconds','trial','passed','failure','panels','panel','columns','rows','running',
@@ -154,7 +160,10 @@ const keys = new Set(['event','stage','elapsedSeconds','trial','passed','failure
   'stressResults','baselinePassed','stressPassed','distinctThreads','stableIdentities','hiddenTargets','visiblePanels',
   'wireBodyExactCount','receiverAddedOneSpaceCount','receiverByteExactCount','knownOpenCodePasteBehavior','naturalQuitPassed','channelOpenBeforeQuit',
   'freshPromptChrome','latestUserCompleted','settled','settledElapsedMs','matchingEvents','fullRunPassed',
-  'actualEvents','expectedEvents','actualRoutes','expectedRoutes','allRoutesDelivered']);
+  'actualEvents','expectedEvents','actualRoutes','expectedRoutes','allRoutesDelivered',
+  'correctionEnabled','correctionPassed','correctionResult','malformedFrames','controllerFeedbackCount','feedbackWireCount','feedbackStoredCount',
+  'malformedComplete','malformedShapeExact','feedbackExact','correctionSequenceFresh','correctedAfterFeedback',
+  'sameSourceSession','deliveryAckReceived','fullRunCorrectionFeedback','incidentalRecoveries','unaccountedCorrectionFeedback']);
 function guard(value) {
   if (value === null || value === undefined || typeof value === 'boolean') return true;
   if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0;
@@ -271,7 +280,7 @@ function receiptEvidence(index, expected, since) {
     const stored = storedUserText(row.part);
     if (stored === null) continue;
     if (wires.some(wire => stored === wire.text)) { exact++; continue; }
-    // OpenCode 1.18.30 inserts a virtual paste-summary label plus ONE separator
+    // OpenCode 1.18.30/1.18.31 insert a virtual paste-summary label plus ONE separator
     // space for >=3 lines or >150 chars. Submission expands the label without
     // removing its separator. Compare the COMPLETE real wire envelope/body; do
     // not trim, normalize internal whitespace, or accept this on other versions.
@@ -279,8 +288,8 @@ function receiptEvidence(index, expected, since) {
     // https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/component/prompt/index.tsx#L1183-L1212
     // https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/component/prompt/index.tsx#L1026-L1034
     // https://github.com/anomalyco/opencode/blob/v1.18.30/packages/tui/src/prompt/part.ts#L24-L28
-    if (sessionVersions.get(index) === '1.18.30' && wires.some(wire =>
-      (wire.text.split('\n').length >= 3 || wire.text.length > 150) && stored === wire.text + ' ')) separator++;
+    // https://github.com/anomalyco/opencode/blob/v1.18.31/packages/tui/src/component/prompt/index.tsx#L1084-L1144
+    if (wires.some(wire => openCodeStoredInputMatches(sessionVersions.get(index), stored, wire.text))) separator++;
   }
   return { wire: wires.length, exact, separator, total: exact + separator };
 }
@@ -378,7 +387,7 @@ function inspectTrial(spec, since, routeStart, eventStart, feedbackStart, sentAt
     contentBytes: Buffer.byteLength(spec.body), newEvents: allEvents.length, matchingEvents: emitted.length, newRoutes: routes.length,
     expectedTargets: spec.targets.map(n => n + 1), deliveredTargets: delivered.map(item => item.target.panelIndex + 1),
     expectedReceiveCount, actualReceiveCount, wireBodyExactCount, receiverAddedOneSpaceCount, receiverByteExactCount,
-    knownOpenCodePasteBehavior: spec.targets.every(index => sessionVersions.get(index) === '1.18.30'),
+    knownOpenCodePasteBehavior: spec.targets.every(index => hasKnownOpenCodePasteSeparator(sessionVersions.get(index))),
     receivedByTarget: received.map((n,index) => ({ target: spec.targets[index] + 1, actualReceiveCount: n })),
     observedFeedback: feedbackMatches, expectedFeedback: spec.feedback ? 1 : 0, responseSubmitted: feedbackReceived, sameThread,
     latencyMs: Date.now() - sentAt, transportLatencyMs,
@@ -510,6 +519,196 @@ async function runStress(longBody) {
   stressResults.push(resized); report(resized); if (!resized.passed) return false;
   return (await trial({ id: 'send-after-resize', kind: 'send', source: 0, targets: [1], body: 'APEX_FRESH_AFTER_RESIZE_20260914' })).passed;
 }
+
+/** Optional real-model recovery proof; never synthesize agent output or repair it here. */
+async function runCorrection() {
+  await focus(0);
+  await waitFor(() => panels().every(ready), 'trial-ready', 45000);
+  const source = panels().find(panel => panel.panelIndex === 0);
+  const sourceSession = sessionIds.get(0), sourceCapability = source.protocolCapability;
+  const since = Date.now(), routeStart = activity().length, eventStart = events.length, feedbackStart = feedback.length;
+  correctionWindow = { start: feedbackStart, end: null };
+  const correctionAttempt = 1 + feedback.slice(0, feedbackStart)
+    .filter(item => item.panel === 0 && item.text.startsWith('[Commander protocol error]')).length;
+  const payload = 'APEX_EXACT_MODEL_CORRECTION_TO_P2_20260914';
+  // Describe the deliberate defect, without quoting an executable key/counter
+  // example that echo reservations would correctly make ineligible to execute.
+  const prompt = `Isolated protocol-correction acceptance; no tools or file changes. Your next assistant response must contain exactly one deliberately malformed Commander SEND to exact adapter opencode in stable panel 2, using your CURRENT capability and a NEW positive canonical counter. Deliberate defect: omit the closing three equals signs from BOTH the SEND header and END footer, while preserving the opening three equals signs and every other field. Put the exact one-line body between PAYLOAD_START and PAYLOAD_STOP below between these two malformed markers. No prose or code fence. Do NOT fix these missing equals signs in this first response: we are verifying controller rejection. When Commander sends its protocol error, correct ONLY this rejected frame ONCE using a strictly greater fresh counter and complete matching markers. Preserve the exact recipient and body. Wait for the error before correcting. After the delivery ACK or any received message, emit no additional protocol frames; ordinary DONE text is allowed. If that one correction fails, stop; never retry again.\nPAYLOAD_START\n${payload}\nPAYLOAD_STOP`;
+  write(`\x1b[200~${prompt}\x1b[201~\r`);
+  const sentAt = Date.now(), writesAt = inputWrites, resizesAt = resizeEvents;
+  const deadline = sentAt + 4 * 60 * 1000;
+  stage = 'correction-running';
+  let result, settledSince = null, settled = false;
+  do {
+    await delay(500);
+    check(!trackingFailure, 'tracking-failed');
+    check(!launchSafetyRejected, 'profile-rejected');
+    const records = ownedParts();
+    // Never join text parts: the real completion channel rejects incomplete
+    // individual parts even if a later part could appear to complete them.
+    const sourceParts = records.filter(row => row.session_id === sourceSession && row.time_created >= since
+      && row.message.role === 'assistant' && row.message.time?.completed && row.part.type === 'text').map(row => {
+      const frames = [], issues = [];
+      const parser = new ProtocolScanner(0, 'opencode', message => frames.push(message), {
+        onRejected: message => frames.push(message), onMalformed: issue => issues.push(issue), logPotentialMarkers: false,
+      });
+      parser.setProtocolCapability(sourceCapability);
+      parser.feed((row.part.text ?? '') + '\n');
+      parser.finishCompletedPart();
+      parser.dispose?.();
+      return { row, frames, issues };
+    });
+    const malformed = sourceParts.flatMap(part => part.issues.map(issue => ({ ...part, issue })));
+    const corrected = sourceParts.flatMap(part => part.frames.map(frame => ({ ...part, frame })));
+    const rejected = malformed.length === 1 ? malformed[0] : null;
+    const accepted = corrected.length === 1 ? corrected[0] : null;
+    const rejectedCounter = rejected?.issue.sequences.length === 1 ? rejected.issue.sequences[0] : null;
+    const malformedExpected = rejectedCounter === null ? null
+      : `===COMMANDER:SEND:opencode:2:${sourceCapability}:${rejectedCounter}\n${payload}\n===COMMANDER:END:${sourceCapability}:${rejectedCounter}`;
+    const malformedText = rejected?.row.part.text ?? '';
+    const malformedShapeExact = rejected?.issue.code === 'missing-both-delimiters'
+      && exactMalformedCorrectionShape(malformedText, malformedExpected);
+    const expectedFeedback = expectedCorrectionFeedback(rejectedCounter, 'missing-both-delimiters', correctionAttempt);
+    const controllerErrors = feedback.slice(feedbackStart).filter(item => item.text.startsWith('[Commander protocol error]'));
+    const errorWires = (wirePastes.get(0) ?? []).filter(item => item.at >= since && item.text.startsWith('[Commander protocol error]'));
+    const sameStoredWire = (stored, wire) => openCodeStoredInputMatches(sessionVersions.get(0), stored, wire);
+    const sourceErrors = records.filter(row => row.session_id === sourceSession && row.time_created >= since
+      && row.message.role === 'user' && storedUserText(row.part)?.startsWith('[Commander protocol error]'));
+    const storedError = sourceErrors.length === 1 ? sourceErrors[0] : null;
+    const feedbackExact = !!expectedFeedback && controllerErrors.length === 1 && controllerErrors[0].panel === 0
+      && controllerErrors[0].text === expectedFeedback && errorWires.length === 1 && errorWires[0].text === expectedFeedback
+      && !!storedError && sameStoredWire(storedUserText(storedError.part), expectedFeedback);
+    const allEvents = events.slice(eventStart), routes = activity().slice(routeStart);
+    const matches = allEvents.filter(event => event.type === 'send' && event.sourcePanel === 0
+      && event.targetAgent === 'opencode' && event.targetPanel === 1 && event.content === payload);
+    const matchingRoutes = routes.filter(route => route.kind === 'send' && route.status === 'delivered'
+      && route.source.panelIndex === 0 && route.target.panelIndex === 1 && route.content === payload);
+    const receipt = receiptEvidence(1, payload, since);
+    const sourceComplete = !!accepted?.row.message.time?.completed && accepted.row.message.finish === 'stop';
+    const sourceFrame = accepted?.frame;
+    const correctionSequenceFresh = Number.isSafeInteger(rejectedCounter) && rejectedCounter > 0
+      && Number.isSafeInteger(sourceFrame?.sequence) && sourceFrame.sequence > rejectedCounter;
+    const correctedAfterFeedback = !!storedError && accepted?.row.message.parentID === storedError.message_id;
+    const ownPrompts = records.filter(row => row.session_id === sourceSession && row.message.role === 'user'
+      && row.time_created >= since && storedUserText(row.part)?.includes('PAYLOAD_START\n'));
+    const promptedBodyExact = ownPrompts.length === 1
+      && storedUserText(ownPrompts[0].part).split('PAYLOAD_START\n')[1]?.split('\nPAYLOAD_STOP')[0] === payload;
+    const ack = matchingRoutes.length === 1 ? `[Commander ACK] status=delivered msg=${matchingRoutes[0].messageId} thread=${matchingRoutes[0].threadId} target="${matchingRoutes[0].target.agentName}" panel=2` : null;
+    const ackFeedback = feedback.slice(feedbackStart).filter(item => item.panel === 0 && item.text === ack);
+    const deliveryAckReceived = !!ack && ackFeedback.length === 1 && records.filter(row => row.session_id === sourceSession
+      && row.message.role === 'user' && row.time_created >= since && sameStoredWire(storedUserText(row.part), ack)).length === 1;
+    const observation = {
+      sourceComplete, generationErrors: sourceMessages(0, since).filter(message => message.errors).length,
+      sourceFrames: corrected.length, allEventCount: allEvents.length, matchingEventCount: matches.length,
+      allRouteCount: routes.length, expectedRouteCount: 1,
+      bodyExact: promptedBodyExact && sourceFrame?.type === 'send' && sourceFrame.targetAgent === 'opencode'
+        && sourceFrame.targetPanel === 1 && sourceFrame.content === payload && matchingRoutes.length === 1,
+      wireBodyExactCount: receipt.wire, receiptCounts: [receipt.total], feedbackAccepted: feedbackExact,
+      sameThread: true, untouched: inputWrites === writesAt && resizeEvents === resizesAt,
+      malformedFrames: malformed.length, controllerFeedbackCount: controllerErrors.length,
+      feedbackWireCount: errorWires.length, feedbackStoredCount: sourceErrors.length,
+      malformedComplete: !!rejected?.row.message.time?.completed && rejected.row.message.finish === 'stop', malformedShapeExact, feedbackExact,
+      correctionSequenceFresh, correctedAfterFeedback,
+      sameSourceSession: panels().find(panel => panel.panelIndex === 0) === source && source.isRunning
+        && sessionIds.get(0) === sourceSession && source.openCodeChannel?.sessionID === sourceSession
+        && source.protocolCapability === sourceCapability,
+      deliveryAckReceived,
+    };
+    const proof = correctionAccepted(observation);
+    const quiet = settledReadySince(settledSince, { accepted: proof, allReady: panels().every(ready), now: Date.now() });
+    settledSince = quiet.since; settled = quiet.settled;
+    result = { event: 'trial', trial: 'correction', kind: 'send', source: 1, passed: proof && settled,
+      sourceComplete, generationErrors: observation.generationErrors, sourceFrames: corrected.length,
+      sourceBodyExact: observation.bodyExact, promptedBodyExact,
+      malformedFrames: observation.malformedFrames, controllerFeedbackCount: observation.controllerFeedbackCount,
+      feedbackWireCount: observation.feedbackWireCount, feedbackStoredCount: observation.feedbackStoredCount,
+      malformedComplete: observation.malformedComplete, malformedShapeExact, feedbackExact,
+      correctionSequenceFresh, correctedAfterFeedback, sameSourceSession: observation.sameSourceSession, deliveryAckReceived,
+      newEvents: allEvents.length, matchingEvents: matches.length, newRoutes: routes.length,
+      expectedReceiveCount: 1, actualReceiveCount: receipt.total, wireBodyExactCount: receipt.wire,
+      receiverAddedOneSpaceCount: receipt.separator, receiverByteExactCount: receipt.exact,
+      inputDuringPending: inputWrites - writesAt, resizeDuringPending: resizeEvents - resizesAt,
+      settled, settledElapsedMs: Date.now() - sentAt, latencyMs: Date.now() - sentAt };
+    if (settled) break;
+  } while (Date.now() < deadline);
+  report(result);
+  correctionWindow.end = feedback.length;
+  return result;
+}
+
+/** Account for incidental, successful delimiter recovery during ordinary trials. */
+function auditIncidentalCorrections(routes) {
+  const records = ownedParts();
+  const errors = feedback.map((item, index) => ({ ...item, index }))
+    .filter(item => item.text.startsWith('[Commander protocol error]'));
+  const attempts = new Map();
+  let incidentalRecoveries = 0, unaccountedCorrectionFeedback = 0;
+  for (const error of errors) {
+    const attempt = (attempts.get(error.panel) ?? 0) + 1;
+    attempts.set(error.panel, attempt);
+    if (correctionWindow && error.index >= correctionWindow.start && error.index < correctionWindow.end) {
+      if (!correctionPassed || errors.filter(item => item.index >= correctionWindow.start
+        && item.index < correctionWindow.end).length !== 1) unaccountedCorrectionFeedback++;
+      continue;
+    }
+    const panel = panels().find(item => item.panelIndex === error.panel);
+    const session = sessionIds.get(error.panel), capability = panel?.protocolCapability;
+    if (!session || !capability) { unaccountedCorrectionFeedback++; continue; }
+    const own = records.filter(row => row.session_id === session);
+    const storedMatches = (row, wire) => {
+      const stored = storedUserText(row.part);
+      return openCodeStoredInputMatches(sessionVersions.get(error.panel), stored, wire);
+    };
+    const stored = own.filter(row => row.message.role === 'user' && storedMatches(row, error.text));
+    const wires = (wirePastes.get(error.panel) ?? []).filter(wire => wire.text === error.text);
+    if (stored.length !== 1 || wires.length !== 1) { unaccountedCorrectionFeedback++; continue; }
+    const completed = own.filter(row => row.message.role === 'assistant' && row.message.time?.completed
+      && row.message.finish === 'stop' && !row.message.error && row.part.type === 'text').map(row => {
+      const frames = [], issues = [];
+      const parser = new ProtocolScanner(error.panel, 'opencode', frame => frames.push(frame), {
+        onRejected: frame => frames.push(frame), onMalformed: issue => issues.push(issue), logPotentialMarkers: false,
+      });
+      parser.setProtocolCapability(capability); parser.feed((row.part.text ?? '') + '\n'); parser.finishCompletedPart();
+      return { row, frames, issues };
+    });
+    const malformed = completed.filter(part => part.row.time_created < stored[0].time_created
+      && part.frames.length === 0 && part.issues.length === 1 && part.issues[0].sequences.length === 1
+      && expectedCorrectionFeedback(part.issues[0].sequences[0], part.issues[0].code, attempt) === error.text);
+    const children = completed.filter(part => part.row.message.parentID === stored[0].message_id);
+    const childFrames = children.flatMap(part => part.frames);
+    if (malformed.length !== 1 || childFrames.length !== 1 || children.some(part => part.issues.length)) {
+      unaccountedCorrectionFeedback++; continue;
+    }
+    const frame = childFrames[0], issue = malformed[0].issues[0], sequence = issue.sequences[0];
+    const kind = frame.type === 'send' ? `SEND:${frame.targetAgent}:${frame.targetPanel + 1}` : frame.type.toUpperCase();
+    const oldHeader = `===COMMANDER:${kind}:${capability}:${sequence}`
+      + (issue.code === 'missing-footer-delimiter' ? '===' : '');
+    const oldFooter = `===COMMANDER:END:${capability}:${sequence}`
+      + (issue.code === 'missing-header-delimiter' ? '===' : '');
+    const shapeExact = exactMalformedCorrectionShape(malformed[0].row.part.text, `${oldHeader}\n${frame.content}\n${oldFooter}`);
+    const matchingEvents = events.filter(event => event.sourcePanel === error.panel && event.capability === capability
+      && event.sequence === frame.sequence && event.type === frame.type && event.targetAgent === frame.targetAgent
+      && event.targetPanel === frame.targetPanel && event.content === frame.content
+      && event.observedAt >= stored[0].time_created);
+    const delivered = routes.filter(route => route.source.panelIndex === error.panel && route.kind === frame.type
+      && route.content === frame.content && route.createdAt >= stored[0].time_created);
+    const expectedRoutes = frame.type === 'query' || frame.type === 'status' ? 0 : frame.type === 'broadcast' ? count - 1 : 1;
+    const routeExact = delivered.length === expectedRoutes && delivered.every(route => route.status === 'delivered'
+      && route.source.sessionId === session && (frame.type !== 'send' || (route.target.panelIndex === frame.targetPanel
+        && route.target.agentType === frame.targetAgent))
+      && route.target.sessionId === sessionIds.get(route.target.panelIndex)
+      && (frame.type !== 'broadcast' || route.target.panelIndex !== error.panel))
+      && new Set(delivered.map(route => route.target.panelIndex)).size === expectedRoutes;
+    const receiptsExact = delivered.every(route => {
+      const evidence = receiptEvidence(route.target.panelIndex, frame.content, stored[0].time_created);
+      return evidence.wire === 1 && evidence.total === 1;
+    });
+    if (shapeExact && Number.isSafeInteger(frame.sequence) && frame.sequence > sequence
+      && matchingEvents.length === 1 && routeExact && receiptsExact) incidentalRecoveries++;
+    else unaccountedCorrectionFeedback++;
+  }
+  return { incidentalRecoveries, unaccountedCorrectionFeedback };
+}
 try {
   const startup = app.run();
   await waitFor(() => view().includes('Multi-Agent Terminal Manager'), 'welcome');
@@ -569,6 +768,10 @@ try {
   await trial({ id: 'broadcast-markdown', kind: 'broadcast', source: 0, targets: peers, body: markdown });
   baselinePassed = trials.length === 14 && trials.every(item => item.passed);
   if (stressEnabled && baselinePassed) stressPassed = await runStress(longBody);
+  if (correctionEnabled && baselinePassed && stressPassed) {
+    correctionResult = await runCorrection();
+    correctionPassed = correctionResult.passed;
+  }
   await waitFor(() => panels().every(ready), 'trial-ready', 45000);
   await focus(0);
   const exitingPanel = panels().find(panel => panel.panelIndex === 0);
@@ -600,6 +803,14 @@ try {
   // Snapshot the complete ledger before disposal can reset application state.
   // Keep observing the independent event array until every owned child stops.
   const finalRouteRecords = activity();
+  let correctionAudit = { incidentalRecoveries: 0, unaccountedCorrectionFeedback: 0 };
+  try {
+    if (correctionEnabled) correctionAudit = auditIncidentalCorrections(finalRouteRecords);
+  } catch {
+    // A diagnostic/database failure must fail acceptance, never skip teardown.
+    correctionAudit = { incidentalRecoveries: 0, unaccountedCorrectionFeedback: 1 };
+    failure ??= 'private-error-withheld';
+  }
   await app.dispose(); clearInterval(tracker); await collecting;
   for (const signal of ['SIGTERM','SIGKILL']) {
     for (const record of (await remainingOwned()).reverse()) {
@@ -612,15 +823,20 @@ try {
   const globalConfigUnchanged = await configDigest() === beforeDigest;
   // Count from before the first protocol injection, not from individual trial
   // offsets: late or different-verb actions in setup/gaps/quit cannot disappear.
-  const fullRun = { actualEvents: events.length, expectedEvents: 14 + (stressEnabled ? 7 : 0),
-    actualRoutes: finalRouteRecords.length, expectedRoutes: 5 + 3 * (count - 1) + (stressEnabled ? 6 + count - 1 : 0),
+  const fullRunCorrectionFeedback = feedback.filter(item => item.text.startsWith('[Commander protocol error]')).length;
+  const fullRun = { actualEvents: events.length, expectedEvents: 14 + (stressEnabled ? 7 : 0) + (correctionEnabled ? 1 : 0),
+    actualRoutes: finalRouteRecords.length, expectedRoutes: 5 + 3 * (count - 1) + (stressEnabled ? 6 + count - 1 : 0) + (correctionEnabled ? 1 : 0),
     allRoutesDelivered: finalRouteRecords.every(record => record.status === 'delivered') };
-  const fullRunPassed = wholeRunAccepted({ ...fullRun, allChecksPassed: baselinePassed && stressPassed && naturalQuitPassed
+  const fullRunPassed = wholeRunAccepted({ ...fullRun, allChecksPassed: baselinePassed && stressPassed && correctionPassed && naturalQuitPassed
+    && (!correctionEnabled || correctionAccountingAccepted({ ...correctionAudit,
+      totalFeedback: fullRunCorrectionFeedback, intentionalPassed: correctionPassed }))
     && trials.length === (stressEnabled ? 19 : 14) && trials.every(item => item.passed) });
   db.close(); input.destroy(); output.destroy(); blessed.screen = originalScreen;
   childProcessModule.spawn = originalSpawn; syncBuiltinESMExports();
   report({ event: 'final', passed: !failure && fullRunPassed && ownedProcessesStopped && globalConfigUnchanged,
     failure, liveTrialsCompleted: trials.length, trialResults: trials, stressResults, baselinePassed, stressPassed,
+    correctionEnabled, correctionPassed, correctionResult, fullRunCorrectionFeedback,
+    ...correctionAudit,
     fullRunPassed, ...fullRun,
     realAgentPTYs: launchedCount, ownedProcessesStopped, naturalQuitPassed,
     globalConfigUnchanged, toolsDenied: verifiedLaunches === launchedCount && launchedCount > 0,

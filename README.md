@@ -42,7 +42,7 @@
 
 ## Quick Start
 
-This README describes **Agents Commander 0.1.11**, under the MIT License.
+This README describes **Agents Commander 0.1.13**, under the MIT License.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
 The [bulk-launch workflow](#launch-one-profile-in-many-new-panels),
 [bulk protocol setup](#enable-protocol-in-many-agents),
@@ -66,18 +66,61 @@ of guessing a text region. Its live acceptance covered short exchanges, not
 messages taller than the viewport or a complete multi-agent broadcast workflow.
 See the [historical redraw QA](docs/qa.md#resize-independent-routing--0110).
 
-**New in 0.1.11:** OpenCode now supplies completed assistant text through a
+**Introduced in 0.1.11:** OpenCode supplies completed assistant text through a
 bundled, launch-local plugin and private IPC channel, independent of its
 viewport/sidebar. Other adapters retain terminal scanning. The new transport,
 long-message handling and explicit failure feedback are not in npm 0.1.10;
 live acceptance is a separate opt-in gate, not implied by unit tests. The
 implementation passed a strict sixteen-agent APEX run with 21 commands and 71
-deliveries. See [current transport QA](docs/qa.md#opencode-semantic-transport--0111).
+deliveries. See [0.1.11 transport QA](docs/qa.md#opencode-semantic-transport--0111).
 
-### Install version 0.1.11
+### New in 0.1.13: communication and terminal reliability
+
+Controller feedback and Enter now arrive separately in the same guarded input
+lane, so Claude/Codex ACKs are not left as unsubmitted drafts. Explicitly
+addressed authenticated SENDs work immediately after protocol setup.
+
+Codex's top-anchored scroll regions retain long-message history above its fixed
+composer. Narrow spinner/bullet symbols, emoji, repeated blanks and incremental
+Blessed redraws no longer drift or leave the reproduced stale characters.
+Authentication, exact addresses, echo/replay guards and approval boundaries
+remain unchanged: Commander does not blindly retry Enter or repair model keys.
+
+Restart Commander and its agent sessions after upgrading, then explicitly arm
+protocol with Ctrl+P at each empty ready prompt. See the
+[0.1.13 release record](docs/releases/0.1.13.md) for exact-artifact acceptance
+and publication status. The separate unreleased hardware work is not included.
+
+### Model-correction feedback (0.1.12)
+
+Version 0.1.12 adds precise, authenticated **per-frame** errors
+across protocol-enabled CLI harnesses, such as “Missing closing === on both the
+header and END footer.” The model corrects its own output using a fresh counter;
+Commander never silently repairs or resends it. Rejected counters and prompt
+echoes remain protected against replay. This extension was introduced in
+**0.1.12**, not 0.1.11, and remains available in 0.1.13.
+
+Each explicitly armed capability permits three correction notices. Further
+notices pause visibly; valid communication remains enabled. Inspect prior
+deliveries, leave an empty ready prompt, and press **Ctrl+P** to arm a new key and
+allowance. Resize and successful messages do not reset the limit. Feedback also
+respects the exact session/key and does not submit a detected user input draft.
+
+Coverage depends on the harness: OpenCode supplies completed text parts, so a
+missing footer can be diagnosed. Other CLIs need finalized scrollback or an
+exact closed footer; an unfinished mutable footer or absent END stays pending,
+not guessed complete after idle time or resize. See the
+[0.1.12 verification checklist](docs/qa.md#model-correction-feedback--0112)
+for acceptance evidence and remaining coverage boundaries. Pre-release source
+acceptance passed a sixteen-panel real APEX/OpenCode run with 22 accepted commands and 72
+deliveries, including one genuine model correction without rescue input or
+resize. Other harnesses have deterministic test coverage; successful correction
+is not guaranteed for every model.
+
+### Install version 0.1.13
 
 ```bash
-npm install -g agents-commander@0.1.11
+npm install -g agents-commander@0.1.13
 agents-commander --version
 agents-commander --doctor .
 agents-commander .
@@ -160,12 +203,12 @@ prove that a physical controller or a particular model is ready.
 
 ### Upgrading from 0.1.4
 
-Version 0.1.4 advertised Node.js 18+; **0.1.11 requires Node.js 22+ and Python 3**,
-as did 0.1.5–0.1.10. Upgrade Node before installing 0.1.11. The older package supported only
+Version 0.1.4 advertised Node.js 18+; **0.1.13 requires Node.js 22+ and Python 3**,
+as did 0.1.5–0.1.12. Upgrade Node before installing 0.1.13. The older package supported only
 `--theme`, `--panels` (2, 3, or 4), and `--show-hidden`, plus help/version.
 The doctor, conference/demo modes, adaptive density, 100-panel workspace,
 OpenCode adapter, Codex Micro integration, and capture/dataset commands described
-here arrived in 0.1.5 and remain in 0.1.11, not 0.1.4. Bulk launch, bulk protocol
+here arrived in 0.1.5 and remain in 0.1.13, not 0.1.4. Bulk launch, bulk protocol
 setup and sequenced replay protection were added in 0.1.6.
 
 Panel controls have also changed: F4 toggles fullscreen, F6 clones a fresh agent
@@ -183,7 +226,7 @@ You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You cop
 
 ## Requirements
 
-For version 0.1.11:
+For version 0.1.13:
 
 - Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
@@ -415,6 +458,8 @@ a corrected message. Repainting the old frame does not retry it. Unauthorized
 or replayed frames remain inert and may produce no feedback. Version 0.1.11
 also reports orphan REPLYs, empty BROADCASTs, and complete OpenCode output with
 invalid framing; use fresh counters after correcting a rejected action.
+Version 0.1.12 extends precise, bounded per-frame correction feedback across
+protocol-enabled harnesses, subject to the [completion-evidence limits above](#model-correction-feedback-0112).
 
 ### The Protocol
 
@@ -468,7 +513,7 @@ agents
 
 Commander's `ProtocolScanner` detects these markers and routes only with the
 currently armed session capability. Other adapters use terminal rows/scrollback;
-OpenCode in 0.1.11 uses a completed assistant text part before display wrapping.
+OpenCode since 0.1.11 uses a completed assistant text part before display wrapping.
 It never joins unrelated parts, messages, reasoning or tool output to invent a
 frame. The target agent sees:
 
@@ -487,7 +532,7 @@ the model accepted the task or completed it. Failed deliveries return
 subsequent per-target delivery outcomes appear in F12 Activity. STATUS returns
 a local `kind=status status=accepted` ACK.
 
-In 0.1.11, a later broadcast delivery failure also sends a
+Since 0.1.11, a later broadcast delivery failure also sends a
 `kind=broadcast status=failed scope=recipient stage=delivery` notice identifying
 that recipient. It does not mean the rest of the broadcast has finished.
 No open REPLY window, a vanished return session, or no broadcast recipients
@@ -987,7 +1032,7 @@ privacy precautions before sharing logs or agent output.
 Open source under the [MIT License](LICENSE), including commercial use. Retain
 the copyright and permission notice when redistributing the software; see
 [third-party notices](THIRD_PARTY_NOTICES.md) for included third-party material.
-Version 0.1.11 uses MIT. Versions 0.1.5–0.1.10 also used MIT.
+Version 0.1.13 uses MIT. Versions 0.1.5–0.1.12 also used MIT.
 Earlier published packages retain the license bundled with those versions;
 updating the source does not relicense older artifacts.
 

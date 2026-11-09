@@ -1,7 +1,7 @@
 import type { AgentType } from '../agents/types.js';
 import { MAX_PANEL_NUMBER, isPanelNumber } from '../panel-limits.js';
 import { logger } from '../utils/logger.js';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 const VALID_AGENT_TYPES = new Set([
   'claude',
@@ -96,6 +96,19 @@ export type RejectedCommanderMessage = Omit<CommanderMessage, 'type' | 'targetAg
 
 export type ProtocolEvent = CommanderMessage | RejectedCommanderMessage;
 
+export type ProtocolIssueCode = 'missing-header-delimiter' | 'missing-footer-delimiter'
+  | 'missing-both-delimiters' | 'mismatched-sequence' | 'invalid-sequence'
+  | 'invalid-panel' | 'invalid-header' | 'oversized-frame' | 'missing-footer';
+
+/** Internal identity only. Never interpolate capability or model text into feedback. */
+export interface ProtocolIssue {
+  code: ProtocolIssueCode;
+  capability: string;
+  sequences: number[];
+  /** Fixed-size digest of structural markers, never the message body. */
+  fingerprint: string;
+}
+
 /** Bound diagnostic tokens; never treat model/profile labels as adapter aliases. */
 export function isReportableUnknownAgentType(value: string): boolean {
   return /^\w{1,32}$/.test(value) && !isAgentType(value);
@@ -112,6 +125,8 @@ export interface ProtocolTerminalRow {
   text: string;
   wrapsToNext: boolean;
   startsAfterCursorMove?: boolean;
+  /** Only immutable primary scrollback may opt in; live grid rows are mutable. */
+  finalized?: boolean;
 }
 
 /** Strict START eligibility shared by cursor-redraw recovery and the parser. */
@@ -136,13 +151,66 @@ export function promptProtocolSequences(text: string, capability: string): numbe
     // Search the literal prefix once. The anchored body stops at '=' (also
     // the start of every next candidate), so candidates cannot repeatedly
     // traverse a shared suffix. Preserve accepted zero-padded panel fields.
-    const token = text.slice(offset).match(/^===COMMANDER:[^\s=]+={3,}/)?.[0];
+    const token = text.slice(offset).match(/^===COMMANDER:[^\s=]+=*/)?.[0];
     offset += '===COMMANDER:'.length;
     if (!token) continue;
     const marker = authenticatedStart(token, capability) ?? matchEndMarker(token);
     if (marker?.capability === capability && marker.sequence !== undefined) sequences.add(marker.sequence);
+    // Suppression is deliberately more conservative than execution: malformed
+    // examples pasted into a CLI must not become eligible after a repaint.
+    const malformed = inspectDiagnosticMarker(token, capability);
+    if (malformed?.sequence !== undefined) sequences.add(malformed.sequence);
   }
   return [...sequences];
+}
+
+interface DiagnosticMarker {
+  command: string;
+  closed: boolean;
+  sequence?: number;
+  sequenceIdentity: string;
+  issue?: ProtocolIssueCode;
+  digest: string;
+}
+
+/** Anchored, capability-authenticated structural recognition; never authorization. */
+function inspectDiagnosticMarker(line: string, capability: string): DiagnosticMarker | null {
+  const normalized = normalizeMarkerLine(line);
+  if (normalized.length > MAX_PENDING_MARKER_BYTES) return null;
+  const match = normalized.match(/^={3,}COMMANDER:([A-Z]{1,32}):([^\s=]+)(=*)$/);
+  if (!match) return null;
+  const fields = match[2].split(':');
+  const capabilityIndex = fields.indexOf(capability);
+  if (capabilityIndex < 0 || fields.lastIndexOf(capability) !== capabilityIndex) return null;
+  const sequenceToken = fields[capabilityIndex + 1];
+  const sequence = sequenceToken === undefined ? null : parseProtocolSequence(sequenceToken);
+  const command = match[1];
+  let issue: ProtocolIssueCode | undefined;
+  if (sequenceToken !== undefined && sequence === null) issue = 'invalid-sequence';
+  const expectedCapabilityIndex = command === 'SEND' ? 2 : 0;
+  if (!['SEND', 'REPLY', 'BROADCAST', 'STATUS', 'QUERY', 'END'].includes(command)
+    || capabilityIndex !== expectedCapabilityIndex
+    || fields.length > capabilityIndex + 2) issue = 'invalid-header';
+  if (command === 'SEND' && capabilityIndex === 2) {
+    if (!/^\d+$/.test(fields[1]) || !isPanelNumber(Number(fields[1]))) issue = 'invalid-panel';
+    if (!/^\w{1,32}$/.test(fields[0])) issue = 'invalid-header';
+  }
+  return {
+    command, closed: match[3].length >= 3,
+    sequenceIdentity: sequenceToken === undefined ? '' : createHash('sha256').update(sequenceToken).digest('hex'),
+    ...(sequence === null ? {} : { sequence }), ...(issue ? { issue } : {}),
+    digest: createHash('sha256').update(normalized).digest('hex'),
+  };
+}
+
+interface DiagnosticFrame {
+  header: DiagnosticMarker;
+  sequences: Set<number>;
+  nestedSequences: Set<string>;
+  pendingFooter: DiagnosticMarker | null;
+  lines: number;
+  bytes: number;
+  oversized: boolean;
 }
 
 /** Generate a 256-bit, URL-safe capability for one managed agent session. */
@@ -338,6 +406,7 @@ export class ProtocolScanner {
   private bufferParts: string[] = [];
   private bufferBytes = 0;
   private bufferEndsInHighSurrogate = false;
+  private pendingFinalized = true;
   private discardingLine = false;
   private collecting = false;
   private collectType: MessageType = 'send';
@@ -348,7 +417,9 @@ export class ProtocolScanner {
   private contentLines: string[] = [];
   private contentBytes = 0;
   private rawProbeTail = '';
-  private repaintCandidate: { parts: string[]; bytes: number } | null = null;
+  private repaintCandidate: { parts: string[]; bytes: number; finalized: boolean } | null = null;
+  private diagnosticFrame: DiagnosticFrame | null = null;
+  private diagnosticExhausted = false;
   private maxContentLines: number;
   private maxContentBytes: number;
 
@@ -360,6 +431,7 @@ export class ProtocolScanner {
       maxContentLines?: number;
       maxContentBytes?: number;
       onRejected?: (msg: RejectedCommanderMessage) => void;
+      onMalformed?: (issue: ProtocolIssue) => void;
       logPotentialMarkers?: boolean;
     },
   ) {
@@ -384,6 +456,8 @@ export class ProtocolScanner {
     this.rawProbeTail = '';
     this.discardingLine = false;
     this.repaintCandidate = null;
+    this.diagnosticFrame = null;
+    this.diagnosticExhausted = false;
   }
 
   /**
@@ -410,9 +484,9 @@ export class ProtocolScanner {
   }
 
   /** Feed a single pre-cleaned line (no ANSI, no splitting needed). */
-  feedLine(line: string): void {
+  feedLine(line: string, finalized = true): void {
     if (Date.now() < this.mutedUntil) return;
-    this.processLine(line);
+    this.processLine(line, finalized);
   }
 
   /**
@@ -422,30 +496,32 @@ export class ProtocolScanner {
    */
   feedTerminalRow(row: ProtocolTerminalRow): void {
     if (this.isMuted) return;
+    const finalized = row.finalized === true;
     if (this.repaintCandidate) {
       const candidate = this.repaintCandidate;
       candidate.parts.push(row.text);
       candidate.bytes += Buffer.byteLength(row.text, 'utf8');
+      candidate.finalized &&= finalized;
       if (row.wrapsToNext && candidate.bytes <= MAX_PENDING_MARKER_BYTES) return;
       this.repaintCandidate = null;
       this.feedTerminalRow({ text: candidate.parts.join(''), wrapsToNext: row.wrapsToNext,
-        startsAfterCursorMove: candidate.bytes <= MAX_PENDING_MARKER_BYTES });
+        startsAfterCursorMove: candidate.bytes <= MAX_PENDING_MARKER_BYTES, finalized: candidate.finalized });
       return;
     }
     if (this.bufferBytes === 0) this.rawProbeTail = '';
     const normalized = normalizeMarkerLine(row.text);
-    if (row.startsAfterCursorMove && row.wrapsToNext && this.expectedCapability && !this.collecting
+    if (row.startsAfterCursorMove && row.wrapsToNext && this.expectedCapability && !this.collecting && !this.diagnosticFrame
       && !this.discardingLine && !authenticatedStart(row.text, this.expectedCapability)
       && Buffer.byteLength(row.text, 'utf8') <= MAX_PENDING_MARKER_BYTES
       && (normalized.startsWith('===COMMANDER:') || (normalized.length > 0 && '===COMMANDER:'.startsWith(normalized)))) {
-      this.repaintCandidate = { parts: [row.text], bytes: Buffer.byteLength(row.text, 'utf8') };
+      this.repaintCandidate = { parts: [row.text], bytes: Buffer.byteLength(row.text, 'utf8'), finalized };
       return;
     }
-    if (row.startsAfterCursorMove && this.expectedCapability && !this.collecting
+    if (row.startsAfterCursorMove && this.expectedCapability && !this.collecting && !this.diagnosticFrame
       && !this.discardingLine && authenticatedStart(row.text, this.expectedCapability)?.sequence !== undefined) {
       const pending = this.bufferParts.join('');
       if (authenticatedStart(pending, this.expectedCapability)) {
-        this.feed('\n');
+        this.feed('\n', finalized);
       } else {
         this.clearPendingLine();
         this.rawProbeTail = '';
@@ -455,15 +531,15 @@ export class ProtocolScanner {
       // Unlike raw chunks, this is known to begin a physical row. Preserve
       // ordinary prefix text too: dropping it could promote a wrapped example.
       if (this.discardingLine) return;
-      this.appendPendingLine(row.text);
-      this.feed(''); // enforce the same pending-line byte budget
+      this.appendPendingLine(row.text, finalized);
+      this.feed('', finalized); // enforce the same pending-line byte budget
     } else {
-      this.feed(`${row.text}\n`);
+      this.feed(`${row.text}\n`, finalized);
     }
   }
 
   /** Feed raw PTY data (may contain ANSI codes). */
-  feed(raw: string): void {
+  feed(raw: string, finalized = true): void {
     if (Date.now() < this.mutedUntil) return;
     if (this.discardingLine) {
       const newline = raw.indexOf('\n');
@@ -471,11 +547,11 @@ export class ProtocolScanner {
       raw = raw.slice(newline + 1);
       this.discardingLine = false;
     }
-    const rawInput = (!this.collecting && this.bufferBytes === 0)
+    const rawInput = (!this.collecting && !this.diagnosticFrame && this.bufferBytes === 0)
       ? `${this.rawProbeTail}${raw}`
       : raw;
 
-    if (!this.collecting && this.bufferBytes === 0 && !this.mightContainMarker(rawInput)) {
+    if (!this.collecting && !this.diagnosticFrame && this.bufferBytes === 0 && !this.mightContainMarker(rawInput)) {
       this.rawProbeTail = rawInput.slice(-RAW_LOOKBACK);
       return;
     }
@@ -487,23 +563,29 @@ export class ProtocolScanner {
     let offset = 0;
     let nlIdx = clean.indexOf('\n');
     while (nlIdx !== -1) {
-      this.appendPendingLine(clean.slice(offset, nlIdx));
+      this.appendPendingLine(clean.slice(offset, nlIdx), finalized);
       // Strip carriage returns and other control chars that PTY output may contain
       const line = this.bufferParts.join('').replace(/[\r\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+      const lineFinalized = this.pendingFinalized && finalized;
       this.clearPendingLine();
-      this.processLine(line);
+      this.processLine(line, lineFinalized);
       offset = nlIdx + 1;
       nlIdx = clean.indexOf('\n', offset);
     }
-    this.appendPendingLine(clean.slice(offset));
+    this.appendPendingLine(clean.slice(offset), finalized);
     // A PTY chunk boundary is not a logical newline. Preserve long wrapped
     // content until its real newline, but bound unfinished lines so malformed
     // output cannot retain an unbounded buffer. Reserve space for a footer even
     // when the current body has used its entire content allowance.
-    const pendingLimit = this.collecting
-      ? Math.max(MAX_PENDING_MARKER_BYTES, this.maxContentBytes - this.contentBytes)
-      : MAX_PENDING_MARKER_BYTES;
+    // A malformed header is quarantined rather than routed, but its body has
+    // the same byte allowance. Chunking/wrapping must not replace its actual
+    // syntax error with a false "oversized" diagnosis at the marker limit.
+    const pendingContentBytes = this.collecting ? this.contentBytes : this.diagnosticFrame?.bytes;
+    const pendingLimit = pendingContentBytes === undefined
+      ? MAX_PENDING_MARKER_BYTES
+      : Math.max(MAX_PENDING_MARKER_BYTES, this.maxContentBytes - pendingContentBytes);
     if (this.bufferBytes > pendingLimit) {
+      if (this.diagnosticFrame) this.diagnosticFrame.oversized = true;
       this.collecting = false;
       this.collectCapability = null;
       this.collectSequence = undefined;
@@ -516,13 +598,14 @@ export class ProtocolScanner {
       return;
     }
 
-    if (!this.collecting && this.bufferBytes === 0) {
+    if (!this.collecting && !this.diagnosticFrame && this.bufferBytes === 0) {
       this.rawProbeTail = rawInput.slice(-RAW_LOOKBACK);
     }
   }
 
-  private appendPendingLine(fragment: string): void {
+  private appendPendingLine(fragment: string, finalized = true): void {
     if (!fragment) return;
+    this.pendingFinalized &&= finalized;
     const firstCodeUnit = fragment.charCodeAt(0);
     const joinsSurrogatePair = this.bufferEndsInHighSurrogate
       && firstCodeUnit >= 0xdc00 && firstCodeUnit <= 0xdfff;
@@ -536,6 +619,7 @@ export class ProtocolScanner {
     this.bufferParts = [];
     this.bufferBytes = 0;
     this.bufferEndsInHighSurrogate = false;
+    this.pendingFinalized = true;
   }
 
   updateSource(panel: number, agent: string): void {
@@ -543,7 +627,8 @@ export class ProtocolScanner {
     this.sourceAgent = agent;
   }
 
-  private processLine(line: string): void {
+  private processLine(line: string, finalized = true): void {
+    if (this.diagnosticExhausted || this.inspectMalformedLine(line, finalized)) return;
     // Record marker-like activity without persisting agent-produced content.
     if (this.options?.logPotentialMarkers !== false && (line.includes('COMMANDER') || line.includes('==='))) {
       logger.debug(`Scanner[${this.sourcePanel}] potential marker line (${Buffer.byteLength(line, 'utf8')} bytes)`);
@@ -690,6 +775,120 @@ export class ProtocolScanner {
   private mightContainMarker(raw: string): boolean {
     return raw.includes(MARKER_HINT) || raw.includes(MARKER_FALLBACK_HINT);
   }
+
+  /**
+   * An immutable assistant-text completion is an actual boundary. Never call
+   * this for a quiet PTY, a grid snapshot, a resize, or a repaint.
+   */
+  finishCompletedPart(): void {
+    if (!this.isMuted) {
+      if (this.bufferBytes > 0) this.feed('\n');
+      const frame = this.diagnosticFrame;
+      if (frame) {
+        const footer = frame.pendingFooter;
+        const code = frame.oversized ? 'oversized-frame'
+          : footer ? this.diagnosticCode(frame, footer) ?? 'missing-footer'
+          : 'missing-footer';
+        this.emitMalformed(code, footer);
+      }
+    }
+    this.resetCollection();
+    this.diagnosticFrame = null;
+    this.clearPendingLine();
+    this.rawProbeTail = '';
+    this.discardingLine = false;
+    this.repaintCandidate = null;
+  }
+
+  private resetCollection(): void {
+    this.collecting = false;
+    this.collectType = 'send';
+    this.collectCapability = null;
+    this.collectSequence = undefined;
+    this.target = null;
+    this.contentLines = [];
+    this.contentBytes = 0;
+  }
+
+  /** Return true when a line belongs to a rejected/quarantined candidate. */
+  private inspectMalformedLine(line: string, finalized: boolean): boolean {
+    if (!this.options?.onMalformed || !this.expectedCapability) return false;
+    const marker = inspectDiagnosticMarker(line, this.expectedCapability);
+    let frame = this.diagnosticFrame;
+    if (!frame) {
+      if (this.collecting || !marker || marker.command === 'END') return false;
+      frame = {
+        header: marker, sequences: new Set(marker.sequence === undefined ? [] : [marker.sequence]),
+        nestedSequences: new Set(), pendingFooter: null, lines: 0, bytes: 0, oversized: false,
+      };
+      this.diagnosticFrame = frame;
+      return !!marker.issue || !marker.closed;
+    }
+
+    if (marker?.sequence !== undefined) {
+      frame.sequences.add(marker.sequence);
+      // No eviction can make an old counter eligible again. Stop this scanner
+      // until explicit capability rotation rather than retain unbounded state.
+      if (frame.sequences.size > 16384) {
+        this.diagnosticExhausted = true;
+        this.emitMalformed('oversized-frame', marker);
+        return true;
+      }
+    }
+    if (marker?.command === 'END') {
+      const nestedFooter = marker.sequenceIdentity !== frame.header.sequenceIdentity
+        && frame.nestedSequences.has(marker.sequenceIdentity);
+      if (!nestedFooter) {
+        frame.pendingFooter = marker;
+        // A partially painted footer is not proof of a malformed emission.
+        // Only immutable rows/parts may classify a missing closing delimiter.
+        if (marker.closed || finalized) {
+          const code = this.diagnosticCode(frame, marker);
+          if (code) {
+            this.emitMalformed(code, marker);
+            return true;
+          }
+          this.diagnosticFrame = null;
+          return false;
+        }
+      }
+    } else if (marker) {
+      // Keep nested examples under their original outer frame. A malformed
+      // outer header must not promote an otherwise valid nested SEND.
+      if (frame.nestedSequences.size < 16384) frame.nestedSequences.add(marker.sequenceIdentity);
+    }
+    frame.lines += 1;
+    frame.bytes += Buffer.byteLength(line, 'utf8') + 1;
+    if (!isWithinProtocolContentBudget(frame.lines, frame.bytes, this.maxContentLines, this.maxContentBytes)) {
+      frame.oversized = true;
+      this.resetCollection();
+    }
+    return !this.collecting;
+  }
+
+  private diagnosticCode(frame: DiagnosticFrame, footer: DiagnosticMarker): ProtocolIssueCode | null {
+    if (frame.oversized) return 'oversized-frame';
+    if (frame.header.issue) return frame.header.issue;
+    if (footer.issue) return footer.issue === 'invalid-header' ? 'invalid-sequence' : footer.issue;
+    if (frame.header.sequenceIdentity !== footer.sequenceIdentity) return 'mismatched-sequence';
+    if (!frame.header.closed && !footer.closed) return 'missing-both-delimiters';
+    if (!frame.header.closed) return 'missing-header-delimiter';
+    if (!footer.closed) return 'missing-footer-delimiter';
+    return null;
+  }
+
+  private emitMalformed(code: ProtocolIssueCode, footer: DiagnosticMarker | null): void {
+    const frame = this.diagnosticFrame;
+    if (!frame || !this.expectedCapability) return;
+    const issue: ProtocolIssue = {
+      code, capability: this.expectedCapability, sequences: [...frame.sequences],
+      fingerprint: createHash('sha256').update(`${code}:${frame.header.digest}:${footer?.digest ?? ''}`).digest('hex'),
+    };
+    // Reset before notifying consumers, including callbacks that rotate keys.
+    this.resetCollection();
+    this.diagnosticFrame = null;
+    this.options?.onMalformed?.(issue);
+  }
 }
 
 // ── Protocol instructions template ────────────────────────────────
@@ -763,6 +962,8 @@ export function buildProtocolInstructions(
     ``,
     `SEND, REPLY, BROADCAST, and STATUS produce a Commander ACK in your panel. QUERY returns Commander info directly.`,
     `Wait for that ACK or response before sending another message.`,
+    `A [Commander protocol error] describes a rejected frame, not a successful send. Correct only that frame's stated error and emit it once with a fresh counter; do not repeat other commands already acknowledged.`,
+    `Commander sends at most 3 protocol-correction notices per capability. If the third correction still fails, stop and ask the user for help; do not loop, guess a recipient, or silently reset your counter.`,
     `When you receive [From ... | thread=... | msg=...], use REPLY to continue that thread.`,
     `Do NOT use protocol markers to acknowledge receipt unless you are sending a real reply.`,
   ].filter(Boolean).join('\n');

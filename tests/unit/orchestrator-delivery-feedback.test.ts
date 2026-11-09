@@ -41,6 +41,9 @@ function fixture(count = 2) {
     setActivePanel: vi.fn(),
   };
   const orchestrator = new Orchestrator(layout, agents) as any;
+  // Routing assertions below inspect feedback payloads; submit timing is
+  // exercised separately by the input-lane/PTY tests.
+  orchestrator.submitInput = vi.fn(async () => true);
   for (const panel of panels.values()) {
     orchestrator.connectPanel(panel);
     orchestrator.protocolInjected.add(panel.panelIndex);
@@ -212,11 +215,11 @@ describe('Orchestrator explicit delivery failure feedback', () => {
     expect(f.inputs()[0]).toContain('queued=1');
   });
 
-  it.each(['invalid-frame', 'oversized-frame'] as const)('reports %s without payload or capability disclosure', (reason) => {
+  it.each(['invalid-header', 'oversized-frame'] as const)('reports %s without payload or capability disclosure', (code) => {
     const f = fixture();
-    f.panels.get(0).onCommanderProtocolError(reason);
+    f.panels.get(0).onCommanderProtocolError({ code, capability, sequences: [1], fingerprint: 'synthetic' }, 1);
     expect(f.inputs()).toHaveLength(1);
-    expect(f.inputs()[0]).toContain('[Commander protocol error] Message was not sent');
+    expect(f.inputs()[0]).toContain('[Commander protocol error] This frame was not sent');
     expect(f.inputs()[0]).toContain('fresh counter');
     expect(f.inputs()[0]).not.toContain(capability);
     expect(f.inputs(1)).toEqual([]);
@@ -231,7 +234,7 @@ describe('Orchestrator explicit delivery failure feedback', () => {
     if (mode === 'new-session') f.sessions.set(0, 'new-session');
     if (mode === 'panel-replaced') f.panels.set(0, { ...panel });
     if (mode === 'shutdown') f.orchestrator.sealed = true;
-    callback('invalid-frame');
+    callback({ code: 'invalid-header', capability, sequences: [1], fingerprint: 'synthetic' }, 1);
     expect(f.inputs()).toEqual([]);
   });
 

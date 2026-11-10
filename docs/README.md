@@ -11,6 +11,8 @@ published npm package.
   capabilities, SEND, REPLY, BROADCAST, STATUS, QUERY, and Activity.
 - [Configuration](../README.md#configuration): agent profiles and layout settings.
 - [Keyboard shortcuts](../README.md#keyboard-shortcuts): panel-first controls.
+- [Plain terminals and Antigravity](qa-shell-antigravity.md): shell panels,
+  `agy` setup, Gemini deprecation and bounded communication validation in 0.1.14.
 - [Codex Micro](codex-micro.md): experimental hardware input and safety guards.
 - [Capture and datasets](datasets.md): explicit recording consent, private
   storage, human review, and offline conversational dataset export.

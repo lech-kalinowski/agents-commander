@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.14
 
 ### Changed
 
@@ -19,7 +19,8 @@
   discovery, configuration, routing, protocol instructions and consented capture
   and dataset validation. Existing Gemini profiles and addresses are unchanged.
 
-These source changes are not included in the published 0.1.13 package.
+These features are new in 0.1.14, not 0.1.13. Publication and exact-artifact
+acceptance are tracked separately in `docs/releases/0.1.14.md`.
 
 ## 0.1.13
 

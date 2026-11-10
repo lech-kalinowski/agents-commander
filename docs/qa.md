@@ -1,5 +1,18 @@
 # QA coverage and validation checklist
 
+## Plain terminals and Antigravity - 0.1.14
+
+F2/S and Ctrl+T from files start plain unmanaged shells. Antigravity (`agy`) is
+the current Google CLI adapter; Gemini is deprecated compatibility support.
+See the [feature guide and acceptance cases](qa-shell-antigravity.md).
+
+Each final archive requires the full offline gate, packed shell checks,
+Antigravity/Codex automatic SEND/REPLY/QUERY/STATUS, Claude/Codex in both layouts,
+and the existing sixteen-session OpenCode/APEX stress and correction gate.
+Record digests, results and publication separately in
+[the 0.1.14 release record](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/releases/0.1.14.md).
+Provider tests are opt-in and do not prove every model/plugin or physical device.
+
 ## Claude/Codex stale redraws - 0.1.13
 
 A second November 9 reproduction showed old response text appended to a

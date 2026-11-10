@@ -39,11 +39,11 @@ npm run verify
 
 The current UI uses TypeScript, blessed, and tsup, with native shallow filesystem watches. Runtime support is Node.js 22+, Python 3, and macOS/Linux/WSL2.
 
-Package version is 0.1.13, under the MIT License. Version 0.1.4 is the legacy
+Package version is 0.1.14, under the MIT License. Version 0.1.4 is the legacy
 baseline; its runtime requirements, features, and bundled license differ.
 Use `node dist/bin/agents-commander.js` or `npm start --` to exercise this checkout,
 not an older global installation. For the versioned package, the install command
-is `npm install -g agents-commander@0.1.13`. Recheck the registry before changing
+is `npm install -g agents-commander@0.1.14`. Recheck the registry before changing
 release claims. A source push is not an npm release.
 F2/N bulk launch, F2/P bulk protocol setup and sequenced replay protection are
 included in 0.1.6, not 0.1.5. Package metadata describes that version's contents;
@@ -96,10 +96,10 @@ unreleased hardware changes are not part of this communication release.
 
 ## Key Conventions
 
-- Unreleased: Ctrl+T from files and F2/S start plain unmanaged shells, never
+- Version 0.1.14: Ctrl+T from files and F2/S start plain unmanaged shells, never
   protocol recipients. Select SHELL/account shell or /bin/sh as an executable,
   not a command string; preserve replacement confirmation and session identity.
-- Unreleased: Antigravity uses adapter/profile `antigravity` and executable `agy`.
+- Version 0.1.14: Antigravity uses adapter/profile `antigravity` and executable `agy`.
   Do not alias or migrate Gemini profiles/addresses, and do not bypass CLI approvals.
 - Gemini CLI is deprecated compatibility support, not a recommended new setup.
   Bundled templates use Antigravity; never rewrite users' explicit Gemini targets.

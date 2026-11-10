@@ -103,6 +103,7 @@ try {
     'docs/datasets.md',
     'docs/README.md',
     'docs/qa.md',
+    'docs/qa-shell-antigravity.md',
     'assets/logo.png',
     'assets/logo-wordmark.png',
     'LICENSE',

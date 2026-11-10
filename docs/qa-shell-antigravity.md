@@ -1,7 +1,8 @@
 # Plain Shell and Antigravity QA
 
-Source feature validation, 2026-11-10. These changes are not an npm release and
-are not included in published version 0.1.13.
+Feature validation, 2026-11-10. These features are included in 0.1.14, not
+0.1.13. Exact-archive acceptance and registry publication are recorded separately
+in the repository's [0.1.14 release record](https://github.com/lech-kalinowski/agents-commander/blob/main/docs/releases/0.1.14.md).
 
 ## Behavior
 

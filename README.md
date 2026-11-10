@@ -42,7 +42,7 @@
 
 ## Quick Start
 
-This README describes **Agents Commander 0.1.13**, under the MIT License.
+This README describes **Agents Commander 0.1.14**, under the MIT License.
 Use Node.js 22+, Python 3, and macOS, Linux, or WSL2.
 The [bulk-launch workflow](#launch-one-profile-in-many-new-panels),
 [bulk protocol setup](#enable-protocol-in-many-agents),
@@ -74,7 +74,19 @@ live acceptance is a separate opt-in gate, not implied by unit tests. The
 implementation passed a strict sixteen-agent APEX run with 21 commands and 71
 deliveries. See [0.1.11 transport QA](docs/qa.md#opencode-semantic-transport--0111).
 
-### New in 0.1.13: communication and terminal reliability
+### New in 0.1.14: plain terminals and Antigravity
+
+Press **Ctrl+T** from a file panel or **F2 then S** to start a normal interactive
+shell in that directory, without an AI agent or protocol. Select **Antigravity
+CLI** in F2 to launch `agy`; finish its normal setup, then Ctrl+P enables messaging.
+Gemini CLI is deprecated compatibility support; bundled collaboration prompts
+now use Antigravity. Existing saved profiles and custom targets are not rewritten.
+
+See the [shell and Antigravity guide](docs/qa-shell-antigravity.md) and
+[0.1.14 release record](docs/releases/0.1.14.md) for versioned acceptance and
+separate publication verification. Restart Commander after upgrading.
+
+### Introduced in 0.1.13: communication and terminal reliability
 
 Controller feedback and Enter now arrive separately in the same guarded input
 lane, so Claude/Codex ACKs are not left as unsubmitted drafts. Explicitly
@@ -98,7 +110,7 @@ across protocol-enabled CLI harnesses, such as “Missing closing === on both th
 header and END footer.” The model corrects its own output using a fresh counter;
 Commander never silently repairs or resends it. Rejected counters and prompt
 echoes remain protected against replay. This extension was introduced in
-**0.1.12**, not 0.1.11, and remains available in 0.1.13.
+**0.1.12**, not 0.1.11, and remains available in 0.1.14.
 
 Each explicitly armed capability permits three correction notices. Further
 notices pause visibly; valid communication remains enabled. Inspect prior
@@ -117,10 +129,10 @@ deliveries, including one genuine model correction without rescue input or
 resize. Other harnesses have deterministic test coverage; successful correction
 is not guaranteed for every model.
 
-### Install version 0.1.13
+### Install version 0.1.14
 
 ```bash
-npm install -g agents-commander@0.1.13
+npm install -g agents-commander@0.1.14
 agents-commander --version
 agents-commander --doctor .
 agents-commander .
@@ -203,12 +215,12 @@ prove that a physical controller or a particular model is ready.
 
 ### Upgrading from 0.1.4
 
-Version 0.1.4 advertised Node.js 18+; **0.1.13 requires Node.js 22+ and Python 3**,
-as did 0.1.5–0.1.12. Upgrade Node before installing 0.1.13. The older package supported only
+Version 0.1.4 advertised Node.js 18+; **0.1.14 requires Node.js 22+ and Python 3**,
+as did 0.1.5–0.1.13. Upgrade Node before installing 0.1.14. The older package supported only
 `--theme`, `--panels` (2, 3, or 4), and `--show-hidden`, plus help/version.
 The doctor, conference/demo modes, adaptive density, 100-panel workspace,
 OpenCode adapter, Codex Micro integration, and capture/dataset commands described
-here arrived in 0.1.5 and remain in 0.1.13, not 0.1.4. Bulk launch, bulk protocol
+here arrived in 0.1.5 and remain in 0.1.14, not 0.1.4. Bulk launch, bulk protocol
 setup and sequenced replay protection were added in 0.1.6.
 
 Panel controls have also changed: F4 toggles fullscreen, F6 clones a fresh agent
@@ -226,12 +238,12 @@ You have Claude Code, Codex CLI, Antigravity CLI. All powerful. All isolated. Yo
 
 ## Requirements
 
-For version 0.1.13:
+For version 0.1.14:
 
 - Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
 - macOS, Linux, or WSL2
-- For live AI sessions: Claude Code, Codex CLI, Antigravity CLI (unreleased source), or OpenCode. Gemini CLI is deprecated in Commander and retained for legacy configurations. The supported Shell adapter can launch a local interactive shell or a configured command.
+- For live AI sessions: Claude Code, Codex CLI, Antigravity CLI, or OpenCode. Gemini CLI is deprecated in Commander and retained for legacy configurations. F2/S starts a plain terminal; the legacy Shell adapter remains available for configured commands.
 
 The deterministic offline demo does not require an AI agent CLI, API credentials, or network access.
 
@@ -301,16 +313,16 @@ Supported adapters:
 
 - **Claude Code** (Anthropic)
 - **Codex CLI** (OpenAI)
-- **Antigravity CLI** (Google, `agy`; unreleased source)
+- **Antigravity CLI** (Google, `agy`; new in 0.1.14)
 - **Gemini CLI** (deprecated; legacy compatibility only)
 - **OpenCode** (multi-provider, including custom `provider/model` profiles)
 - **Shell** (a generic local shell or configured command)
 
 The selector also catalogues five future presets that are not launchable yet: Aider, Cline, Goose, Kiro, and Amp.
 
-### Plain terminals and Antigravity (unreleased source)
+### Plain terminals and Antigravity (0.1.14)
 
-These additions require a build of this checkout; they are not in npm 0.1.13.
+These additions are included in 0.1.14, not 0.1.13.
 
 - Press **Ctrl+T** in a file panel to start an interactive shell in that directory,
   or **F2**, select a target panel, then **S**. Commander uses the executable in
@@ -1046,7 +1058,7 @@ Agents Commander combines several local workflows in one TUI:
 
 ## Roadmap
 
-- [x] Claude Code, Codex CLI, OpenCode, and Shell; Antigravity in current source and deprecated Gemini compatibility
+- [x] Claude Code, Codex CLI, Antigravity CLI, OpenCode, Shell, and deprecated Gemini compatibility
 - [x] Prompt template library (`Ctrl+B`)
 - [ ] Aider, Cline, Goose, Kiro, Amp support
 - [ ] Task queue -- chain agent tasks in sequence
@@ -1072,7 +1084,7 @@ privacy precautions before sharing logs or agent output.
 Open source under the [MIT License](LICENSE), including commercial use. Retain
 the copyright and permission notice when redistributing the software; see
 [third-party notices](THIRD_PARTY_NOTICES.md) for included third-party material.
-Version 0.1.13 uses MIT. Versions 0.1.5–0.1.12 also used MIT.
+Version 0.1.14 uses MIT. Versions 0.1.5–0.1.13 also used MIT.
 Earlier published packages retain the license bundled with those versions;
 updating the source does not relicense older artifacts.
 

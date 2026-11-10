@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Deprecate the Gemini CLI preset in favor of Antigravity (`agy`). Label and
+  de-prioritize legacy profiles in selectors; Doctor recommends Antigravity.
+  Update bundled collaboration templates to Antigravity roles. Keep existing
+  Gemini commands, saved profiles and custom template targets unchanged.
+
 ### Added
 
 - Plain shell panels via Ctrl+T from a file panel or F2 then S. The selected

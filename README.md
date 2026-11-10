@@ -18,7 +18,7 @@
 
 <p align="center">
   <b>Multi-panel terminal for AI agents that talk to each other.</b><br>
-  Run Claude, Codex, and Gemini side by side. Make them talk to each other.
+  Run Claude, Codex, and Antigravity side by side. Make them talk to each other.
 </p>
 
 <p align="center">
@@ -220,7 +220,7 @@ available from file panels with Shift+F6/Shift+F7/Shift+F9. See the
 
 ## The Problem
 
-You have Claude Code, Codex CLI, Gemini CLI. All powerful. All isolated. You copy-paste between them like it's 2005.
+You have Claude Code, Codex CLI, Antigravity CLI. All powerful. All isolated. You copy-paste between them like it's 2005.
 
 **Agents Commander puts them in one terminal, side by side, and lets them talk to each other.**
 
@@ -231,7 +231,7 @@ For version 0.1.13:
 - Node.js 22 or newer
 - Python 3 (used by the PTY bridge)
 - macOS, Linux, or WSL2
-- For live AI sessions: Claude Code, Codex CLI, Gemini CLI, or OpenCode. The supported Shell adapter can launch a local interactive shell or a configured command.
+- For live AI sessions: Claude Code, Codex CLI, Antigravity CLI (unreleased source), or OpenCode. Gemini CLI is deprecated in Commander and retained for legacy configurations. The supported Shell adapter can launch a local interactive shell or a configured command.
 
 The deterministic offline demo does not require an AI agent CLI, API credentials, or network access.
 
@@ -301,7 +301,8 @@ Supported adapters:
 
 - **Claude Code** (Anthropic)
 - **Codex CLI** (OpenAI)
-- **Gemini CLI** (Google)
+- **Antigravity CLI** (Google, `agy`; unreleased source)
+- **Gemini CLI** (deprecated; legacy compatibility only)
 - **OpenCode** (multi-provider, including custom `provider/model` profiles)
 - **Shell** (a generic local shell or configured command)
 
@@ -322,7 +323,7 @@ These additions require a build of this checkout; they are not in npm 0.1.13.
 - Select **Antigravity CLI** in **F2** to launch `agy`. Complete any CLI trust or
   sign-in prompts yourself, then **Ctrl+P** enables Commander messaging. The
   adapter address is `antigravity`, not `agy` or `gemini`; Gemini remains a
-  separate compatible profile. Default launch flags do not bypass approvals.
+  separate deprecated compatibility profile. Default launch flags do not bypass approvals.
 
 Antigravity installation and first-launch setup are described in the
 [official CLI guide](https://antigravity.google/docs/cli/tutorial). Commander
@@ -332,6 +333,19 @@ Named Antigravity profiles use `"adapter": "antigravity"`; CLI options such as
 
 See [shell and Antigravity QA](docs/qa-shell-antigravity.md) for acceptance
 coverage, the real-provider test command, and compatibility limits.
+
+### Gemini CLI Deprecation
+
+For new Google CLI sessions, use **Antigravity CLI (`agy`)**. Gemini CLI is
+labelled deprecated in the launch/task selectors and Doctor, and placed after
+current profiles. Bundled collaboration templates now target Antigravity.
+Saved Gemini profiles and custom templates are not rewritten or silently routed
+to another adapter; they remain available for legacy setups.
+
+Google ended consumer Gemini CLI request serving on June 18, 2026, while keeping
+enterprise and paid API-key access available. See Google's
+[transition announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)
+and [migration guide](https://antigravity.google/docs/cli/gcli-migration/).
 
 <a id="launch-one-profile-in-many-new-panels-source-checkout"></a>
 
@@ -759,14 +773,14 @@ Panel 1 (Claude):  Verifies fixes, reports summary
 **Multi-Perspective Security Audit**
 ```
 Panel 1 (Claude):  Architecture review
-Panel 2 (Gemini):  Security analysis
+Panel 2 (Antigravity): Security analysis
 Panel 3 (Codex):   Writes patches based on both reviews
 ```
 
 **Divide and Conquer**
 ```
 "Split this refactor: send backend changes to Codex in Panel 2,
-frontend changes to Gemini in Panel 3, and write integration
+frontend changes to Antigravity in Panel 3, and write integration
 tests yourself."
 ```
 
@@ -1032,7 +1046,7 @@ Agents Commander combines several local workflows in one TUI:
 
 ## Roadmap
 
-- [x] Supported Claude Code, Codex CLI, Gemini CLI, OpenCode, and Shell adapters
+- [x] Claude Code, Codex CLI, OpenCode, and Shell; Antigravity in current source and deprecated Gemini compatibility
 - [x] Prompt template library (`Ctrl+B`)
 - [ ] Aider, Cline, Goose, Kiro, Amp support
 - [ ] Task queue -- chain agent tasks in sequence

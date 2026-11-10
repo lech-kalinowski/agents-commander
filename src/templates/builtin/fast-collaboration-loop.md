@@ -2,7 +2,7 @@
 name: Fast Collaboration Loop
 description: Strict low-latency collaboration workflow for reliable handoffs, compact messages, and faster ACK-safe execution
 category: collaboration
-agents: [claude, codex, gemini]
+agents: [claude, codex, antigravity]
 panels: 3
 ---
 **Addressing:** Resolve role placeholders such as `<adapter-panel>` from the current Commander roster, excluding your own panel. Use the actual adapter type and stable P ID, never a model name or an illustrative panel number. If a role is absent or has multiple peers, ask the user which target to use. If assignments may have changed, QUERY `agents` and wait for the result. Replace `<session-key>` with your own current capability and `<n>` with your next positive counter; use the same counter on that block's END footer and a fresh counter for each new block. These are patterns, not literal commands. Recipients use their own current capability and counter when replying.
@@ -75,7 +75,7 @@ Status template:
 Execution guidance:
 
 - Give implementation-heavy work to Codex.
-- Give analysis, research, or documentation work to Gemini.
+- Give analysis, research, or documentation work to Antigravity.
 - Keep architecture, prioritization, and final integration with the coordinating agent.
 - If two agents can work in parallel, define non-overlapping scopes before dispatching.
 - If a task is ambiguous, clarify it yourself before delegating instead of sending a vague request.

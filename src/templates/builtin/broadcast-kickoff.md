@@ -2,7 +2,7 @@
 name: Broadcast Kickoff
 description: Coordinator broadcasts a project-wide task to all other agents, collects results
 category: collaboration
-agents: [claude, codex, gemini]
+agents: [claude, codex, antigravity]
 panels: 3
 ---
 **Addressing:** Resolve role placeholders such as `<adapter-panel>` from the current Commander roster, excluding your own panel. Use the actual adapter type and stable P ID, never a model name or an illustrative panel number. If a role is absent or has multiple peers, ask the user which target to use. If assignments may have changed, QUERY `agents` and wait for the result. Replace `<session-key>` with your own current capability and `<n>` with your next positive counter; use the same counter on that block's END footer and a fresh counter for each new block. These are patterns, not literal commands. Recipients use their own current capability and counter when replying.

@@ -1,8 +1,8 @@
 ---
 name: Legacy Modernization
-description: Claude analyzes legacy code patterns, Codex modernizes, Gemini validates
+description: Claude analyzes legacy code patterns, Codex modernizes, Antigravity validates
 category: collaboration
-agents: [claude, codex, gemini]
+agents: [claude, codex, antigravity]
 panels: 3
 ---
 **Addressing:** Resolve role placeholders such as `<adapter-panel>` from the current Commander roster, excluding your own panel. Use the actual adapter type and stable P ID, never a model name or an illustrative panel number. If a role is absent or has multiple peers, ask the user which target to use. If assignments may have changed, QUERY `agents` and wait for the result. Replace `<session-key>` with your own current capability and `<n>` with your next positive counter; use the same counter on that block's END footer and a fresh counter for each new block. These are patterns, not literal commands. Recipients use their own current capability and counter when replying.
@@ -34,9 +34,9 @@ Modernize the following code patterns:
 REPLY with changes made and test results using ===COMMANDER:REPLY:<session-key>:<n>===.
 ===COMMANDER:END:<session-key>:<n>===
 
-3. Send validation tasks to Gemini:
+3. Send validation tasks to Antigravity:
 
-===COMMANDER:SEND:gemini:<gemini-panel>:<session-key>:<n>===
+===COMMANDER:SEND:antigravity:<antigravity-panel>:<session-key>:<n>===
 Validate this modernization effort:
 
 **Original behavior to preserve:**

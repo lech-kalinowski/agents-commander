@@ -99,7 +99,8 @@ export function showOrchestrateDialog(
     // ── Agent list ──
     const agentItems = agents.map((a) => {
       const model = a.model ? ` · ${escapeTaggedText(a.model, 180)}` : '';
-      return `  ${escapeTaggedText(a.profileLabel, 120).padEnd(20)} ` +
+      const legacy = a.deprecated ? ' {yellow-fg}(deprecated){/yellow-fg}' : '';
+      return `  ${escapeTaggedText(a.profileLabel, 120).padEnd(20)}${legacy} ` +
         `${escapeTaggedText(a.description, 180)}${model}`;
     });
     const agentList = blessed.list({

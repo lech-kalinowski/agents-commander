@@ -14,6 +14,7 @@ vi.mock('../../src/agents/agent-registry.js', () => ({
     installCommand: 'synthetic-install',
     installed: index !== 2,
     supported: true,
+    ...(index === 4 ? { deprecated: true } : {}),
     ...(index === 3 ? { configurationError: 'Synthetic invalid profile' } : {}),
   })),
 }));
@@ -56,6 +57,16 @@ function createFixture() {
 }
 
 describe('F2 new-terminal batch picker', () => {
+  it('visibly marks a deprecated custom profile but permits an explicit legacy launch', async () => {
+    const fixture = createFixture();
+    try {
+      const decision = fixture.open();
+      const list = fixture.screen.focused as blessed.Widgets.ListElement;
+      expect(list.getItem(4).getText()).toMatch(/^\[\.\.\] \(deprecated\) Profile 5/u);
+      fixture.input.write(`${'\u001b[B'.repeat(4)}\r`);
+      await expect(decision).resolves.toMatchObject({ profileId: 'profile-5' });
+    } finally { fixture.dispose(); }
+  });
   it.each(['s', 'S'])('offers a plain shell in the selected stable panel with %s', async key => {
     const fixture = createFixture();
     try {

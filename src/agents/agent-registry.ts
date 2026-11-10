@@ -75,7 +75,8 @@ function discover(
     });
   }
 
-  return result;
+  // Keep legacy profiles available without recommending them ahead of current CLIs.
+  return result.sort((a, b) => Number(!!a.deprecated) - Number(!!b.deprecated));
 }
 
 export function discoverAgents(

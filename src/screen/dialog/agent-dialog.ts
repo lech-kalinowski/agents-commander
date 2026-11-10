@@ -98,16 +98,17 @@ export function showAgentDialog(
       const status = a.configurationError
         ? '{red-fg}[!!]{/red-fg}'
         : a.installed
-        ? (a.supported ? '{green-fg}[OK]{/green-fg}' : '{yellow-fg}[..]{/yellow-fg}')
+        ? (a.supported && !a.deprecated ? '{green-fg}[OK]{/green-fg}' : '{yellow-fg}[..]{/yellow-fg}')
         : '{red-fg}[--]{/red-fg}';
-      const tag = !a.supported ? ' {yellow-fg}(future){/yellow-fg}' : '';
+      const tag = a.deprecated ? ' {yellow-fg}(deprecated){/yellow-fg}'
+        : !a.supported ? ' {yellow-fg}(future){/yellow-fg}' : '';
       const safeLabel = escapeTaggedText(a.profileLabel, 120);
       const safeDescription = escapeTaggedText(a.description, 180);
       const model = a.model
         ? ` {cyan-fg}${escapeTaggedText(a.model, 180)}{/cyan-fg}`
         : '';
       const invalid = a.configurationError ? ' {red-fg}(invalid profile){/red-fg}' : '';
-      return `${status} ${safeLabel.padEnd(18)} ${safeDescription}${model}${tag}${invalid}`;
+      return `${status}${tag} ${safeLabel.padEnd(18)} ${safeDescription}${model}${invalid}`;
     });
 
     const list = blessed.list({

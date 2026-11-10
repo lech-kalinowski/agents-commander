@@ -56,6 +56,8 @@ export interface AgentInfo {
   installCommand: string;
   installed: boolean;
   supported: boolean; // Phase 1 supported agents
+  /** Launchable for compatibility, but not recommended for new setups. */
+  deprecated?: boolean;
   model?: string;
   configurationError?: string;
   /** CLI flag to set the project root directory (e.g. '--directory' for Claude). */
@@ -109,9 +111,10 @@ export const KNOWN_AGENTS: Omit<AgentInfo, 'installed' | 'profileId' | 'profileL
     command: 'gemini',
     args: [],
     env: {},
-    description: 'Google - AI coding agent',
-    installCommand: 'npm install -g @google/gemini-cli',
+    description: 'Legacy Google CLI - use Antigravity (agy)',
+    installCommand: 'Use Antigravity: https://antigravity.google/docs/cli/gcli-migration/',
     supported: true,
+    deprecated: true,
   },
   {
     type: 'aider',

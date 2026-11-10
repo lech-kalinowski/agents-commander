@@ -110,7 +110,11 @@ describe('Agents Commander Doctor', () => {
     });
 
     expect(report.failures).toBe(0);
-    expect(report.warnings).toBe(0);
+    expect(report.warnings).toBe(1);
+    expect(report.rows.find((entry) => entry.id === 'agent-gemini')).toMatchObject({
+      label: 'Gemini CLI (deprecated)', status: 'warn',
+      summary: 'Use Antigravity CLI (agy) for new setups',
+    });
     expect(doctorExitCode(report)).toBe(0);
     expect(report.rows.find((entry) => entry.id === 'pty-helper')).toMatchObject({
       status: 'pass',

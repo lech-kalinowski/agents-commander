@@ -101,6 +101,8 @@ unreleased hardware changes are not part of this communication release.
   not a command string; preserve replacement confirmation and session identity.
 - Unreleased: Antigravity uses adapter/profile `antigravity` and executable `agy`.
   Do not alias or migrate Gemini profiles/addresses, and do not bypass CLI approvals.
+- Gemini CLI is deprecated compatibility support, not a recommended new setup.
+  Bundled templates use Antigravity; never rewrite users' explicit Gemini targets.
 
 - All imports use `.js` extension (ESM)
 - F-keys: F1=Help, F2=Agent, F3=+Panel, F4=Full/Back, F5=Edit, F6=Clone, F7=Order, F8=Mkdir, F9=Close panel, F10=Quit

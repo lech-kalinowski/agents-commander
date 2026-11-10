@@ -15,8 +15,9 @@ describe('Antigravity adapter', () => {
       profileId: 'antigravity', command: '/home/test/.local/bin/agy', args: [], installed: true, supported: true,
     });
     expect(agents.find(agent => agent.type === 'gemini')).toMatchObject({
-      command: '/custom/gemini', args: ['--custom'], installed: false,
+      command: '/custom/gemini', args: ['--custom'], installed: false, deprecated: true,
     });
+    expect(agents.at(-1)?.type).toBe('gemini');
     expect(isAgentType('antigravity')).toBe(true);
     expect(isAgentType('agy')).toBe(false);
   });
@@ -28,6 +29,16 @@ describe('Antigravity adapter', () => {
     }], command => command);
     expect(profiles).toHaveLength(1);
     expect(profiles[0]).toMatchObject({ type: 'antigravity', args: ['--mode', 'plan'], env: { TEST_ONLY: '1' } });
+  });
+
+  it('retains installed legacy profiles and marks custom labels as deprecated', () => {
+    const profiles = discoverAgentsWithResolver({}, [
+      { id: 'company-google', label: 'Company Google', adapter: 'gemini', command: '/opt/gemini', args: ['--custom'] },
+      { id: 'google', label: 'Google', adapter: 'antigravity' },
+    ], command => command);
+    expect(profiles.map(profile => profile.profileId)).toEqual(['google', 'company-google']);
+    expect(profiles[1]).toMatchObject({ supported: true, installed: true, deprecated: true,
+      command: '/opt/gemini', args: ['--custom'], profileLabel: 'Company Google' });
   });
 
   it('parses sequenced SEND and REPLY frames with exact Antigravity addresses', () => {

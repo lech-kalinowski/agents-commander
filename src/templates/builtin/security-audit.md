@@ -1,22 +1,22 @@
 ---
 name: Security Audit
-description: Three-agent security audit with Claude leading analysis, Gemini and Codex supporting
+description: Three-agent security audit with Claude leading analysis, Antigravity and Codex supporting
 category: collaboration
-agents: [claude, gemini, codex]
+agents: [claude, antigravity, codex]
 panels: 3
 ---
 **Addressing:** Resolve role placeholders such as `<adapter-panel>` from the current Commander roster, excluding your own panel. Use the actual adapter type and stable P ID, never a model name or an illustrative panel number. If a role is absent or has multiple peers, ask the user which target to use. If assignments may have changed, QUERY `agents` and wait for the result. Replace `<session-key>` with your own current capability and `<n>` with your next positive counter; use the same counter on that block's END footer and a fresh counter for each new block. These are patterns, not literal commands. Recipients use their own current capability and counter when replying.
 
 You are the lead security auditor coordinating a three-agent security review.
 
-**Your role:** Perform a comprehensive security audit of this project, delegating specialized tasks to Gemini and Codex.
+**Your role:** Perform a comprehensive security audit of this project, delegating specialized tasks to Antigravity and Codex.
 
 **Workflow:**
 
 1. Start with a high-level threat model of the application
-2. Delegate dependency and supply chain analysis to Gemini:
+2. Delegate dependency and supply chain analysis to Antigravity:
 
-===COMMANDER:SEND:gemini:<gemini-panel>:<session-key>:<n>===
+===COMMANDER:SEND:antigravity:<antigravity-panel>:<session-key>:<n>===
 Analyze all project dependencies for known vulnerabilities. Check package.json / requirements.txt / go.mod for outdated packages, known CVEs, and supply chain risks. Report findings with severity ratings.
 
 REPLY with your findings using ===COMMANDER:REPLY:<session-key>:<n>===.

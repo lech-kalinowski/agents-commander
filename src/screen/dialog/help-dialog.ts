@@ -171,8 +171,8 @@ Multi-panel AI Agent Manager & File Browser
 {bold}{yellow-fg}SUPPORTED ADAPTERS{/yellow-fg}{/bold}
 
   {green-fg}Claude Code{/green-fg}   Anthropic      {green-fg}Codex CLI{/green-fg}  OpenAI
-  {green-fg}Gemini CLI{/green-fg}    Google         {green-fg}OpenCode{/green-fg}   Multi-provider
-  {green-fg}Antigravity{/green-fg}   Google (agy)
+  {green-fg}Antigravity{/green-fg}   Google (agy)   {green-fg}OpenCode{/green-fg}   Multi-provider
+  {yellow-fg}Gemini CLI{/yellow-fg}    Deprecated; legacy compatibility only
   {green-fg}Shell{/green-fg}         Local/configured
 
 {bold}{yellow-fg}CATALOGUED FUTURE PRESETS{/yellow-fg}{/bold}

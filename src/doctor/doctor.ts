@@ -500,6 +500,13 @@ export async function runDoctor(options: RunDoctorOptions): Promise<DoctorReport
       continue;
     }
 
+    if (agent.deprecated) {
+      rows.push(row(id, `${safeProfileLabel} (deprecated)`, 'warn',
+        'Use Antigravity CLI (agy) for new setups',
+        agent.installed ? `Legacy executable: ${agent.command}` : 'Legacy executable not found'));
+      continue;
+    }
+
     if (agent.type === 'opencode' && agent.env.OPENCODE_CONFIG) {
       const configuredPath = path.isAbsolute(agent.env.OPENCODE_CONFIG)
         ? agent.env.OPENCODE_CONFIG

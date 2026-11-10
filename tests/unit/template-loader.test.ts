@@ -38,6 +38,15 @@ describe('template loader', () => {
     expect(builtins).toHaveLength(121);
   });
 
+  it('uses Antigravity instead of deprecated Gemini roles in bundled collaboration prompts', () => {
+    refreshTemplates();
+    const builtins = loadTemplates().filter(template => template.source === 'builtin');
+    for (const template of builtins) {
+      expect(JSON.stringify(template), template.id).not.toMatch(/gemini/iu);
+    }
+    expect(builtins.some(template => template.content.includes('SEND:antigravity:<antigravity-panel>'))).toBe(true);
+  });
+
   it('can capability-bind every built-in collaboration template', () => {
     refreshTemplates();
     const capability = 'c'.repeat(43);

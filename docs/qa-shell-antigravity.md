@@ -14,10 +14,12 @@ are not included in published version 0.1.13.
 - Shell exit leaves a stopped terminal, without an automatic restart. Ctrl+T
   returns to files. As for other unmanaged commands, F6 copies an idle terminal
   at the original directory, not the shell's process state or command history.
-- Antigravity uses `agy` and adapter `antigravity`. Gemini and configured generic
-  CLI profiles remain unchanged. No automatic migration, alias, sign-in, or
+- Antigravity uses `agy` and adapter `antigravity`. Gemini is deprecated and placed
+  last in selectors, with a Doctor warning. Saved Gemini and configured generic
+  CLI commands remain unchanged. No automatic migration, alias, sign-in, or
   permission-bypass flags are added.
-- Explicit Gemini targets in old templates still require Gemini. Select/update
+- Bundled collaboration templates now use Antigravity. Explicit Gemini targets
+  in custom/old templates still require Gemini. Select/update
   the intended template to use `<antigravity-panel>` for Antigravity; Commander
   must not silently redirect an explicit Gemini address.
 

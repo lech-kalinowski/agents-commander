@@ -69,6 +69,7 @@ import {
   type PanelSummary,
 } from './screen/dialog/panel-navigator-dialog.js';
 import { buildVimLaunchSpec, resolveCtrlGAction } from './utils/shortcut-routing.js';
+import { buildShellLaunchSpec } from './utils/shell-launch.js';
 import { formatUserError, sanitizeUserText } from './utils/user-facing-errors.js';
 import { isActivePanelCount, type PanelDensity } from './panel-limits.js';
 import {
@@ -1506,6 +1507,39 @@ export class App {
     }
   }
 
+  private async actionLaunchShell(panelIndex: number): Promise<void> {
+    if (this.disposalStarted) return;
+    const targetPanel = this.layout.getPanel(panelIndex);
+    if (!targetPanel) return;
+    let spec;
+    try {
+      spec = buildShellLaunchSpec();
+    } catch (error) {
+      showErrorToast(this.screen, formatUserError('Launch shell', error));
+      return;
+    }
+    if (this.hasLiveTerminalSession(panelIndex)) {
+      const generation = this.layout.getTerminalPanel(panelIndex)?.sessionGeneration;
+      if (!await this.confirmSessionReplacement(panelIndex, 'launch a shell')) return;
+      if (this.disposalStarted || this.layout.getPanel(panelIndex) !== targetPanel) return;
+      if (this.layout.getTerminalPanel(panelIndex)?.sessionGeneration !== generation) return;
+      await this.stopTerminalSession(panelIndex);
+      if (this.disposalStarted || this.layout.getPanel(panelIndex) !== targetPanel) return;
+      if (this.hasLiveTerminalSession(panelIndex)) {
+        showErrorToast(this.screen, 'Another session started; shell launch was cancelled');
+        return;
+      }
+    }
+    this.orchestrator.disconnectPanel(panelIndex);
+    const terminal = this.layout.convertToTerminal(panelIndex);
+    if (!terminal.launchCommand(spec.label, spec.command, spec.args)) {
+      showErrorToast(this.screen, 'Unable to launch shell; see terminal output');
+    }
+    this.layout.setActivePanel(panelIndex);
+    this.updateStatus();
+    this.screen.render();
+  }
+
   private async actionLaunchAgent(): Promise<void> {
     const screen = this.screen;
     const choice = await showAgentDialog(
@@ -1515,12 +1549,16 @@ export class App {
       this.layout.activePanel.panelIndex,
       this.config.agents,
       this.config.agentProfiles,
-      { maxNewPanels: this.layout.availablePanelCapacity, enableProtocolBatch: true },
+      { maxNewPanels: this.layout.availablePanelCapacity, enableProtocolBatch: true, enableShell: true },
     );
 
     if (this.disposalStarted) return;
     if (choice && 'action' in choice) {
-      await this.actionInjectProtocolBatch();
+      if (choice.action === 'shell') {
+        await this.runDestructiveTransition(() => this.actionLaunchShell(choice.panelIndex));
+      } else {
+        await this.actionInjectProtocolBatch();
+      }
       return;
     }
     if (choice?.newPanelCount !== undefined) {
@@ -2103,7 +2141,7 @@ export class App {
         showErrorToast(screen, 'No terminal panel active');
         return;
       }
-      if (!tp.isRunning) {
+      if (!tp.isRunning || !this.agentManager.getAgentType(tp.panelIndex)) {
         showErrorToast(screen, 'No agent running on this panel');
         return;
       }
@@ -2150,7 +2188,7 @@ export class App {
         this.orchestrator.disconnectPanel(idx);
         await this.layout.convertToFile(idx);
       } else {
-        this.layout.convertToTerminal(idx);
+        await this.actionLaunchShell(idx);
       }
       this.updateStatus();
       screen.render();

@@ -23,7 +23,7 @@ export function wireFrame(event: Pick<CaptureEvent, 'verb' | 'targetAgent' | 'ta
     || Buffer.byteLength(event.content) > MAX_COMPLETION_BYTES) throw new Error('Invalid or ambiguous accepted frame');
   let route = '';
   if (event.verb === 'send') {
-    if (!event.targetAgent || !/^(claude|codex|gemini|opencode|generic)$/.test(event.targetAgent)
+    if (!event.targetAgent || !/^(claude|codex|antigravity|gemini|opencode|generic)$/.test(event.targetAgent)
       || !Number.isSafeInteger(event.targetPanel) || event.targetPanel! < 1 || event.targetPanel! > 1_000_000) throw new Error('Invalid SEND target');
     route = `:${event.targetAgent}:${event.targetPanel}`;
   }

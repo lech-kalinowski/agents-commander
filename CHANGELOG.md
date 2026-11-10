@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Plain shell panels via Ctrl+T from a file panel or F2 then S. The selected
+  directory is preserved; the executable comes from SHELL, the account shell,
+  or /bin/sh. Shells are unmanaged commands, not protocol/capture targets.
+  Replacing a running process requires confirmation; exit does not auto-restart.
+- Antigravity CLI (`agy`) as a distinct `antigravity` adapter/profile, including
+  discovery, configuration, routing, protocol instructions and consented capture
+  and dataset validation. Existing Gemini profiles and addresses are unchanged.
+
+These source changes are not included in the published 0.1.13 package.
+
 ## 0.1.13
 
 ### Fixed

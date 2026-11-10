@@ -24,7 +24,7 @@ async function launch(args, exercise) {
   const child = spawn('python3', [path.join(packageRoot, 'dist/agents/pty-helper.py'), '--',
     process.execPath, path.join(packageRoot, 'dist/bin/agents-commander.js'), ...args], {
     cwd: workspace,
-    env: { ...process.env, TERM: 'xterm-256color', COLUMNS: '160', LINES: '54' },
+    env: { ...process.env, SHELL: '/bin/sh', TERM: 'xterm-256color', COLUMNS: '160', LINES: '54' },
     stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
   });
   child.stdout.on('data', data => term.write(decoder.write(data)));
@@ -133,6 +133,29 @@ for (const theme of ['classic-blue', 'midnight']) {
   });
   console.log(`Packed stress passed: ${theme}, 100 panels, P100 jump, resize, close/stable IDs, P101 add, fullscreen and default-No quit.`);
 }
+
+await launch([], async ({ screen, key, waitFor, child }) => {
+  await key('\x14', () => /Shell \(sh\).*running/u.test(screen()), 'Ctrl+T starts plain shell');
+  const receipt = path.join(workspace, 'shell-cwd.txt');
+  child.stdin.write('pwd > shell-cwd.txt\r');
+  await waitFor(async () => {
+    try { return (await fs.readFile(receipt, 'utf8')).trim() === await fs.realpath(workspace); }
+    catch { return false; }
+  }, 'shell executes in the selected panel directory');
+  await key('\x10', () => /No agent running on this panel/u.test(screen()), 'shell rejects protocol injection');
+  await key('\x14', () => /Kill it and switch back/u.test(screen()), 'live shell close confirmation');
+  await key('\r', () => !/Kill it and switch back/u.test(screen()), 'default No preserves shell');
+  child.stdin.write("printf '%s%s\\n' SHELL_ STILL_ALIVE\r");
+  await waitFor(() => /SHELL_STILL_ALIVE/u.test(screen()), 'shell survives cancelled close');
+  await key('\x14', () => /Kill it and switch back/u.test(screen()), 'confirm shell close');
+  await key('y', () => !/Terminal \[P1\]/u.test(screen()), 'return to file panel');
+  await key('\x1bOQ', () => /S=Shell/u.test(screen()), 'F2 offers plain shell');
+  await key('s', () => /Shell \(sh\).*running/u.test(screen()), 'F2/S starts shell');
+  await key('exit\r', () => /Shell \(sh\).*exited/u.test(screen()), 'exit stops shell');
+  await delay(1200);
+  assert.match(screen(), /Shell \(sh\).*exited/u, 'Shell must not auto-restart');
+});
+console.log('Packed shell passed: Ctrl+T, F2/S, real command/CWD, no protocol, guarded close and clean exit.');
 
 const receipts = path.join(workspace, 'receipts');
 await fs.mkdir(receipts);

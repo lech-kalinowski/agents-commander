@@ -17,5 +17,6 @@ describe('agent defaults', () => {
     expect(defaultConfig.agents.claude.args).toEqual([]);
     expect(defaultConfig.agents.codex.args).toEqual(['--no-alt-screen']);
     expect(defaultConfig.agents.gemini.args).toEqual([]);
+    expect(defaultConfig.agents.antigravity).toEqual({ command: 'agy', args: [], env: {} });
   });
 });

@@ -51,7 +51,8 @@ Multi-panel AI Agent Manager & File Browser
   Shift+F12   Inter-agent protocol guide
   Ctrl+B      Browse 121 prompt templates
               (select → pick panel → sent to agent)
-  Ctrl+T      Toggle panel: file <-> terminal
+  Ctrl+T      Open shell / return to files (confirms closing a live session)
+  F2, S       Start a plain shell in the selected panel (no AI/protocol)
   Ctrl+K      Kill running session on active terminal
   Ctrl+C      Send interrupt to agent
   Ctrl+D      Send EOF to agent
@@ -171,6 +172,7 @@ Multi-panel AI Agent Manager & File Browser
 
   {green-fg}Claude Code{/green-fg}   Anthropic      {green-fg}Codex CLI{/green-fg}  OpenAI
   {green-fg}Gemini CLI{/green-fg}    Google         {green-fg}OpenCode{/green-fg}   Multi-provider
+  {green-fg}Antigravity{/green-fg}   Google (agy)
   {green-fg}Shell{/green-fg}         Local/configured
 
 {bold}{yellow-fg}CATALOGUED FUTURE PRESETS{/yellow-fg}{/bold}

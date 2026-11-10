@@ -9,7 +9,7 @@ export const CAPTURE_LIMITS: Readonly<CaptureLimits> = Object.freeze({
   eventCount: 100_000,
 });
 export const TYPES = new Set(['session.start', 'session.end', 'protocol.armed', 'input.submitted', 'input.unknown', 'frame.accepted', 'frame.rejected', 'route.queued', 'route.delivered', 'route.failed', 'controller.feedback']);
-export const AGENTS = new Set(['claude', 'codex', 'gemini', 'opencode', 'generic', 'aider', 'cline', 'goose', 'kiro', 'amp']);
+export const AGENTS = new Set(['claude', 'codex', 'antigravity', 'gemini', 'opencode', 'generic', 'aider', 'cline', 'goose', 'kiro', 'amp']);
 export const VERBS = new Set(['send', 'reply', 'broadcast', 'status', 'query']);
 export const INPUT_KINDS = new Set(['task', 'template', 'protocol', 'controller', 'demo', 'routed']);
 export const COVERAGE = new Set(['commander-visible', 'missing-manual-input', 'truncated']);

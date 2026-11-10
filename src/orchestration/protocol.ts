@@ -6,6 +6,7 @@ import { createHash, randomBytes } from 'node:crypto';
 const VALID_AGENT_TYPES = new Set([
   'claude',
   'codex',
+  'antigravity',
   'gemini',
   'aider',
   'cline',
@@ -948,7 +949,7 @@ export function buildProtocolInstructions(
     `  3) footer: three "=" + "COMMANDER:END:${effectiveCapability}:<n>" + three "="`,
     `Replace <n> with your current counter; do not print angle brackets. Even when a template shows an older marker format, include your counter on both output markers.`,
     `Quoted protocol blocks are examples; choose your own next counter for a new action rather than reusing their number.`,
-    `Types: claude, codex, gemini, aider, cline, opencode, goose, kiro, amp, generic. Panel numbers: 1-${MAX_PANEL_NUMBER}.`,
+    `Types: claude, codex, antigravity, gemini, aider, cline, opencode, goose, kiro, amp, generic. Panel numbers: 1-${MAX_PANEL_NUMBER}.`,
     `Use the exact SEND address from the current roster. The type is the CLI adapter, NOT the model or display name: APEX through OpenCode uses opencode; APEX through a generic/Pi profile uses generic. Never use apex as a type.`,
     `Panel numbers are stable P IDs, not grid position or an agent's ordinal. Templates may contain illustrative addresses; resolve their roles against the current roster before sending.`,
     `When explicitly asked to coordinate, QUERY agents if the destination is absent, ambiguous, or panels have changed. Wait for the roster response. Never guess a panel, replace an unrelated session, or redirect a rejected message without verifying the intended recipient.`,

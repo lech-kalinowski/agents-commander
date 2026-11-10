@@ -20,6 +20,23 @@ describe('loadConfig', () => {
     vi.clearAllMocks();
   });
 
+  it('adds Antigravity to old configs without rewriting Gemini or user profiles', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+      agents: { gemini: { command: '/custom/gemini', args: ['--custom'] } },
+      agentProfiles: [{ id: 'agy-plan', label: 'AGY Plan', adapter: 'antigravity', args: ['--mode', 'plan'] }],
+    }));
+    const config = loadConfig();
+    expect(config.agents.antigravity.command).toBe('agy');
+    expect(config.agents.gemini.command).toBe('/custom/gemini');
+    expect(config.agentProfiles).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'antigravity', adapter: 'antigravity' }),
+      expect.objectContaining({ id: 'gemini', adapter: 'gemini' }),
+      expect.objectContaining({ id: 'agy-plan', adapter: 'antigravity', args: ['--mode', 'plan'] }),
+    ]));
+    expect(fs.writeFileSync).not.toHaveBeenCalled();
+  });
+
   it('deep merges nested config overrides with defaults', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({

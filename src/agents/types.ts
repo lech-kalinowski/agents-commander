@@ -1,6 +1,7 @@
 export type AgentType =
   | 'claude'
   | 'codex'
+  | 'antigravity'
   | 'gemini'
   | 'aider'
   | 'cline'
@@ -90,6 +91,16 @@ export const KNOWN_AGENTS: Omit<AgentInfo, 'installed' | 'profileId' | 'profileL
     env: {},
     description: 'OpenAI - AI coding agent',
     installCommand: 'npm install -g @openai/codex',
+    supported: true,
+  },
+  {
+    type: 'antigravity',
+    name: 'Antigravity CLI',
+    command: 'agy',
+    args: [],
+    env: {},
+    description: 'Google - Antigravity terminal agent',
+    installCommand: 'Install agy: https://antigravity.google/docs/cli/tutorial',
     supported: true,
   },
   {

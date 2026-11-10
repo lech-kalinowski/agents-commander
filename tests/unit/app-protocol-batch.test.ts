@@ -55,7 +55,7 @@ describe('explicit bulk protocol injection', () => {
     vi.mocked(showAgentDialog).mockResolvedValue({ action: 'protocol-batch' });
     await h.app.actionLaunchAgent();
     expect(showAgentDialog).toHaveBeenCalledWith(h.app.screen, h.app.theme,
-      h.layout.workspacePanelIds, 3, {}, [], { maxNewPanels: 98, enableProtocolBatch: true });
+      h.layout.workspacePanelIds, 3, {}, [], { maxNewPanels: 98, enableProtocolBatch: true, enableShell: true });
     expect(showProtocolBatchDialog).toHaveBeenCalledOnce();
     expect(h.orchestrator.injectProtocolTarget).toHaveBeenCalledTimes(2);
     expect(h.agentManager.launchProfile).not.toHaveBeenCalled();

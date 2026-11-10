@@ -34,11 +34,12 @@ function createFixture() {
   terminal.focus();
   return {
     input, output, screen, terminal, leakedKeys, programKeys,
-    open(maxNewPanels?: number, panelIds = [0, 5], enableProtocolBatch = false) {
+    open(maxNewPanels?: number, panelIds = [0, 5], enableProtocolBatch = false, enableShell = false) {
       return showAgentDialog(screen, getTheme('midnight'), panelIds, 0,
         undefined, undefined, {
           ...(maxNewPanels === undefined ? {} : { maxNewPanels }),
           ...(enableProtocolBatch ? { enableProtocolBatch } : {}),
+          enableShell,
         });
     },
     content() {
@@ -55,6 +56,42 @@ function createFixture() {
 }
 
 describe('F2 new-terminal batch picker', () => {
+  it.each(['s', 'S'])('offers a plain shell in the selected stable panel with %s', async key => {
+    const fixture = createFixture();
+    try {
+      const decision = fixture.open(40, [0, 5], true, true);
+      expect(fixture.content()).toContain('S=Shell (no AI / no protocol)');
+      fixture.input.write(`6${key}\r`);
+      expect(isDialogActive()).toBe(true);
+      await expect(decision).resolves.toEqual({ action: 'shell', panelIndex: 5 });
+      expect(fixture.leakedKeys).toEqual([]);
+    } finally { fixture.dispose(); }
+  });
+
+  it('does not expose shell launches in task/template pickers', async () => {
+    const fixture = createFixture();
+    try {
+      const decision = fixture.open();
+      expect(fixture.content()).not.toContain('S=Shell');
+      fixture.input.write('s\r');
+      await expect(decision).resolves.toMatchObject({ profileId: 'profile-1' });
+    } finally { fixture.dispose(); }
+  });
+
+  it('does not turn a bulk launch or invalid panel number into a shell launch', async () => {
+    const fixture = createFixture();
+    try {
+      const decision = fixture.open(40, [5, 15], true, true);
+      fixture.input.write('1s');
+      await Promise.resolve();
+      expect(isDialogActive()).toBe(true);
+      fixture.input.write('n20s');
+      await Promise.resolve();
+      expect(isDialogActive()).toBe(true);
+      fixture.input.write('\u001b');
+      await expect(decision).resolves.toBeNull();
+    } finally { fixture.dispose(); }
+  });
   it.each(['p', 'P', 'n20p', 'n1.5P'])('opens the explicit protocol action using %j', async (keys) => {
     const fixture = createFixture();
     try {

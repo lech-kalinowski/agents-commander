@@ -307,6 +307,32 @@ Supported adapters:
 
 The selector also catalogues five future presets that are not launchable yet: Aider, Cline, Goose, Kiro, and Amp.
 
+### Plain terminals and Antigravity (unreleased source)
+
+These additions require a build of this checkout; they are not in npm 0.1.13.
+
+- Press **Ctrl+T** in a file panel to start an interactive shell in that directory,
+  or **F2**, select a target panel, then **S**. Commander uses the executable in
+  `$SHELL`, then your account shell, then `/bin/sh`. Arguments are not read from
+  `$SHELL`; no command string or task is executed automatically.
+- Shells are normal terminals, not AI agents: no protocol injection, message
+  routing, automatic restart, or semantic capture. Normal shell startup files
+  still run. Use `exit` to stop the shell, **F2/S** to restart it, or **Ctrl+T**
+  to return to files. Closing/replacing a live shell asks for confirmation.
+- Select **Antigravity CLI** in **F2** to launch `agy`. Complete any CLI trust or
+  sign-in prompts yourself, then **Ctrl+P** enables Commander messaging. The
+  adapter address is `antigravity`, not `agy` or `gemini`; Gemini remains a
+  separate compatible profile. Default launch flags do not bypass approvals.
+
+Antigravity installation and first-launch setup are described in the
+[official CLI guide](https://antigravity.google/docs/cli/tutorial). Commander
+also searches `~/.local/bin`, where that installer normally places `agy`.
+Named Antigravity profiles use `"adapter": "antigravity"`; CLI options such as
+`--model` or `--mode plan` belong in that profile's `args` array.
+
+See [shell and Antigravity QA](docs/qa-shell-antigravity.md) for acceptance
+coverage, the real-provider test command, and compatibility limits.
+
 <a id="launch-one-profile-in-many-new-panels-source-checkout"></a>
 
 ### Launch one profile in many new panels

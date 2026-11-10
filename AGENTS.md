@@ -96,6 +96,12 @@ unreleased hardware changes are not part of this communication release.
 
 ## Key Conventions
 
+- Unreleased: Ctrl+T from files and F2/S start plain unmanaged shells, never
+  protocol recipients. Select SHELL/account shell or /bin/sh as an executable,
+  not a command string; preserve replacement confirmation and session identity.
+- Unreleased: Antigravity uses adapter/profile `antigravity` and executable `agy`.
+  Do not alias or migrate Gemini profiles/addresses, and do not bypass CLI approvals.
+
 - All imports use `.js` extension (ESM)
 - F-keys: F1=Help, F2=Agent, F3=+Panel, F4=Full/Back, F5=Edit, F6=Clone, F7=Order, F8=Mkdir, F9=Close panel, F10=Quit
 - F2 then N launches one selected profile into a requested number of NEW panels at the selected source directory after confirmation; existing sessions remain untouched. Esc stops remaining launches. No automatic protocol/task/capture; shared CWD and configured resume/startup effects are preserved.

@@ -33,7 +33,10 @@ export interface AgentLaunchChoice {
   newPanelCount?: number;
 }
 
-export type AgentDialogChoice = AgentLaunchChoice | { action: 'protocol-batch' } | null;
+export type AgentDialogChoice = AgentLaunchChoice
+  | { action: 'protocol-batch' }
+  | { action: 'shell'; panelIndex: number }
+  | null;
 
 let agentDialogOpen = false;
 
@@ -44,7 +47,7 @@ export function showAgentDialog(
   activePanelIndex: number,
   agentOverrides?: Record<string, AgentCommandConfig>,
   agentProfiles?: readonly AgentProfile[],
-  options: { maxNewPanels?: number; enableProtocolBatch?: boolean } = {},
+  options: { maxNewPanels?: number; enableProtocolBatch?: boolean; enableShell?: boolean } = {},
 ): Promise<AgentDialogChoice> {
   if (agentDialogOpen) return Promise.resolve(null);
   const panelIds = normalizePanelIds(panelSource);
@@ -270,6 +273,22 @@ export function showAgentDialog(
       });
     };
     const finishNotice = () => finish(null);
+
+    if (options.enableShell) {
+      const shellButton = blessed.box({
+        parent: dialog, top: 2, left: 2, width: 30, height: 1,
+        mouse: true, clickable: true, autoFocus: false,
+        content: ' S=Shell (no AI / no protocol) ',
+        style: { bg: 'cyan', fg: 'black' },
+      });
+      const chooseShell = () => {
+        if (!batchMode && numberInput.canConfirm) finish({ action: 'shell', panelIndex: selectedPanel });
+      };
+      list.key(['s', 'S-s'], chooseShell);
+      shellButton.on('click', (event: { button?: string }) => {
+        if (event.button === 'left') chooseShell();
+      });
+    }
 
     if (protocolBatchEnabled) {
       const protocolButton = blessed.box({
